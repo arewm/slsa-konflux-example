@@ -1,0 +1,29 @@
+# Containerfile for git-clone-slsa task
+# Multi-stage build: build source-tool with Go toolset, then copy to git-clone base
+
+# Stage 1: Build source-tool
+FROM registry.access.redhat.com/ubi10/go-toolset@sha256:28f9b55577de169ebeaab39a23def03271088f66ae471a2fbc3740bfe8524602 AS builder
+
+# Copy source-tool source code with correct ownership
+COPY --chown=default:default source-tool/ /tmp/source-tool/
+
+# Build source-tool
+WORKDIR /tmp/source-tool
+RUN go build -o sourcetool ./main.go
+
+# Stage 2: Final image based on git-clone
+FROM quay.io/konflux-ci/git-clone@sha256:bbce380c0ea071390757ffa1a6a8c4c8bd3c07007816f7489527114d48b54ed5
+
+USER root
+
+# Copy source-tool binary from builder stage
+COPY --from=builder /tmp/source-tool/sourcetool /usr/local/bin/sourcetool
+
+# Create directory for SLSA artifacts
+RUN mkdir -p /var/workdir/slsa-artifacts && \
+    chmod 755 /usr/local/bin/sourcetool
+
+# Switch back to the original user
+USER 65532
+
+WORKDIR /var/workdir

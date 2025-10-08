@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-vsa-payload
+  namespace: managed-namespace
+  labels:
+    app.kubernetes.io/part-of: slsa-konflux-test
+    test.slsa.dev/type: mock-data
+  annotations:
+    test.slsa.dev/description: "Mock VSA payload for testing vsa-sign task"
+data:
+  vsa-payload.json: |
+    {
+      "predicate": {
+        "verifier": {
+          "id": "https://tenant.konflux.example.com/conforma-vsa",
+          "version": "v1.0.0"
+        },
+        "timeVerified": "2024-01-15T10:30:00Z",
+        "resourceUri": "registry.example.com/test-app:v1.0.0",
+        "policy": {
+          "uri": "oci://quay.io/enterprise-contract/ec-policy-data@sha256:1fc38e27",
+          "digest": {
+            "sha256": "1fc38e27d50f5d9b7d8f8b8c8a8b8a8b8a8b8a8b8a8b8a8b8a8b8a8b8a8b8a8b"
+          }
+        },
+        "inputAttestations": [
+          {
+            "uri": "registry.example.com/test-app@sha256:def456789",
+            "digest": {
+              "sha256": "def456789abc123456789def456789abc123456789def456789abc123456789"
+            }
+          }
+        ],
+        "verificationResult": "PASSED",
+        "verifiedLevels": ["SLSA_BUILD_LEVEL_3"],
+        "dependencyLevels": {
+          "registry.example.com/base:latest": "SLSA_BUILD_LEVEL_2"
+        },
+        "slsaVersion": "1.0"
+      }
+    }
+  
+  vsa-payload-failure.json: |
+    {
+      "predicate": {
+        "verifier": {
+          "id": "https://tenant.konflux.example.com/conforma-vsa",
+          "version": "v1.0.0"
+        },
+        "timeVerified": "2024-01-15T10:30:00Z",
+        "resourceUri": "registry.example.com/test-app:v1.0.0-failed",
+        "policy": {
+          "uri": "oci://quay.io/enterprise-contract/ec-policy-data@sha256:1fc38e27",
+          "digest": {
+            "sha256": "1fc38e27d50f5d9b7d8f8b8c8a8b8a8b8a8b8a8b8a8b8a8b8a8b8a8b8a8b8a8b"
+          }
+        },
+        "inputAttestations": [],
+        "verificationResult": "FAILED",
+        "verifiedLevels": [],
+        "dependencyLevels": {},
+        "slsaVersion": "1.0"
+      }
+    }

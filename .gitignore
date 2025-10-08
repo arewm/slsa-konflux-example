@@ -1,0 +1,19 @@
+# Local development resources (large repository clones)
+.internal/**
+
+# Keep analysis and planning documents in version control
+# .internal/REPOSITORY_ANALYSIS.md
+# .internal/REPOSITORY_SUMMARY.md 
+# .internal/SLSA_STORY_ARC_PLAN.md
+# .internal/TRUST_BOUNDARY_VALIDATION.md
+# .internal/story-arc-transcript.txt
+# .internal/Dependant-repository-layout.md
+
+# Local Kubernetes environment
+.local/
+kubeconfig
+*.kubeconfig
+kind-config.yaml
+
+# Claude related things
+.serena

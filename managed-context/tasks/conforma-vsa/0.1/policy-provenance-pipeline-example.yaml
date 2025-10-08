@@ -1,0 +1,192 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: policy-provenance-vsa-pipeline
+  namespace: managed-context
+  labels:
+    app.kubernetes.io/name: "policy-provenance-vsa-pipeline"
+    app.kubernetes.io/component: "managed-pipeline"
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/categories: Security,Policy,VSA
+    tekton.dev/tags: "slsa,vsa,policy-provenance,managed"
+    tekton.dev/displayName: "Policy Provenance VSA Pipeline"
+    description: "Complete pipeline demonstrating policy provenance with OCI bundle resolution and digest pinning"
+spec:
+  description: >-
+    Demonstrates the complete WS5 Day 3 deliverable for policy provenance parameter passing.
+    This pipeline shows how to use OCI policy bundle references with digest pinning to ensure
+    complete traceability from policy to signed VSA.
+    
+    Features:
+    - OCI policy bundle resolution with digest validation
+    - Policy provenance traceability throughout the pipeline
+    - Enhanced VSA generation with policy metadata
+    - Complete audit trail for compliance verification
+  params:
+    - name: image-url
+      type: string
+      description: Container image URL to evaluate and attest
+    - name: image-digest
+      type: string
+      description: Container image digest (sha256)
+    - name: policy-bundle-uri
+      type: string
+      description: OCI policy bundle URI (e.g., oci://quay.io/conforma/slsa3-policy:v1.0)
+      default: "oci://quay.io/konflux-ci/enterprise-contract-policy:latest"
+    - name: policy-bundle-digest
+      type: string
+      description: Expected SHA256 digest of the policy bundle for validation
+      default: ""
+    - name: policy-source-repo
+      type: string
+      description: Source repository URI for the policy bundle
+      default: "https://github.com/enterprise-contract/enterprise-contract-policy"
+    - name: registry-url
+      type: string
+      description: OCI registry URL for attestation storage
+      default: "ttl.sh"
+    - name: debug
+      type: string
+      description: Enable debug output for troubleshooting
+      default: "false"
+  workspaces:
+    - name: conforma-results
+      description: Workspace containing Conforma policy evaluation results
+    - name: vsa-output
+      description: Workspace for VSA generation and signing output
+    - name: policy-cache
+      description: Workspace for caching policy bundle resolution
+  tasks:
+    - name: policy-bundle-resolution
+      taskRef:
+        name: resolve-policy-bundle
+      params:
+        - name: policy-bundle-uri
+          value: "$(params.policy-bundle-uri)"
+        - name: policy-bundle-digest
+          value: "$(params.policy-bundle-digest)"
+        - name: policy-source-repo
+          value: "$(params.policy-source-repo)"
+        - name: output-path
+          value: "/workspace/policy-cache/resolved-policy.json"
+        - name: debug
+          value: "$(params.debug)"
+      workspaces:
+        - name: policy-cache
+          workspace: policy-cache
+    
+    - name: conforma-policy-evaluation
+      taskRef:
+        name: conforma-evaluate
+      runAfter:
+        - policy-bundle-resolution
+      params:
+        - name: image-url
+          value: "$(params.image-url)"
+        - name: image-digest
+          value: "$(params.image-digest)"
+        - name: policy-bundle-uri
+          value: "$(tasks.policy-bundle-resolution.results.resolved-policy-uri)"
+        - name: policy-bundle-digest
+          value: "$(tasks.policy-bundle-resolution.results.resolved-policy-digest)"
+        - name: results-path
+          value: "/workspace/conforma-results/evaluation.json"
+      workspaces:
+        - name: conforma-results
+          workspace: conforma-results
+        - name: policy-cache
+          workspace: policy-cache
+    
+    - name: vsa-generation-and-signing
+      taskRef:
+        name: conforma-vsa
+      runAfter:
+        - conforma-policy-evaluation
+      params:
+        - name: conforma-results-path
+          value: "$(tasks.conforma-policy-evaluation.results.evaluation-results-path)"
+        - name: vsa-output-path
+          value: "/workspace/vsa-output/vsa.json"
+        - name: signed-vsa-path
+          value: "/workspace/vsa-output/vsa-signed.json"
+        - name: image-url
+          value: "$(params.image-url)"
+        - name: image-digest
+          value: "$(params.image-digest)"
+        - name: registry-url
+          value: "$(params.registry-url)"
+        - name: policy-bundle-uri
+          value: "$(tasks.policy-bundle-resolution.results.resolved-policy-uri)"
+        - name: policy-bundle-digest
+          value: "$(tasks.policy-bundle-resolution.results.resolved-policy-digest)"
+        - name: policy-source-uri
+          value: "$(params.policy-source-repo)"
+        - name: policy-verifier-version
+          value: "$(tasks.policy-bundle-resolution.results.policy-version)"
+        - name: enable-policy-validation
+          value: "true"
+        - name: debug
+          value: "$(params.debug)"
+      workspaces:
+        - name: conforma-results
+          workspace: conforma-results
+        - name: vsa-output
+          workspace: vsa-output
+        - name: signing-keys
+          secret:
+            secretName: cosign-signing-keys
+  results:
+    - name: vsa-digest
+      description: SHA256 digest of the generated VSA
+      value: "$(tasks.vsa-generation-and-signing.results.vsa-digest)"
+    - name: signed-attestation-uri
+      description: URI of the signed attestation in OCI registry
+      value: "$(tasks.vsa-generation-and-signing.results.signed-attestation-uri)"
+    - name: verification-result
+      description: Result of VSA verification (PASSED/FAILED)
+      value: "$(tasks.vsa-generation-and-signing.results.verification-result)"
+    - name: policy-digest
+      description: SHA256 digest of the policy bundle used
+      value: "$(tasks.vsa-generation-and-signing.results.policy-digest)"
+    - name: policy-verification-result
+      description: Result of policy bundle validation
+      value: "$(tasks.vsa-generation-and-signing.results.policy-verification-result)"
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: policy-provenance-example-run
+  namespace: managed-context
+  labels:
+    app.kubernetes.io/name: "policy-provenance-example-run"
+    app.kubernetes.io/component: "managed-pipeline"
+  annotations:
+    description: "Example pipeline run demonstrating policy provenance features"
+spec:
+  pipelineRef:
+    name: policy-provenance-vsa-pipeline
+  params:
+    - name: image-url
+      value: "quay.io/konflux-ci/example-app"
+    - name: image-digest
+      value: "sha256:abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+    - name: policy-bundle-uri
+      value: "oci://quay.io/konflux-ci/enterprise-contract-policy:v1.0"
+    - name: policy-bundle-digest
+      value: "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+    - name: policy-source-repo
+      value: "https://github.com/enterprise-contract/enterprise-contract-policy"
+    - name: registry-url
+      value: "ttl.sh"
+    - name: debug
+      value: "true"
+  workspaces:
+    - name: conforma-results
+      emptyDir: {}
+    - name: vsa-output
+      emptyDir: {}
+    - name: policy-cache
+      emptyDir: {}

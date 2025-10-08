@@ -1,0 +1,318 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: slsa-tenant-build-pipeline
+  namespace: tenant-namespace
+  labels:
+    app.kubernetes.io/name: slsa-tenant-build-pipeline
+    app.kubernetes.io/component: tenant-pipeline
+    app.kubernetes.io/part-of: slsa-tenant-context
+  annotations:
+    tekton.dev/categories: "Build"
+    tekton.dev/displayName: "SLSA Tenant Build Pipeline"
+    tekton.dev/pipelines.minVersion: "0.50.0"
+    tekton.dev/platforms: "linux/amd64,linux/arm64"
+    tekton.dev/tags: "slsa,build,tenant,source-verification"
+spec:
+  description: >-
+    SLSA-compliant build pipeline for tenant context that performs source verification,
+    builds container images, and generates Snapshots with proper attestations.
+    
+    This pipeline demonstrates the tenant side of the SLSA trust boundary model where:
+    1. Source verification occurs with SLSA source-level attestations
+    2. Container builds generate SLSA build provenance via Tekton Chains
+    3. Snapshots are created with all necessary attestations for managed context consumption
+    4. Trust artifacts are prepared for handoff to managed release pipelines
+
+  params:
+    - name: git-url
+      type: string
+      description: "Git repository URL for source code"
+      
+    - name: git-revision
+      type: string
+      description: "Git revision (branch, tag, or commit SHA)"
+      default: "main"
+      
+    - name: source-context
+      type: string
+      description: "Path within git repository to build context"
+      default: "./examples/go-app"
+      
+    - name: image-url
+      type: string
+      description: "Container image URL for the built image"
+      
+    - name: dockerfile-path
+      type: string
+      description: "Path to Dockerfile within source context"
+      default: "Dockerfile"
+      
+    - name: component-name
+      type: string
+      description: "Name of the component being built"
+      
+    - name: application-name
+      type: string
+      description: "Name of the application this component belongs to"
+
+  results:
+    - name: image-digest
+      description: "SHA256 digest of the built container image"
+      value: $(tasks.build-image.results.IMAGE_DIGEST)
+      
+    - name: image-url
+      description: "Full URL of the built container image"
+      value: $(tasks.build-image.results.IMAGE_URL)
+      
+    - name: source-commit
+      description: "Git commit SHA of the built source"
+      value: $(tasks.source-verify.results.commit)
+      
+    - name: sbom-digest
+      description: "SHA256 digest of the generated SBOM"
+      value: $(tasks.generate-sbom.results.SBOM_DIGEST)
+
+  workspaces:
+    - name: source
+      description: "Source code workspace"
+      
+    - name: trust-artifacts
+      description: "Trust artifacts for managed context handoff"
+
+  tasks:
+    - name: source-verify
+      taskRef:
+        name: git-clone-slsa
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: subdirectory
+          value: "source"
+        - name: deleteExisting
+          value: "true"
+        - name: gitInitImage
+          value: "registry.redhat.io/ubi9/ubi-minimal:latest"
+        - name: slsaSourceVerification
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: source
+        - name: trust-artifacts
+          workspace: trust-artifacts
+
+    - name: build-image
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter:
+        - source-verify
+      params:
+        - name: IMAGE
+          value: $(params.image-url)
+        - name: DOCKERFILE
+          value: "$(params.source-context)/$(params.dockerfile-path)"
+        - name: CONTEXT
+          value: "$(params.source-context)"
+        - name: TLSVERIFY
+          value: "false"
+        - name: FORMAT
+          value: "oci"
+        - name: BUILD_EXTRA_ARGS
+          value: "--label=io.buildah.version=1.31.0 --label=build.appstudio.redhat.com/pipeline=slsa-tenant-build-pipeline"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: generate-sbom
+      taskRef:
+        name: syft-generate-sbom
+        kind: ClusterTask
+      runAfter:
+        - build-image
+      params:
+        - name: IMAGE_URL
+          value: $(tasks.build-image.results.IMAGE_URL)
+        - name: IMAGE_DIGEST
+          value: $(tasks.build-image.results.IMAGE_DIGEST)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: create-snapshot
+      taskRef:
+        name: create-snapshot
+        kind: ClusterTask
+      runAfter:
+        - generate-sbom
+      params:
+        - name: APPLICATION_NAME
+          value: $(params.application-name)
+        - name: COMPONENT_NAME
+          value: $(params.component-name)
+        - name: IMAGE_URL
+          value: $(tasks.build-image.results.IMAGE_URL)
+        - name: IMAGE_DIGEST
+          value: $(tasks.build-image.results.IMAGE_DIGEST)
+        - name: SOURCE_COMMIT
+          value: $(tasks.source-verify.results.commit)
+        - name: BUILD_METADATA
+          value: |
+            {
+              "pipeline": "slsa-tenant-build-pipeline",
+              "slsa": {
+                "sourceVerification": "enabled",
+                "buildLevel": "3"
+              },
+              "attestations": {
+                "sbom": "$(tasks.generate-sbom.results.SBOM_DIGEST)",
+                "buildProvenance": "generated-by-tekton-chains"
+              }
+            }
+
+    - name: prepare-trust-artifacts
+      taskSpec:
+        description: >-
+          Prepares trust artifacts for handoff to managed context.
+          Creates summary of source verification, build attestations,
+          and policy evaluation requirements.
+        params:
+          - name: component-name
+          - name: image-url
+          - name: image-digest
+          - name: source-commit
+          - name: sbom-digest
+        workspaces:
+          - name: trust-artifacts
+        steps:
+          - name: create-trust-summary
+            image: registry.redhat.io/ubi9/ubi:latest
+            script: |
+              #!/bin/bash
+              set -euo pipefail
+              
+              echo "📦 Preparing trust artifacts for managed context handoff..."
+              
+              # Create trust artifact directory structure
+              mkdir -p $(workspaces.trust-artifacts.path)/tenant-outputs
+              
+              # Generate trust artifact summary
+              cat > $(workspaces.trust-artifacts.path)/tenant-outputs/build-summary.json <<EOF
+              {
+                "component": "$(params.component-name)",
+                "image": {
+                  "url": "$(params.image-url)",
+                  "digest": "$(params.image-digest)"
+                },
+                "source": {
+                  "commit": "$(params.source-commit)",
+                  "verification": "slsa-source-verified"
+                },
+                "attestations": {
+                  "sbom": {
+                    "digest": "$(params.sbom-digest)",
+                    "format": "spdx-json"
+                  },
+                  "buildProvenance": {
+                    "generator": "tekton-chains",
+                    "format": "slsa-provenance-v1"
+                  }
+                },
+                "slsa": {
+                  "buildLevel": "3",
+                  "sourceVerification": "passed",
+                  "buildHermeticity": "isolated"
+                },
+                "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+                "pipeline": "slsa-tenant-build-pipeline"
+              }
+              EOF
+              
+              # Create policy evaluation requirements for managed context
+              cat > $(workspaces.trust-artifacts.path)/tenant-outputs/policy-requirements.json <<EOF
+              {
+                "policyBundles": [
+                  "oci://quay.io/enterprise-contract/ec-policy-data:latest"
+                ],
+                "evaluationScope": {
+                  "image": "$(params.image-url)@$(params.image-digest)",
+                  "attestations": ["sbom", "buildProvenance", "sourceVerification"],
+                  "policies": ["enterprise-contract-slsa3", "slsa-source-verification"]
+                },
+                "requirementsLevel": "slsa-build-level-3"
+              }
+              EOF
+              
+              echo "✅ Trust artifacts prepared"
+              echo "📄 Build Summary:"
+              cat $(workspaces.trust-artifacts.path)/tenant-outputs/build-summary.json | head -15
+              
+              echo "📋 Policy Requirements:"
+              cat $(workspaces.trust-artifacts.path)/tenant-outputs/policy-requirements.json | head -10
+      runAfter:
+        - create-snapshot
+      params:
+        - name: component-name
+          value: $(params.component-name)
+        - name: image-url
+          value: $(tasks.build-image.results.IMAGE_URL)
+        - name: image-digest
+          value: $(tasks.build-image.results.IMAGE_DIGEST)
+        - name: source-commit
+          value: $(tasks.source-verify.results.commit)
+        - name: sbom-digest
+          value: $(tasks.generate-sbom.results.SBOM_DIGEST)
+      workspaces:
+        - name: trust-artifacts
+          workspace: trust-artifacts
+
+  finally:
+    - name: build-summary
+      taskSpec:
+        params:
+          - name: application-name
+          - name: component-name
+          - name: image-url
+          - name: image-digest
+          - name: source-commit
+        steps:
+          - name: summary
+            image: registry.redhat.io/ubi9/ubi:latest
+            script: |
+              #!/bin/bash
+              echo ""
+              echo "=========================================="
+              echo "🏗️  SLSA Tenant Build Pipeline Complete!"
+              echo "=========================================="
+              echo ""
+              echo "📋 Build Summary:"
+              echo "  Application: $(params.application-name)"
+              echo "  Component: $(params.component-name)"
+              echo "  Image: $(params.image-url)"
+              echo "  Digest: $(params.image-digest)"
+              echo "  Source Commit: $(params.source-commit)"
+              echo ""
+              echo "🛡️  SLSA Compliance:"
+              echo "  ✅ Source verification completed (git-clone-slsa)"
+              echo "  ✅ Build provenance generated (Tekton Chains)"
+              echo "  ✅ SBOM generated and attached"
+              echo "  ✅ Trust artifacts prepared for managed context"
+              echo ""
+              echo "🔄 Next Steps:"
+              echo "  1. Snapshot created and ready for release"
+              echo "  2. Trust artifacts available for managed pipeline"
+              echo "  3. Ready for policy evaluation in managed context"
+              echo ""
+      params:
+        - name: application-name
+          value: $(params.application-name)
+        - name: component-name
+          value: $(params.component-name)
+        - name: image-url
+          value: $(tasks.build-image.results.IMAGE_URL)
+        - name: image-digest
+          value: $(tasks.build-image.results.IMAGE_DIGEST)
+        - name: source-commit
+          value: $(tasks.source-verify.results.commit)

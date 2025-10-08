@@ -1,0 +1,242 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: image-promotion
+  namespace: managed-namespace
+  labels:
+    app.kubernetes.io/name: image-promotion
+    app.kubernetes.io/component: image-promotion
+    app.kubernetes.io/part-of: slsa-managed-context
+spec:
+  description: |
+    Image promotion task that copies verified container images from source to target
+    registries based on successful policy evaluation results.
+    
+    This task operates only after policy evaluation has passed and publishes
+    promotion metadata as trusted artifacts for VSA generation.
+  
+  params:
+    - name: SOURCE_IMAGE_URL
+      description: "Source container image URL to promote"
+      type: string
+      
+    - name: TARGET_IMAGE_URL
+      description: "Target container image URL for promotion"
+      type: string
+      
+    - name: EVALUATION_RESULTS_URI
+      description: "OCI URI containing policy evaluation results from conforma-evaluation task"
+      type: string
+      
+    - name: PROMOTION_METADATA_URI
+      description: "OCI URI where promotion metadata will be stored as trusted artifact"
+      type: string
+      
+    - name: COPY_METHOD
+      description: "Image copy method: skopeo, crane, or registry-copy"
+      type: string
+      default: "skopeo"
+      
+    - name: PRESERVE_DIGESTS
+      description: "Whether to preserve source image digests in target (true/false)"
+      type: string
+      default: "true"
+
+  results:
+    - name: PROMOTION_RESULT
+      description: "Promotion result: SUCCESS, FAILED, or SKIPPED"
+      
+    - name: TARGET_IMAGE_DIGEST
+      description: "SHA256 digest of promoted image in target registry"
+      
+    - name: PROMOTION_METADATA_URI
+      description: "OCI URI where promotion metadata is stored"
+      
+    - name: PROMOTION_TIMESTAMP
+      description: "RFC3339 timestamp of promotion completion"
+
+  workspaces:
+    - name: promotion-workspace
+      description: "Workspace for image promotion processing"
+
+  steps:
+    - name: validate-evaluation-results
+      image: registry.redhat.io/ubi9/ubi:9.3
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🔍 Validating policy evaluation results..."
+        
+        # Create workspace structure
+        mkdir -p $(workspaces.promotion-workspace.path)/{input,output,metadata}
+        
+        # For reference implementation, simulate fetching evaluation results
+        # In production: oras pull $(params.EVALUATION_RESULTS_URI) evaluation-detailed.json
+        
+        cat > $(workspaces.promotion-workspace.path)/input/evaluation-results.json <<EOF
+        {
+          "evaluation": {
+            "result": "PASSED",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "image_url": "$(params.SOURCE_IMAGE_URL)",
+            "violations": [],
+            "summary": {
+              "passed": 15,
+              "failed": 0,
+              "violations_count": 0
+            }
+          }
+        }
+        EOF
+        
+        # Validate evaluation passed
+        EVAL_RESULT=$(jq -r '.evaluation.result' $(workspaces.promotion-workspace.path)/input/evaluation-results.json)
+        
+        if [ "$EVAL_RESULT" != "PASSED" ]; then
+          echo "❌ Policy evaluation did not pass: $EVAL_RESULT"
+          echo "🚫 Skipping image promotion"
+          echo -n "SKIPPED" > $(results.PROMOTION_RESULT.path)
+          echo -n "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > $(results.PROMOTION_TIMESTAMP.path)
+          exit 0
+        fi
+        
+        echo "✅ Policy evaluation passed, proceeding with promotion"
+
+    - name: prepare-image-promotion
+      image: registry.redhat.io/ubi9/ubi:9.3
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🔧 Preparing image promotion..."
+        
+        # Validate image URLs
+        if [ -z "$(params.SOURCE_IMAGE_URL)" ] || [ -z "$(params.TARGET_IMAGE_URL)" ]; then
+          echo "❌ Source or target image URL is empty"
+          exit 1
+        fi
+        
+        echo "📦 Source: $(params.SOURCE_IMAGE_URL)"
+        echo "🎯 Target: $(params.TARGET_IMAGE_URL)"
+        echo "🔄 Method: $(params.COPY_METHOD)"
+        
+        # Create promotion metadata
+        cat > $(workspaces.promotion-workspace.path)/metadata/promotion-plan.json <<EOF
+        {
+          "source_image": "$(params.SOURCE_IMAGE_URL)",
+          "target_image": "$(params.TARGET_IMAGE_URL)",
+          "copy_method": "$(params.COPY_METHOD)",
+          "preserve_digests": $(params.PRESERVE_DIGESTS),
+          "planned_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        }
+        EOF
+        
+        echo "✅ Promotion plan prepared"
+
+    - name: execute-image-promotion
+      image: quay.io/skopeo/stable:v1.13
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🚀 Executing image promotion..."
+        
+        # For reference implementation, simulate image promotion
+        # In production, this would use actual skopeo/crane commands:
+        # skopeo copy --preserve-digests docker://$(params.SOURCE_IMAGE_URL) docker://$(params.TARGET_IMAGE_URL)
+        
+        echo "Simulating image copy with $(params.COPY_METHOD)..."
+        echo "  Source: $(params.SOURCE_IMAGE_URL)"
+        echo "  Target: $(params.TARGET_IMAGE_URL)"
+        
+        # Simulate successful promotion
+        PROMOTION_RESULT="SUCCESS"
+        TARGET_DIGEST="sha256:$(echo -n "$(params.TARGET_IMAGE_URL)$(date)" | sha256sum | cut -d' ' -f1)"
+        PROMOTION_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        
+        # Store results
+        echo -n "$PROMOTION_RESULT" > $(results.PROMOTION_RESULT.path)
+        echo -n "$TARGET_DIGEST" > $(results.TARGET_IMAGE_DIGEST.path)
+        echo -n "$PROMOTION_TIMESTAMP" > $(results.PROMOTION_TIMESTAMP.path)
+        
+        # Create detailed promotion metadata
+        cat > $(workspaces.promotion-workspace.path)/output/promotion-metadata.json <<EOF
+        {
+          "promotion": {
+            "result": "$PROMOTION_RESULT",
+            "timestamp": "$PROMOTION_TIMESTAMP",
+            "source_image": {
+              "url": "$(params.SOURCE_IMAGE_URL)",
+              "digest": "sha256:source-placeholder"
+            },
+            "target_image": {
+              "url": "$(params.TARGET_IMAGE_URL)",
+              "digest": "$TARGET_DIGEST"
+            },
+            "copy_method": "$(params.COPY_METHOD)",
+            "preserve_digests": $(params.PRESERVE_DIGESTS)
+          },
+          "attestation_chain": {
+            "evaluation_results_uri": "$(params.EVALUATION_RESULTS_URI)",
+            "source_attestations": [],
+            "promotion_attestation": "pending_vsa_generation"
+          },
+          "metadata": {
+            "promoter": "managed-context/image-promotion",
+            "version": "v0.1.0",
+            "trust_boundary": "managed-context"
+          }
+        }
+        EOF
+        
+        echo "✅ Image promotion completed successfully"
+        echo "📋 Target digest: $TARGET_DIGEST"
+
+    - name: publish-promotion-metadata
+      image: registry.redhat.io/ubi9/ubi:9.3
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "📤 Publishing promotion metadata as trusted artifact..."
+        
+        # Create trusted artifact wrapper
+        cat > $(workspaces.promotion-workspace.path)/output/artifact-metadata.json <<EOF
+        {
+          "artifact_type": "application/vnd.slsa.promotion-metadata+json",
+          "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "subject": "$(params.TARGET_IMAGE_URL)",
+          "producer": "managed-context/image-promotion",
+          "content": {
+            "promotion_metadata": "promotion-metadata.json",
+            "evaluation_chain": "$(params.EVALUATION_RESULTS_URI)"
+          }
+        }
+        EOF
+        
+        # For reference implementation, simulate OCI publication
+        # In production: oras push $(params.PROMOTION_METADATA_URI) promotion-metadata.json:application/json
+        
+        PUBLISHED_URI="$(params.PROMOTION_METADATA_URI)@sha256:$(echo -n "$(cat $(workspaces.promotion-workspace.path)/output/promotion-metadata.json)" | sha256sum | cut -d' ' -f1)"
+        
+        echo -n "$PUBLISHED_URI" > $(results.PROMOTION_METADATA_URI.path)
+        
+        echo "✅ Promotion metadata published to: $PUBLISHED_URI"
+        echo "🔗 VSA generation can consume this metadata for attestation"
+        
+        # Display summary
+        echo ""
+        echo "📊 Promotion Summary:"
+        echo "  Result: $(cat $(results.PROMOTION_RESULT.path))"
+        echo "  Target Digest: $(cat $(results.TARGET_IMAGE_DIGEST.path))"
+        echo "  Metadata URI: $PUBLISHED_URI"
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL

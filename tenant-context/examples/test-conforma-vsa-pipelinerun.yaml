@@ -1,0 +1,140 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: test-conforma-vsa-
+  namespace: tenant-namespace
+  labels:
+    app.kubernetes.io/part-of: slsa-konflux-test
+    test.slsa.dev/type: conforma-vsa
+  annotations:
+    test.slsa.dev/description: "Test PipelineRun for conforma-vsa task validation"
+spec:
+  pipelineSpec:
+    description: >-
+      Test pipeline for validating conforma-vsa task functionality
+      in tenant context with mock build artifacts.
+    
+    workspaces:
+      - name: build-artifacts
+        description: Mock build artifacts for testing
+      - name: vsa-results
+        description: VSA output workspace
+      - name: signing-config
+        description: Signing configuration (empty for tenant context)
+    
+    tasks:
+      - name: setup-mock-artifacts
+        taskSpec:
+          description: Create mock build artifacts for testing
+          workspaces:
+            - name: build-artifacts
+          steps:
+            - name: create-mock-data
+              image: registry.redhat.io/ubi9/ubi:latest
+              script: |
+                #!/bin/bash
+                set -euo pipefail
+                
+                echo "📦 Creating mock build artifacts for testing..."
+                
+                # Create mock trust artifacts directory structure
+                mkdir -p $(workspaces.build-artifacts.path)/managed-context/tasks/conforma-vsa/scripts
+                
+                # Mock the converter tool (simplified for testing)
+                cat > $(workspaces.build-artifacts.path)/managed-context/tasks/conforma-vsa/scripts/go.mod <<EOF
+                module convert-conforma-to-vsa
+                go 1.21
+                EOF
+                
+                cat > $(workspaces.build-artifacts.path)/managed-context/tasks/conforma-vsa/scripts/convert-conforma-to-vsa.go <<EOF
+                package main
+                
+                import (
+                    "encoding/json"
+                    "flag"
+                    "fmt"
+                    "os"
+                    "time"
+                )
+                
+                type VSAPredicate struct {
+                    Verifier struct {
+                        ID      string \`json:"id"\`
+                        Version string \`json:"version"\`
+                    } \`json:"verifier"\`
+                    TimeVerified      string   \`json:"timeVerified"\`
+                    ResourceURI       string   \`json:"resourceUri"\`
+                    VerificationResult string  \`json:"verificationResult"\`
+                    VerifiedLevels    []string \`json:"verifiedLevels"\`
+                }
+                
+                type VSAOutput struct {
+                    Predicate VSAPredicate \`json:"predicate"\`
+                }
+                
+                func main() {
+                    var outputFile = flag.String("output", "", "Output file path")
+                    var verifierID = flag.String("verifier-id", "", "Verifier ID")
+                    var image = flag.String("input", "", "Input image (ignored for mock)")
+                    flag.Parse()
+                    
+                    if *outputFile == "" {
+                        fmt.Println("Output file required")
+                        os.Exit(1)
+                    }
+                    
+                    vsa := VSAOutput{
+                        Predicate: VSAPredicate{
+                            TimeVerified:       time.Now().UTC().Format(time.RFC3339),
+                            ResourceURI:        "registry.example.com/test:latest",
+                            VerificationResult: "PASSED",
+                            VerifiedLevels:     []string{"SLSA_BUILD_LEVEL_3"},
+                        },
+                    }
+                    
+                    vsa.Predicate.Verifier.ID = *verifierID
+                    vsa.Predicate.Verifier.Version = "v1.0.0"
+                    
+                    data, _ := json.MarshalIndent(vsa, "", "  ")
+                    os.WriteFile(*outputFile, data, 0644)
+                    fmt.Printf("Mock VSA generated: %s\n", *outputFile)
+                }
+                EOF
+                
+                echo "✅ Mock build artifacts created"
+      
+      - name: conforma-vsa-test
+        taskRef:
+          name: conforma-vsa
+        runAfter:
+          - setup-mock-artifacts
+        params:
+          - name: image
+            value: "registry.example.com/test-app:latest"
+          - name: policy-bundle-ref
+            value: "oci://quay.io/enterprise-contract/ec-policy-data:latest"
+          - name: verifier-id
+            value: "https://tenant.konflux.example.com/test"
+          - name: verifier-version
+            value: "v1.0.0-test"
+          - name: vsa-output-path
+            value: "/workspace/vsa-results/test-vsa.json"
+        workspaces:
+          - name: build-artifacts
+            workspace: build-artifacts
+          - name: vsa-results
+            workspace: vsa-results
+          - name: signing-config
+            workspace: signing-config
+  
+  workspaces:
+    - name: build-artifacts
+      emptyDir: {}
+    - name: vsa-results
+      emptyDir: {}
+    - name: signing-config
+      emptyDir: {}
+  
+  timeouts:
+    pipeline: "10m0s"
+    tasks: "8m0s"

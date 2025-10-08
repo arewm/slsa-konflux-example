@@ -1,0 +1,42 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: test-managed-pipeline-
+  namespace: managed-namespace
+  labels:
+    app.kubernetes.io/part-of: slsa-konflux-test
+    test.slsa.dev/type: managed-pipeline
+  annotations:
+    test.slsa.dev/description: "Test PipelineRun for complete managed pipeline validation"
+spec:
+  pipelineRef:
+    name: slsa-managed-pipeline
+  
+  params:
+    - name: source-image-url
+      value: "registry.example.com/test-app:v1.0.0"
+    - name: target-image-url
+      value: "registry.example.com/test-app:v1.0.0-promoted"
+    - name: policy-bundle-ref
+      value: "oci://quay.io/enterprise-contract/ec-policy-data:latest"
+    - name: tenant-artifacts-uri
+      value: "file:///workspace/tenant-artifacts"
+    - name: oci-storage-base-uri
+      value: "oci://registry.example.com/managed-artifacts"
+    - name: verifier-id
+      value: "https://managed.konflux.example.com/test"
+  
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  
+  timeouts:
+    pipeline: "20m0s"
+    tasks: "15m0s"
+    finally: "5m0s"
