@@ -160,74 +160,75 @@ spec:
           echo "WARNING: Could not find converter in workspace, using inline converter"
           # Fallback: create minimal converter inline
           cat > /tmp/converter/convert-conforma-to-vsa.go <<'GOEOF'
-package main
-import (
-  "encoding/json"
-  "flag"
-  "fmt"
-  "os"
-  "time"
-)
+        package main
 
-type ECReport struct {
-  Success bool `json:"success"`
-  Components []struct {
-    ContainerImage string `json:"containerImage"`
-    Success bool `json:"success"`
-  } `json:"components"`
-}
+        import (
+          "encoding/json"
+          "flag"
+          "fmt"
+          "os"
+          "time"
+        )
 
-type VSA struct {
-  Type string `json:"_type"`
-  PredicateType string `json:"predicateType"`
-  Subject []struct {
-    Name string `json:"name"`
-  } `json:"subject"`
-  Predicate struct {
-    Verifier struct {
-      ID string `json:"id"`
-    } `json:"verifier"`
-    TimeVerified string `json:"timeVerified"`
-    VerificationResult string `json:"verificationResult"`
-  } `json:"predicate"`
-}
+        type ECReport struct {
+          Success bool `json:"success"`
+          Components []struct {
+            ContainerImage string `json:"containerImage"`
+            Success bool `json:"success"`
+          } `json:"components"`
+        }
 
-func main() {
-  input := flag.String("input", "", "Input EC JSON report")
-  output := flag.String("output", "", "Output VSA JSON")
-  verifierID := flag.String("verifier-id", "", "Verifier ID")
-  flag.Parse()
+        type VSA struct {
+          Type string `json:"_type"`
+          PredicateType string `json:"predicateType"`
+          Subject []struct {
+            Name string `json:"name"`
+          } `json:"subject"`
+          Predicate struct {
+            Verifier struct {
+              ID string `json:"id"`
+            } `json:"verifier"`
+            TimeVerified string `json:"timeVerified"`
+            VerificationResult string `json:"verificationResult"`
+          } `json:"predicate"`
+        }
 
-  data, _ := os.ReadFile(*input)
-  var ec ECReport
-  json.Unmarshal(data, &ec)
+        func main() {
+          input := flag.String("input", "", "Input EC JSON report")
+          output := flag.String("output", "", "Output VSA JSON")
+          verifierID := flag.String("verifier-id", "", "Verifier ID")
+          flag.Parse()
 
-  vsa := VSA{
-    Type: "https://in-toto.io/Statement/v1",
-    PredicateType: "https://slsa.dev/verification_summary/v1",
-  }
+          data, _ := os.ReadFile(*input)
+          var ec ECReport
+          json.Unmarshal(data, &ec)
 
-  if len(ec.Components) > 0 {
-    vsa.Subject = []struct{Name string `json:"name"`}{{Name: ec.Components[0].ContainerImage}}
-  }
+          vsa := VSA{
+            Type: "https://in-toto.io/Statement/v1",
+            PredicateType: "https://slsa.dev/verification_summary/v1",
+          }
 
-  vsa.Predicate.Verifier.ID = *verifierID
-  vsa.Predicate.TimeVerified = time.Now().UTC().Format(time.RFC3339)
-  if ec.Success {
-    vsa.Predicate.VerificationResult = "PASSED"
-  } else {
-    vsa.Predicate.VerificationResult = "FAILED"
-  }
+          if len(ec.Components) > 0 {
+            vsa.Subject = []struct{Name string `json:"name"`}{{Name: ec.Components[0].ContainerImage}}
+          }
 
-  out, _ := json.MarshalIndent(vsa, "", "  ")
-  os.WriteFile(*output, out, 0644)
-  fmt.Printf("VSA written to %s\n", *output)
-}
-GOEOF
+          vsa.Predicate.Verifier.ID = *verifierID
+          vsa.Predicate.TimeVerified = time.Now().UTC().Format(time.RFC3339)
+          if ec.Success {
+            vsa.Predicate.VerificationResult = "PASSED"
+          } else {
+            vsa.Predicate.VerificationResult = "FAILED"
+          }
+
+          out, _ := json.MarshalIndent(vsa, "", "  ")
+          os.WriteFile(*output, out, 0644)
+          fmt.Printf("VSA written to %s\n", *output)
+        }
+        GOEOF
           cat > /tmp/converter/go.mod <<'MODEOF'
-module converter
-go 1.21
-MODEOF
+        module converter
+        go 1.21
+        MODEOF
         }
 
         cd /tmp/converter
