@@ -1,7 +1,7 @@
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: EnterpriseContractPolicy
 metadata:
-  name: example-policy
+  name: {{ .Values.release.policyName }}
   namespace: {{ .Values.release.targetNamespace }}
 spec:
   description: SLSA3 policy for Konflux builds

@@ -16,6 +16,6 @@ spec:
         value: pipelines/enterprise-contract.yaml
   params:
     - name: POLICY_CONFIGURATION
-      value: {{ .Values.release.targetNamespace }}/example-policy
+      value: {{ .Values.release.targetNamespace }}/{{ .Values.release.policyName }}
     - name: STRICT
       value: "true"
