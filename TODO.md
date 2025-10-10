@@ -2,9 +2,47 @@
 
 This document tracks outstanding implementation tasks for the SLSA Konflux example project.
 
+## Release Pipeline Modifications
+
+### 1. Create Modified Release Pipeline for Trusted Artifacts
+**Status**: Not Started
+**Priority**: Critical
+
+The upstream `push-to-external-registry` release pipeline has a hardcoded reference to `quay.io/konflux-ci/release-service-trusted-artifacts` for its trusted-artifacts push and pull operations. This needs to be modified to use a configurable location.
+
+- **Issue**: Hardcoded trusted-artifacts location prevents using custom registries: https://github.com/konflux-ci/release-service-catalog/issues/1514
+- **Location**: Create in `managed-context/pipelines/push-to-external-registry-custom/`
+- **Base Source**: Fork from upstream release-service-catalog push-to-external-registry pipeline
+- **Required Changes**:
+  - Replace hardcoded `quay.io/konflux-ci/release-service-trusted-artifacts` references
+  - Make trusted-artifacts registry location configurable via parameters
+  - Ensure both push and pull operations use the same configurable location
+
+**Implementation Details**:
+```yaml
+# Example parameter to add
+params:
+  - name: trustedArtifactsRegistry
+    description: Registry location for trusted artifacts storage
+    default: quay.io/konflux-ci/release-service-trusted-artifacts
+    type: string
+```
+
+**Dependencies**:
+- Understanding of current push-to-external-registry pipeline
+- Access to release-service-catalog repository for reference
+- Trusted artifacts registry setup and configuration
+
+**Validation**:
+- Pipeline should successfully push/pull trusted artifacts from custom registry
+- Configuration should be overridable via ReleasePlanAdmission
+- Backward compatibility with default registry location
+
+---
+
 ## Pipeline Bundle Development
 
-### 1. Create Custom Tekton Pipeline Bundle
+### 2. Create Custom Tekton Pipeline Bundle
 **Status**: Not Started
 **Priority**: High
 
@@ -28,7 +66,7 @@ Build a pipeline tekton bundle based on the upstream [docker-build-oci-ta pipeli
 
 ## Helm Chart for Configuration Management
 
-### 2. Create Helm Chart for Build Services ConfigMap Patching
+### 3. Create Helm Chart for Build Services ConfigMap Patching
 **Status**: Not Started
 **Priority**: High
 
@@ -56,7 +94,7 @@ data:
 ```
 
 **Dependencies**:
-- Custom pipeline bundle from Task #1 must be built and published
+- Custom pipeline bundle from Task #2 must be built and published
 - Understanding of current build-services configmap structure
 - Helm chart testing infrastructure
 
@@ -69,7 +107,7 @@ data:
 
 ## Enterprise Contract Policy Updates
 
-### 3. Update ECP to Require verify-source Task
+### 4. Update ECP to Require verify-source Task
 **Status**: Not Started
 **Priority**: Medium
 
@@ -106,7 +144,7 @@ deny[msg] {
 
 ## Demonstration Scenarios
 
-### 4. Demonstrate CVE Scan Failure
+### 5. Demonstrate CVE Scan Failure
 **Status**: Not Started
 **Priority**: Medium
 
@@ -131,7 +169,7 @@ Create a demonstration showing security scanning in action:
 
 ---
 
-### 5. Demonstrate volatileConfig Exception
+### 6. Demonstrate volatileConfig Exception
 **Status**: Not Started
 **Priority**: Medium
 
@@ -175,10 +213,11 @@ spec:
 
 ### Sequencing
 These tasks have dependencies and should be implemented in order:
-1. Task #1 (Pipeline Bundle) - Foundation for configuration
-2. Task #2 (Helm Chart) - Enables automated deployment
-3. Task #3 (ECP Updates) - Enforces security requirements
-4. Tasks #4 & #5 (Demonstrations) - Validate complete workflow
+1. Task #1 (Release Pipeline) - Critical foundation for trusted artifacts
+2. Task #2 (Build Pipeline Bundle) - Foundation for build configuration
+3. Task #3 (Helm Chart) - Enables automated deployment
+4. Task #4 (ECP Updates) - Enforces security requirements
+5. Tasks #5 & #6 (Demonstrations) - Validate complete workflow
 
 ### Testing Strategy
 Each task should include:
