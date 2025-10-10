@@ -1,0 +1,16 @@
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: EnterpriseContractPolicy
+metadata:
+  name: example-policy
+  namespace: {{ .Values.release.targetNamespace }}
+spec:
+  description: SLSA3 policy for Konflux builds
+  sources:
+    - name: Release Policies
+      policy:
+        - github.com/enterprise-contract/config//slsa3
+      data:
+        - oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest
+  configuration:
+    collections:
+      - slsa3

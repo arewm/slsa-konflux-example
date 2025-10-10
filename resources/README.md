@@ -8,8 +8,12 @@ This Helm chart creates the necessary Konflux resources to onboard a new applica
 - **Application**: The top-level Konflux application resource
 - **Component**: A component linked to a Git repository for building
 - **IntegrationTestScenario**: A policy-based integration test using Enterprise Contract for SLSA3 verification
+- **EnterpriseContractPolicy**: Defines the SLSA3 policy rules for integration and release validation
 - **ReleasePlan**: Defines how and where to release the application
 - **ReleasePlanAdmission**: Configures the release pipeline to push images to an external registry
+- **ServiceAccount**: Service account for release pipeline execution
+- **RoleBinding (authenticated-view)**: Grants view permissions to all authenticated users in the managed namespace
+- **RoleBinding (release-service-account)**: Grants release permissions to the service account in the managed namespace
 
 ## Prerequisites
 
@@ -38,15 +42,6 @@ helm install my-app ./konflux-onboarding \
   --set gitRepoUrl=https://github.com/myorg/myrepo \
   --set namespace=my-namespace \
   --set release.targetNamespace=managed-namespace
-```
-
-To disable releases:
-
-```bash
-helm install my-app ./konflux-onboarding \
-  --set applicationName=my-application \
-  --set gitRepoUrl=https://github.com/myorg/myrepo \
-  --set release.enabled=false
 ```
 
 ### With Custom Values File
@@ -89,8 +84,7 @@ helm install my-app ./konflux-onboarding -f my-values.yaml
 | `containerImage` | Container image for the component | `registry-service.kind-registry/rbean-festoji:latest` |
 | `customContainerImage` | Custom container image URL (requires `dockerconfigjson`) | `""` |
 | `dockerconfigjson` | Base64-encoded dockerconfigjson for custom image authentication | `""` |
-| `release.enabled` | Enable ReleasePlan and ReleasePlanAdmission creation | `true` |
-| `release.targetNamespace` | Target namespace for ReleasePlanAdmission (managed namespace) | `user-ns2` |
+| `release.targetNamespace` | Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy | `user-ns2` |
 | `release.destination` | Release destination registry for the component | `registry-service.kind-registry/released-{applicationName}` |
 | `release.environment` | Environment name for the release | `production` |
 | `release.policyName` | Enterprise Contract policy name for release | `ec-policy` |
@@ -110,34 +104,53 @@ Creates a Component that:
 ### 3. IntegrationTestScenario (named "policy")
 Creates an integration test scenario that:
 - Runs the Enterprise Contract pipeline
-- Validates SLSA3 compliance
+- References the EnterpriseContractPolicy for SLSA3 validation
 - Uses strict policy enforcement
 - Runs conformance tests on built images
 
-### 4. Secret (conditional)
+### 4. EnterpriseContractPolicy (named "example-policy")
+Defines the SLSA3 policy for the application:
+- **Namespace**: Created in the managed namespace (`release.targetNamespace`)
+- **Policy Source**: `github.com/enterprise-contract/config//slsa3`
+- **Collections**: Uses the `slsa3` collection of conformance rules
+- Referenced by both IntegrationTestScenario and ReleasePlanAdmission
+
+### 5. Secret (conditional)
 When using a custom container image, a pull secret is automatically created:
 - **Name**: `<applicationName>-pull-secret`
 - **Type**: `kubernetes.io/dockerconfigjson`
 - Only created when `customContainerImage` is provided
 
-### 5. ReleasePlan (conditional)
-When release is enabled (`release.enabled: true`), creates a ReleasePlan that:
+### 6. ReleasePlan
+Creates a ReleasePlan that:
 - References the Application
 - Targets the namespace where ReleasePlanAdmission is located
 - Triggers release workflows when builds complete
 
-### 6. ReleasePlanAdmission (conditional)
-When release is enabled, creates a ReleasePlanAdmission that:
+### 7. ReleasePlanAdmission
+Creates a ReleasePlanAdmission that:
 - Configures the push-to-external-registry pipeline
 - Maps the component to a destination registry
 - Uses Enterprise Contract for release policy validation
 - Default destination: `registry-service.kind-registry/released-<applicationName>`
 
-### 7. ServiceAccount (conditional)
-When release is enabled, creates a ServiceAccount in the target namespace:
+### 8. ServiceAccount
+Creates a ServiceAccount in the managed namespace:
 - **Name**: Configurable via `release.serviceAccount` (default: `release-service-account`)
 - Used by the release pipeline for authentication and authorization
 - Created in the same namespace as the ReleasePlanAdmission
+
+### 9. RoleBinding (authenticated-view)
+Creates a RoleBinding in the managed namespace:
+- **Name**: `authenticated-view`
+- Grants the `view` ClusterRole to the `system:authenticated` group
+- Allows all authenticated users to view resources in the managed namespace
+
+### 10. RoleBinding (release-service-account)
+Creates a RoleBinding in the managed namespace:
+- **Name**: `{release.serviceAccount}-binding`
+- Grants the `release-pipeline-resource-role` ClusterRole to the release service account
+- Allows the release pipeline to manage resources in the managed namespace
 
 ## Using Custom Container Images
 
@@ -187,11 +200,11 @@ release:
 
 ## Configuring Releases
 
-By default, the chart creates ReleasePlan and ReleasePlanAdmission resources to enable automatic releases of your application to an external registry.
+The chart automatically creates ReleasePlan and ReleasePlanAdmission resources to enable automatic releases of your application to an external registry.
 
 The chart uses two separate namespaces by default:
 - **Application namespace** (`namespace`): Default is `user-ns1` - where the Application, Component, IntegrationTestScenario, and ReleasePlan are created
-- **Managed namespace** (`release.targetNamespace`): Default is `user-ns2` - where the ReleasePlanAdmission and ServiceAccount are created
+- **Managed namespace** (`release.targetNamespace`): Default is `user-ns2` - where the EnterpriseContractPolicy, ReleasePlanAdmission, ServiceAccount, and RoleBindings are created
 
 You can override these defaults as needed for your environment.
 
@@ -242,27 +255,21 @@ release:
 
 This creates:
 - Application, Component, IntegrationTestScenario, ReleasePlan in `dev-namespace`
-- ReleasePlanAdmission in `managed-release-namespace`
-
-### Disabling Releases
-
-To create resources without release automation:
-
-```bash
-helm install my-app ./konflux-onboarding \
-  --set applicationName=my-application \
-  --set gitRepoUrl=https://github.com/myorg/myrepo \
-  --set namespace=my-namespace \
-  --set release.enabled=false
-```
+- EnterpriseContractPolicy, ReleasePlanAdmission, ServiceAccount, RoleBinding in `managed-release-namespace`
 
 ## Integration Test Details
 
 The IntegrationTestScenario created by this chart:
 - **Name**: `policy`
 - **Pipeline**: Uses the Enterprise Contract pipeline from Konflux build-definitions
-- **Policy**: SLSA3 policy from the Enterprise Contract config repository
+- **Policy**: References the `example-policy` EnterpriseContractPolicy in the managed namespace
+- **Policy Configuration**: `{targetNamespace}/example-policy`
 - **Mode**: Strict enforcement (builds will fail if policy violations are found)
+
+The `example-policy` EnterpriseContractPolicy uses:
+- **Policy Source**: `github.com/enterprise-contract/config//slsa3`
+- **Collections**: `slsa3` (SLSA v0.1 levels 1, 2 & 3 rules plus basic Konflux checks)
+- **Data Source**: Acceptable Tekton bundles from `quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles`
 
 ## Example: Complete Deployment
 
@@ -295,13 +302,16 @@ Note: This will remove the Helm release but may not delete all Konflux-generated
 
 ### Using a Different Policy
 
-To use a different Enterprise Contract policy, you can create a custom template or modify the IntegrationTestScenario after deployment:
+To use a different Enterprise Contract policy, you can modify the EnterpriseContractPolicy after deployment:
 
 ```bash
-kubectl edit integrationtestscenario policy -n my-namespace
+kubectl edit enterprisecontractpolicy example-policy -n managed-namespace
 ```
 
-Change the `POLICY_CONFIGURATION` parameter value to point to a different policy.
+You can modify:
+- `spec.sources[].policy`: Change the policy source URL
+- `spec.configuration.collections`: Change the collection (e.g., from `slsa3` to another collection)
+- `spec.configuration.include/exclude`: Add or remove specific policy rules
 
 ### Adding Multiple Components
 
@@ -325,6 +335,12 @@ kubectl get component my-application -n my-namespace -o yaml
 ### Check Integration Test Status
 ```bash
 kubectl get integrationtestscenario policy -n my-namespace -o yaml
+```
+
+### Check EnterpriseContractPolicy Status
+```bash
+# Check in the managed namespace
+kubectl get enterprisecontractpolicy example-policy -n managed-namespace -o yaml
 ```
 
 ### Check ReleasePlan Status

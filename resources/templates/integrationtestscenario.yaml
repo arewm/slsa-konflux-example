@@ -16,6 +16,6 @@ spec:
         value: pipelines/enterprise-contract.yaml
   params:
     - name: POLICY_CONFIGURATION
-      value: github.com/enterprise-contract/config//slsa3
+      value: {{ .Values.release.targetNamespace }}/example-policy
     - name: STRICT
       value: "true"

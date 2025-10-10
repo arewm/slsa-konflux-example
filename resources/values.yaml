@@ -35,10 +35,7 @@ dockerconfigjson: ""
 
 # Release configuration
 release:
-  # Optional: Enable release plan and admission (default: true)
-  enabled: true
-
-  # Optional: Target namespace for ReleasePlanAdmission
+  # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
   # This is where the release plan admission will be created (managed namespace)
   targetNamespace: "user-ns2"
 

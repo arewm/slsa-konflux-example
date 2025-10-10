@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.release.serviceAccount }}-binding
+  namespace: {{ .Values.release.targetNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-pipeline-resource-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.release.serviceAccount }}
+    namespace: {{ .Values.release.targetNamespace }}

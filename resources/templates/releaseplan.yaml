@@ -1,4 +1,3 @@
-{{- if .Values.release.enabled }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: ReleasePlan
 metadata:
@@ -7,4 +6,3 @@ metadata:
 spec:
   application: {{ .Values.applicationName }}
   target: {{ .Values.release.targetNamespace }}
-{{- end }}

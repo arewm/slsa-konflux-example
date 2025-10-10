@@ -1,4 +1,3 @@
-{{- if .Values.release.enabled }}
 {{- $destination := .Values.release.destination | default (printf "registry-service.kind-registry/released-%s" .Values.applicationName) }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: ReleasePlanAdmission
@@ -27,4 +26,3 @@ spec:
       components:
         - name: {{ .Values.applicationName }}
           repository: {{ $destination }}
-{{- end }}
