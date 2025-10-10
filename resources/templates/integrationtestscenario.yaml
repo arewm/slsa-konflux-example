@@ -1,0 +1,21 @@
+apiVersion: appstudio.redhat.com/v1beta2
+kind: IntegrationTestScenario
+metadata:
+  name: policy
+  namespace: {{ .Values.namespace }}
+spec:
+  application: {{ .Values.applicationName }}
+  resolverRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/konflux-ci/build-definitions
+      - name: revision
+        value: main
+      - name: pathInRepo
+        value: pipelines/enterprise-contract.yaml
+  params:
+    - name: POLICY_CONFIGURATION
+      value: github.com/enterprise-contract/config//slsa3
+    - name: STRICT
+      value: "true"

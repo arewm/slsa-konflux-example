@@ -1,0 +1,17 @@
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Component
+metadata:
+  name: {{ .Values.applicationName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  componentName: {{ .Values.applicationName }}
+  application: {{ .Values.applicationName }}
+  containerImage: {{ .Values.customContainerImage | default .Values.containerImage }}
+{{- if .Values.customContainerImage }}
+  secret: {{ .Values.applicationName }}-pull-secret
+{{- end }}
+  source:
+    git:
+      url: {{ .Values.gitRepoUrl }}
+      revision: {{ .Values.gitRevision }}
+      context: {{ .Values.gitContext }}

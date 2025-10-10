@@ -1,0 +1,30 @@
+{{- if .Values.release.enabled }}
+{{- $destination := .Values.release.destination | default (printf "registry-service.kind-registry/released-%s" .Values.applicationName) }}
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: ReleasePlanAdmission
+metadata:
+  name: {{ .Values.applicationName }}-release-admission
+  namespace: {{ .Values.release.targetNamespace }}
+spec:
+  applications:
+    - {{ .Values.applicationName }}
+  origin: {{ .Values.namespace }}
+  environment: {{ .Values.release.environment }}
+  policy: {{ .Values.release.policyName }}
+  serviceAccount: {{ .Values.release.serviceAccount }}
+  pipeline:
+    pipelineRef:
+      resolver: git
+      params:
+        - name: url
+          value: https://github.com/konflux-ci/release-service-catalog
+        - name: revision
+          value: development
+        - name: pathInRepo
+          value: pipelines/managed/push-to-external-registry/push-to-external-registry.yaml
+  data:
+    mapping:
+      components:
+        - name: {{ .Values.applicationName }}
+          repository: {{ $destination }}
+{{- end }}

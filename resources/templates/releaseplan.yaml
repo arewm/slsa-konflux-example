@@ -1,0 +1,10 @@
+{{- if .Values.release.enabled }}
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: ReleasePlan
+metadata:
+  name: {{ .Values.applicationName }}-release
+  namespace: {{ .Values.namespace }}
+spec:
+  application: {{ .Values.applicationName }}
+  target: {{ .Values.release.targetNamespace }}
+{{- end }}

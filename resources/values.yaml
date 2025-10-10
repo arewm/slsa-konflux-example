@@ -1,0 +1,60 @@
+# Default values for konflux-onboarding
+# This is a YAML-formatted file.
+
+# Name of the application and component
+applicationName: ""
+
+# Git repository URL for the component
+gitRepoUrl: ""
+
+# Namespace to deploy resources
+namespace: "user-ns1"
+
+# Optional: Git revision/branch to track (defaults to main)
+gitRevision: "main"
+
+# Optional: Context directory in the repository
+gitContext: "."
+
+# Optional: Application display name (if different from applicationName)
+displayName: ""
+
+# Optional: Container image for the component (defaults to registry-service.kind-registry/rbean-festoji:latest)
+# If you provide a custom image, you must also provide dockerconfigjson
+containerImage: "registry-service.kind-registry/rbean-festoji:latest"
+
+# Optional: Custom container image URL (overrides containerImage default)
+# When set, you must provide dockerconfigjson for authentication
+customContainerImage: ""
+
+# Optional: Docker config JSON for custom container image authentication
+# Required when customContainerImage is set
+# This should be the base64-encoded .dockerconfigjson content
+# Example: eyJhdXRocyI6eyJyZWdpc3RyeS5leGFtcGxlLmNvbSI6eyJ1c2VybmFtZSI6InVzZXIiLCJwYXNzd29yZCI6InBhc3MiLCJhdXRoIjoiZFhObGNqcHdZWE56In19fQ==
+dockerconfigjson: ""
+
+# Release configuration
+release:
+  # Optional: Enable release plan and admission (default: true)
+  enabled: true
+
+  # Optional: Target namespace for ReleasePlanAdmission
+  # This is where the release plan admission will be created (managed namespace)
+  targetNamespace: "user-ns2"
+
+  # Optional: Release destination registry
+  # This is where the component will be pushed after release
+  # If not set, defaults to registry-service.kind-registry/released-{applicationName}
+  destination: ""
+
+  # Optional: Environment name for the release
+  # Default: production
+  environment: "production"
+
+  # Optional: Enterprise Contract policy name
+  # Default: ec-policy
+  policyName: "ec-policy"
+
+  # Optional: Service account for release pipeline
+  # Default: release-service-account
+  serviceAccount: "release-service-account"
