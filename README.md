@@ -63,5 +63,63 @@ helm install festoji ./resources \
   --set release.targetNamespace=user-ns2
 ```
 
-Now that you have onboarded your component, your PR will report a running build and you can use `tkn` to see it in the cluster! Let's merge that
-PR, let the build run, and then look at what all just happened.
+Now that you have onboarded your component, your PR will report a running build and you can use `tkn` to see it in the cluster!
+
+## Building isn't enough
+
+Let's merge that PR, let the build run, and then look at what all we have configured Konflux to run.
+
+### Build pipeline
+
+If you look in your source repository, there will be two different PipelineRuns defined in the `.tekton` directory. One for PR events and another for push events.
+By default, these are almost identical so the build you see how will largely be the same as the build you saw previously. This means that any build-time checks
+(including clair-in-ci and clamAV) will still run on every build. If we inspect the provenance, we can see the results of these scans.
+
+```bash
+cosign download [...] | jq [...]
+```
+
+We didn't just build the artifact, however, this build task also created an SBOM for you by running `syft`.
+
+```bash
+[...]
+```
+
+### Integration tests
+
+Once Tekton Chains has finished processing the Pipeline Run and generating provenance for the artifacts, the integration service will trigger any tests that are configured.
+If you have enabled auto-releasing after all required tests pass, a new Release will be created to trigger the next step.
+
+### Pushing images elsewhere
+
+Even if some developers want access to all credentials, to properly isolate privileged environments, we can release artifacts via pipelines in separate managed namespaces.
+The Release that was auto-created references a ReleasePlan in the tenant namespace which is mapped to a ReleasePlanAdmission in a specific managed namespace. When the Release
+is created, a new Tekton pipeline will be created as specified in that ReleasePlanAdmission.
+
+When we ran the `helm install` above, we created a simple ReleasePlanAdmission which will run a Pipeline to push this image to a separate location after verifying a specific
+policy.
+
+```bash
+kubectl get [...]
+```
+
+#### What's in a policy?
+
+As we mentioned at the beginning, we are balancing flexibility with security. We use [Conforma](https://conforma.dev) as a policy engine to ensure that specific requirements
+(policy rules) are met. Conforma can consume [...]
+
+TODO: Talk more about what Conforma can consume and how to construct the policy. Briefly review the policy that we created on cluster. Talk about policy-driven-development using the manged policy
+
+## What else can this pipeline do?
+
+TODO: change to hermetic with more acurate SBOM
+
+## What else can Conforma do?
+
+TODO: introduce vulnerability, have policy exception
+
+## Additional references
+
+### Documentation
+### Recordings
+### Controllers
