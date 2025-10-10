@@ -10,8 +10,8 @@ spec:
   origin: {{ .Values.namespace }}
   environment: {{ .Values.release.environment }}
   policy: {{ .Values.release.policyName }}
-  serviceAccount: {{ .Values.release.serviceAccount }}
   pipeline:
+    serviceAccountName: {{ .Values.release.serviceAccount }}
     pipelineRef:
       resolver: git
       params:

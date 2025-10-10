@@ -5,12 +5,14 @@ metadata:
   namespace: {{ .Values.release.targetNamespace }}
 spec:
   description: SLSA3 policy for Konflux builds
+  publicKey: 'k8s://tekton-pipelines/public-key'
   sources:
     - name: Release Policies
       policy:
-        - github.com/enterprise-contract/config//slsa3
+        - oci::quay.io/enterprise-contract/ec-release-policy:konflux
       data:
+        - github.com/release-engineering/rhtap-ec-policy//data
         - oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest
-  configuration:
-    collections:
-      - slsa3
+      config:
+        include:
+          - '@slsa3'
