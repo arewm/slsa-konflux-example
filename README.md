@@ -56,7 +56,11 @@ configuring Pipelines as Code so that you can create builds from your git commit
 to test and release all of the artifacts you build.
 
 ```bash
-helm [...]
+helm install festoji ./resources \
+  --set applicationName=festoji \
+  --set gitRepoUrl=https://github.com/yourfork/festoji \
+  --set namespace=user-ns1 \
+  --set release.targetNamespace=user-ns2
 ```
 
 Now that you have onboarded your component, your PR will report a running build and you can use `tkn` to see it in the cluster! Let's merge that
