@@ -6,7 +6,7 @@ metadata:
     pipelines.openshift.io/runtime: generic
     pipelines.openshift.io/strategy: docker
     pipelines.openshift.io/used-by: build-cloud
-  name: docker-build-oci-ta
+  name: slsa-e2e-oci-ta
 spec:
   description: |
     This pipeline is ideal for testing the SLSA e2e flow in KinD.
@@ -101,8 +101,14 @@ spec:
     - name: skip-checks
       value: $(params.skip-checks)
     taskRef:
-      name: init
-      version: "0.2"
+      resolver: bundles
+      params:
+        - name: name
+          value: init
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-init:0.2
+        - name: kind
+          value: task
   - name: clone-repository
     params:
     - name: url
@@ -116,8 +122,39 @@ spec:
     runAfter:
     - init
     taskRef:
-      name: git-clone-oci-ta
-      version: "0.1"
+      resolver: bundles
+      params:
+        - name: name
+          value: git-clone-oci-ta
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1
+        - name: kind
+          value: task
+    when:
+    - input: $(tasks.init.results.build)
+      operator: in
+      values:
+      - "true"
+    workspaces:
+    - name: basic-auth
+      workspace: git-auth
+  - name: verify-source
+    params:
+    - name: url
+      value: $(params.git-url)
+    - name: revision
+      value: $(params.revision)
+    runAfter:
+    - clone-repository
+    taskRef:
+      resolver: bundles
+      params:
+        - name: name
+          value: verify-source
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-verify-source:0.1
+        - name: kind
+          value: task
     when:
     - input: $(tasks.init.results.build)
       operator: in
@@ -139,8 +176,14 @@ spec:
     runAfter:
     - clone-repository
     taskRef:
-      name: prefetch-dependencies-oci-ta
-      version: "0.2"
+      resolver: bundles
+      params:
+        - name: name
+          value: prefetch-dependencies-oci-ta
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-prefetch-dependencies-oci-ta:0.2
+        - name: kind
+          value: task
     workspaces:
     - name: git-basic-auth
       workspace: git-auth
@@ -180,8 +223,14 @@ spec:
     runAfter:
     - prefetch-dependencies
     taskRef:
-      name: buildah-oci-ta
-      version: "0.6"
+      resolver: bundles
+      params:
+        - name: name
+          value: buildah-oci-ta
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-buildah-oci-ta:0.6
+        - name: kind
+          value: task
     when:
     - input: $(tasks.init.results.build)
       operator: in
@@ -206,8 +255,14 @@ spec:
     runAfter:
     - build-container
     taskRef:
-      name: build-image-index
-      version: "0.1"
+      resolver: bundles
+      params:
+        - name: name
+          value: build-image-index
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.1
+        - name: kind
+          value: task
     when:
     - input: $(tasks.init.results.build)
       operator: in
@@ -222,8 +277,14 @@ spec:
     runAfter:
     - build-image-index
     taskRef:
-      name: clair-scan
-      version: "0.3"
+      resolver: bundles
+      params:
+        - name: name
+          value: clair-scan
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-clair-scan:0.3
+        - name: kind
+          value: task
     when:
     - input: $(params.skip-checks)
       operator: in
@@ -242,8 +303,14 @@ spec:
     runAfter:
     - build-image-index
     taskRef:
-      name: sast-shell-check-oci-ta
-      version: "0.1"
+      resolver: bundles
+      params:
+        - name: name
+          value: sast-shell-check-oci-ta
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-sast-shell-check-oci-ta:0.1
+        - name: kind
+          value: task
     when:
     - input: $(params.skip-checks)
       operator: in
@@ -259,8 +326,14 @@ spec:
     runAfter:
     - build-image-index
     taskRef:
-      name: apply-tags
-      version: "0.2"
+      resolver: bundles
+      params:
+        - name: name
+          value: apply-tags
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-apply-tags:0.2
+        - name: kind
+          value: task
   - name: push-dockerfile
     params:
     - name: IMAGE
@@ -276,8 +349,14 @@ spec:
     runAfter:
     - build-image-index
     taskRef:
-      name: push-dockerfile-oci-ta
-      version: "0.1"
+      resolver: bundles
+      params:
+        - name: name
+          value: push-dockerfile-oci-ta
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-push-dockerfile-oci-ta:0.1
+        - name: kind
+          value: task
     workspaces: []
   workspaces:
   - name: git-auth

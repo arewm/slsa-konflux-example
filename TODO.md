@@ -43,7 +43,7 @@ params:
 ## Pipeline Bundle Development
 
 ### 2. Create Custom Tekton Pipeline Bundle
-**Status**: Not Started
+**Status**: Review needed
 **Priority**: High
 
 Build a pipeline tekton bundle based on the upstream [docker-build-oci-ta pipeline](https://github.com/konflux-ci/build-definitions/tree/main/pipelines/docker-build-oci-ta) with the following modifications:
@@ -108,7 +108,7 @@ data:
 ## Enterprise Contract Policy Updates
 
 ### 4. Update ECP to Require verify-source Task
-**Status**: Not Started
+**Status**: Review needed
 **Priority**: Medium
 
 Modify the Enterprise Contract Policy (ECP) to enforce the presence of the verify-source task:
