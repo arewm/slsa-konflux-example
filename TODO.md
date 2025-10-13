@@ -5,7 +5,7 @@ This document tracks outstanding implementation tasks for the SLSA Konflux examp
 ## Release Pipeline Modifications
 
 ### 1. Create Modified Release Pipeline for Trusted Artifacts
-**Status**: Not Started
+**Status**: Review needed
 **Priority**: Critical
 
 The upstream `push-to-external-registry` release pipeline has a hardcoded reference to `quay.io/konflux-ci/release-service-trusted-artifacts` for its trusted-artifacts push and pull operations. This needs to be modified to use a configurable location.
