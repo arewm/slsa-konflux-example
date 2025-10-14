@@ -79,9 +79,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/verify-access-to-resources/verify-access-to-resources.yaml
       params:
@@ -102,9 +102,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/collect-data/collect-data.yaml
       params:
@@ -127,9 +127,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       runAfter:
         - verify-access-to-resources
     - name: collect-task-params
@@ -137,9 +137,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/collect-task-params/collect-task-params.yaml
       params:
@@ -154,9 +154,9 @@ spec:
               {"resultIndex": 1, "key": ".conforma.timeout", "default": "8h0m0s"}
             ]
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
         - name: ociStorage
           value: $(params.ociStorage)
         - name: sourceDataArtifact
@@ -170,7 +170,7 @@ spec:
         - name: dataPath
           value: "$(tasks.collect-data.results.data)"
         - name: schema
-          value: $(params.taskGitUrl)/raw/$(params.taskGitRevision)/schema/dataKeys.json
+          value: https://github.com/konflux-ci/release-service-catalog/raw/production/schema/dataKeys.json
         - name: systems
           value: |
             [
@@ -185,15 +185,15 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       taskRef:
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/check-data-keys/check-data-keys.yaml
         resolver: git
@@ -204,9 +204,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/reduce-snapshot/reduce-snapshot.yaml
       params:
@@ -229,9 +229,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       runAfter:
         - collect-data
     - name: apply-mapping
@@ -240,9 +240,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/apply-mapping/apply-mapping.yaml
       params:
@@ -261,9 +261,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       runAfter:
         - reduce-snapshot
     - name: verify-conforma
@@ -312,9 +312,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/push-snapshot/push-snapshot.yaml
       params:
@@ -333,9 +333,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       runAfter:
         - verify-conforma
     - name: collect-registry-token-secret
@@ -343,9 +343,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/collect-registry-token-secret/collect-registry-token-secret.yaml
       params:
@@ -360,9 +360,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       runAfter:
         - collect-data
     - name: make-repo-public
@@ -375,9 +375,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/make-repo-public/make-repo-public.yaml
       params:
@@ -396,9 +396,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       runAfter:
         - collect-registry-token-secret
         - push-snapshot
@@ -418,16 +418,16 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "$(params.taskGitUrl)"
+          value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "$(params.taskGitRevision)"
+          value: "production"
       taskRef:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: $(params.taskGitRevision)
+            value: production
           - name: pathInRepo
             value: tasks/managed/update-cr-status/update-cr-status.yaml
       runAfter:
