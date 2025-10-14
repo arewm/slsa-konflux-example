@@ -58,7 +58,7 @@ spec:
     - name: ociStorage
       type: string
       description: The OCI repository where the Trusted Artifacts are stored
-      default: "quay.io/organization/repository"
+      default: "registry-service.kind-registry/trusted-artifacts"
     - name: orasOptions
       description: oras options to pass to Trusted Artifacts calls
       type: string
