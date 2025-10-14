@@ -62,7 +62,7 @@ spec:
     - name: orasOptions
       description: oras options to pass to Trusted Artifacts calls
       type: string
-      default: "--plain-http"
+      default: "--insecure"
     - name: trustedArtifactsDebug
       description: Flag to enable debug logging in trusted artifacts. Set to a non-empty string to enable
       type: string
