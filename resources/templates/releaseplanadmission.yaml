@@ -16,11 +16,11 @@ spec:
       resolver: git
       params:
         - name: url
-          value: https://github.com/konflux-ci/release-service-catalog
+          value: https://github.com/arewm/slsa-konflux-example
         - name: revision
-          value: development
+          value: main
         - name: pathInRepo
-          value: pipelines/managed/push-to-external-registry/push-to-external-registry.yaml
+          value: managed-context/pipelines/slsa-e2e-release/slsa-e2e-release.yaml
   data:
     mapping:
       components:
