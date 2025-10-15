@@ -55,6 +55,18 @@ Once your Konflux instance is deployed, we need to make sure that your tenant an
 configuring Pipelines as Code so that you can create builds from your git commits, but also ensuring that we have the necessary configuration
 to test and release all of the artifacts you build.
 
+First, configure the build-service pipeline bundles (this requires admin access):
+
+```bash
+# Delete any existing non-Helm managed ConfigMap
+kubectl delete configmap build-pipeline-config -n build-service
+
+# Install the build configuration via Helm
+helm install build-config ./admin
+```
+
+Then, onboard your component:
+
 ```bash
 helm install festoji ./resources \
   --set applicationName=festoji \

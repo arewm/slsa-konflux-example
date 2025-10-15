@@ -1,0 +1,14 @@
+apiVersion: v2
+name: build-service-config
+description: Admin-only Helm chart for configuring Konflux build-service pipeline bundles
+type: application
+version: 0.1.0
+appVersion: "1.0"
+keywords:
+  - konflux
+  - build-service
+  - admin
+  - tekton
+  - pipelines
+maintainers:
+  - name: SLSA Konflux Example Team

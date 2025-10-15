@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configMapName }}
+  namespace: {{ .Values.namespace }}
+data:
+  config.yaml: |
+{{- if .Values.fullConfig }}
+{{ .Values.fullConfig | indent 4 }}
+{{- else }}
+    default-pipeline-name: {{ .Values.defaultPipelineName }}
+    pipelines:
+{{- if .Values.pipelines }}
+{{- range .Values.pipelines }}
+    - name: {{ .name }}
+      bundle: {{ .bundle }}
+{{- end }}
+{{- else }}
+    # No pipeline overrides specified
+    # Add pipeline entries in values.yaml to configure custom bundles
+    - name: fbc-builder
+      bundle: quay.io/konflux-ci/tekton-catalog/pipeline-fbc-builder@sha256:d6fd96a7bb6fe67082518ea59a916dde15a9584b3b2e109e48fc2ca104d8e8e5
+    - name: docker-build
+      bundle: quay.io/konflux-ci/tekton-catalog/pipeline-docker-build@sha256:d7e9f4670436107551ea8b0fd022df7af60256a2cbc179bb34759a32c0e8a64c
+    - name: docker-build-oci-ta
+      bundle: quay.io/konflux-ci/tekton-catalog/pipeline-docker-build-oci-ta@sha256:817f9c709df00fd7d21c9e3be2f18db2039e5f5995d24512af644d787ad7c7b6
+    - name: tekton-bundle-builder
+      bundle: quay.io/konflux-ci/tekton-catalog/pipeline-tekton-bundle-builder@sha256:792a5ca1a41c238a953fa2af4a3823a199d0d1b81084a26adb862aa6158b6723
+    - name: tekton-bundle-builder-oci-ta
+      bundle: quay.io/konflux-ci/tekton-catalog/pipeline-tekton-bundle-builder-oci-ta@sha256:4ab59c8ba98801a6f0ba1070e690297c65fd09471e0536696bd6708bb3f9b878
+{{- end }}
+{{- end }}

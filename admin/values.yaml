@@ -1,0 +1,32 @@
+# Default values for build-service-config
+# This is an ADMIN-ONLY Helm chart for configuring build-service pipeline bundles
+# WARNING: This chart modifies cluster-wide build-service configuration
+
+# Namespace where build-service is installed
+namespace: build-service
+
+# ConfigMap name (should not be changed unless build-service uses a different name)
+configMapName: build-pipeline-config
+
+# Default pipeline name (the pipeline used when no specific pipeline is requested)
+defaultPipelineName: slsa-e2e-oci-ta
+
+# Pipeline bundle overrides
+# Add entries here to override specific pipeline bundle references
+# Each entry should specify the pipeline name and the new bundle reference
+pipelines:
+  - name: slsa-e2e-oci-ta
+    bundle: quay.io/arewm/pipeline-slsa-e2e-oci-ta:latest
+
+# Full pipeline configuration (alternative to individual overrides)
+# If you need complete control, you can specify all pipelines here
+# When set, this takes precedence over individual pipeline overrides
+fullConfig: ""
+  # Example:
+  # |
+  # default-pipeline-name: slsa-e2e-oci-ta
+  # pipelines:
+  # - name: fbc-builder
+  #   bundle: quay.io/konflux-ci/tekton-catalog/pipeline-fbc-builder@sha256:...
+  # - name: docker-build
+  #   bundle: quay.io/konflux-ci/tekton-catalog/pipeline-docker-build@sha256:...
