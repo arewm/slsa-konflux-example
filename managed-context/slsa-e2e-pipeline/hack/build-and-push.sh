@@ -83,7 +83,7 @@ fetch_task_digest() {
     echo "Fetching digest for: $bundle" 1>&2
     local digest
     if command -v skopeo >/dev/null 2>&1; then
-        digest=$(retry skopeo inspect --no-tags "docker://${bundle}" 2>/dev/null | grep -o '"Digest"[[:space:]]*:[[:space:]]*"sha256:[a-f0-9]*"' | grep -o 'sha256:[a-f0-9]*')
+        digest=$(retry skopeo inspect --no-tags "docker://${bundle}" 2>/dev/null | grep -o '"Digest"[[:space:]]*:[[:space:]]*"sha256:[a-f0-9]*"' | head -1 | grep -o 'sha256:[a-f0-9]*')
     else
         # Fallback to crane if available
         if command -v crane >/dev/null 2>&1; then
@@ -138,8 +138,10 @@ pin_task_bundles() {
 
         echo "  Task ${i}: ${bundle_without_digest} -> ${pinned_bundle}" 1>&2
 
-        # Update the bundle value with digest
-        yq e -i ".spec.tasks[${i}].taskRef.params[] |= (select(.name == \"bundle\") | .value = \"${pinned_bundle}\")" "$output_yaml"
+        # Update the bundle value with digest - escape special characters for yq
+        local escaped_bundle="${pinned_bundle//\\/\\\\}"
+        escaped_bundle="${escaped_bundle//\"/\\\"}"
+        yq e -i "(.spec.tasks[${i}].taskRef.params[] | select(.name == \"bundle\") | .value) = \"${escaped_bundle}\"" "$output_yaml"
 
         # Save to bundle list for acceptable bundles
         echo "$pinned_bundle" >> "$bundle_list_file"
