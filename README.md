@@ -13,7 +13,7 @@ it while ensuring that we meet all required policies. We will show you along the
 
 ## Table of contents
 
-
+TODO: complete
 
 ## Pre-requisites
 
@@ -22,7 +22,13 @@ Before being able to explore SLSA with Konflux, you will need to have a running 
 - [Bootstrapping the cluster](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#bootstrapping-the-cluster)
 - [Enabling Pipelines Triggering via Webhooks](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#enable-pipelines-triggering-via-webhooks)
 
-NOTE: You will need to configure your repository with the Pipelines as Code application, so make sure you don't lose track of it when you create it.
+**NOTE:** You will need to configure your repository with the Pipelines as Code application, so make sure you don't lose track of it when you create it.
+
+**NOTE:** If you lose your kubeconfig to connect to your KinD cluster, you can re-establish it with
+
+```bash
+$ kind export kubeconfig -n konflux 
+```
 
 Create two namespaces on your cluster.
   - One is a tenant namespace where the artifact builds will occur
@@ -49,7 +55,32 @@ onboard a component.
 
 In this phase, we will walk you through what is needed to get your source repository ready to explore SLSA, Konflux style.
 
+### Pick a repository
+
+If you don't have a repository you want to build a container image from, you can pick one and fork it. If you don't have one, you
+can always make [seasonally festive emojis](https://github.com/lcarva/festoji).
+
+Once you have a repository under your control, you will need to install the GitHub application that you previously created. If you
+have forgotten what your app is to install on your repository, you can see the apps that you have created 
+[here](https://github.com/settings/apps).
+
+### Onboard to source-tool
+
+TODO: instructions
+
 ## Onboard the component
+
+If you installed Konflux using the instructions [above](#pre-requisites), we will use the two namespaces created for you
+
+- `user-ns1`: This will be the unprivileged tenant namespace
+- `user-ns2`: This will be the privileged managed namespace
+
+If you need to connect to the cluster, you can export the kubeconfig:
+
+```bash
+# By default, the cluster name is konflux
+kind export kubeconfig -n konflux 
+```
 
 Once your Konflux instance is deployed, we need to make sure that your tenant and managed namespaces are configured. This not only includes
 configuring Pipelines as Code so that you can create builds from your git commits, but also ensuring that we have the necessary configuration
@@ -68,9 +99,10 @@ helm install build-config ./admin
 Then, onboard your component:
 
 ```bash
+export FORK_ORG="yourfork"
 helm install festoji ./resources \
   --set applicationName=festoji \
-  --set gitRepoUrl=https://github.com/yourfork/festoji \
+  --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji \
   --set namespace=user-ns1 \
   --set release.targetNamespace=user-ns2
 ```
