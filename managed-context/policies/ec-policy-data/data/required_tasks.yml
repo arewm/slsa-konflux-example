@@ -1,0 +1,37 @@
+---
+# https://conforma.dev/docs/policy/packages/release_tasks.html
+# This file defines what tasks are required to be present in the provenance.
+# Additional tasks can be present, but if they affect the integrity of the
+# built artifact, these additional tasks MUST be trusted.
+pipeline-required-tasks:
+  docker:
+    - effective_on: "2025-04-01T00:00:00Z"
+      tasks:
+        - [buildah, buildah-remote, buildah-oci-ta, buildah-remote-oci-ta]
+        - clair-scan
+        - [git-clone, git-clone-oci-ta]
+        - init
+        - [prefetch-dependencies, prefetch-dependencies-oci-ta]
+        - [sast-shell-check, sast-shell-check-oci-ta]
+        - verify-source
+  generic:
+    - effective_on: "2025-04-01T00:00:00Z"
+      tasks:
+        - [buildah, buildah-remote, buildah-oci-ta, buildah-remote-oci-ta]
+        - clair-scan
+        - [git-clone, git-clone-oci-ta]
+        - init
+        - [prefetch-dependencies, prefetch-dependencies-oci-ta]
+        - [sast-shell-check, sast-shell-check-oci-ta]
+        - verify-source
+
+# https://conforma.dev/docs/policy/packages/release_tasks.html
+required-tasks:
+  - effective_on: "2025-04-01T00:00:00Z"
+    tasks:
+      - clair-scan
+      - [git-clone, git-clone-oci-ta]
+      - init
+      - [prefetch-dependencies, prefetch-dependencies-oci-ta]
+      - [sast-shell-check, sast-shell-check-oci-ta]
+      - verify-source
