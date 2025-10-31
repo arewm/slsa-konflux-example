@@ -85,15 +85,11 @@ rule_data:
     description: >-
       The type of version control used by the container source.
       Generally one of git, hg, svn, bzr, cvs
-  - name: vendor
-    description: Name of the vendor.
-    values:
-    - 'Red Hat, Inc.'
   - name: version
     description: Version of the image.
   - name: org.opencontainers.image.created
     description: >-
-      The creation timestamp of the image. This label must always be set by the Konflux build task for on-prem product releases. The policy must also support reproducible builds by allowing users to override the timestamp using the SOURCE_DATE_EPOCH environment variable.
+      The creation timestamp of the image. This label must always be set by the Konflux build task. The policy must also support reproducible builds by allowing users to override the timestamp using the SOURCE_DATE_EPOCH environment variable.
     effective_on: "2026-06-07T00:00:00Z"
   optional_labels:
   - name: maintainer
@@ -110,8 +106,6 @@ rule_data:
   - name: io.openshift.tags
   - name: summary
   - name: name
-    effective_on: "2024-04-13T00:00:00Z"
-  - name: com.redhat.component
     effective_on: "2024-04-13T00:00:00Z"
 
   # https://conforma.dev/docs/policy/packages/release_labels.html#labels__required_labels
@@ -183,7 +177,9 @@ rule_data:
   # No binary python deps
   # https://conforma.dev/docs/policy/packages/release_sbom_cyclonedx.html#sbom_cyclonedx__disallowed_package_attributes
   disallowed_attributes:
-    - name: cachi2:pip:package:binary
+    - name: hermeto:bundler:package:binary
+      value: "true"
+    - name: hermeto:pip:package:binary
       value: "true"
 
   # No releases on Fridays and weekends
