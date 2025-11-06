@@ -161,3 +161,46 @@ spec:
 
         images_processed=$(echo "${images_processed_template}" | sed "s/%s/$digests_processed/")
         echo "$images_processed" > images-processed.json
+    - name: oci-attach-report
+      image: quay.io/konflux-ci/oras:latest@sha256:4542f5a2a046ca36653749a8985e46744a5d2d36ee10ca14409be718ce15129e
+      workingDir: /tekton/home
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if ! compgen -G "trivy-report-*.json" > /dev/null; then
+          echo 'No Trivy reports generated. Skipping upload.'
+          exit 0
+        fi
+
+        echo "Selecting auth"
+        select-oci-auth "$IMAGE_URL" > "$HOME/auth.json"
+
+        repository="${IMAGE_URL/:*/}"
+
+        arch() {
+          report_file="$1"
+          arch="${report_file/*-}"
+          echo "${arch/.json/}"
+        }
+
+        MEDIA_TYPE='application/vnd.trivy.report+json'
+
+        reports_json=""
+        for f in trivy-report-*.json; do
+          digest=$(cat "image-manifest-$(arch "$f").sha")
+          image_ref="${repository}@${digest}"
+          echo "Attaching $f to ${image_ref}"
+          if ! report_digest="$(oras attach --no-tty --format go-template='{{.digest}}' --registry-config \
+            "$HOME/auth.json" --artifact-type "${MEDIA_TYPE}" "${image_ref}" "$f:${MEDIA_TYPE}")"
+          then
+            echo "Failed to attach ${f} to ${image_ref}"
+            exit 1
+          fi
+          # shellcheck disable=SC2016
+          reports_json="$(yq --output-format json --indent=0 eval-all '. as $i ireduce ({}; . * $i)' <(echo "${reports_json}") <(echo "${digest}: ${report_digest}"))"
+        done
+        echo "${reports_json}" > reports.json
