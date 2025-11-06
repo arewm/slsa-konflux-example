@@ -83,3 +83,81 @@ spec:
           echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
           exit 0
         fi
+    - name: scan-with-trivy
+      image: ghcr.io/aquasecurity/trivy:latest@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          memory: 1Gi
+          cpu: 500m
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+        - name: IMAGE_PLATFORM
+          value: $(params.image-platform)
+      workingDir: /tekton/home
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        imagewithouttag=$(echo -n $IMAGE_URL | sed "s/\(.*\):.*/\1/")
+        images_processed_template='{"image": {"pullspec": "'"$IMAGE_URL"'", "digests": [%s]}}'
+        digests_processed=""
+
+        run_trivy_on_arch() {
+          arch="$1"
+          sha_file="image-manifest-$arch.sha"
+
+          if [ -e "$sha_file" ]; then
+            arch_sha=$(cat "$sha_file")
+            digest="${imagewithouttag}@${arch_sha}"
+
+            echo "Running trivy on $arch image manifest..."
+            trivy image --format json --scanners vuln --quiet "$digest" > "trivy-report-$arch.json" 2>/dev/null || true
+
+            if [ -n "$digests_processed" ]; then
+              digests_processed="${digests_processed}, \"$arch_sha\""
+            else
+              digests_processed="\"$arch_sha\""
+            fi
+          fi
+        }
+
+        platform="$IMAGE_PLATFORM"
+
+        # If platform specified, extract architecture and run trivy on that manifest
+        if [ -n "$platform" ]; then
+          arch="${platform#*/}"
+          case "$arch" in
+            x86_64|local|localhost) arch="amd64" ;;
+          esac
+          case "$arch" in
+            amd64|ppc64le|arm64|s390x)
+              run_trivy_on_arch "$arch"
+              ;;
+            *)
+              echo "Error: Unsupported architecture: '$arch'"
+              exit 0
+              ;;
+          esac
+        else
+          # No platform specified, run on all available manifests
+          for sha_file in image-manifest-*.sha; do
+            if [ -e "$sha_file" ]; then
+              arch=$(basename "$sha_file" | sed 's/image-manifest-//;s/.sha//')
+              run_trivy_on_arch "$arch"
+            fi
+          done
+        fi
+
+        # Add image index digest if not already in list
+        case "$digests_processed" in
+          *"$IMAGE_DIGEST"*) ;;
+          *) digests_processed="${digests_processed}, \"$IMAGE_DIGEST\"" ;;
+        esac
+
+        images_processed=$(echo "${images_processed_template}" | sed "s/%s/$digests_processed/")
+        echo "$images_processed" > images-processed.json
