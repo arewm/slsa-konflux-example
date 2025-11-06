@@ -43,3 +43,43 @@ spec:
         subPath: ca-bundle.crt
         readOnly: true
   steps:
+    - name: get-image-manifests
+      image: quay.io/konflux-ci/konflux-test:v1.4.39@sha256:89cdc9d251e15d07018548137b4034669df8e9e2b171a188c8b8201d3638cb17
+      computeResources:
+        limits:
+          memory: 512Mi
+        requests:
+          memory: 256Mi
+          cpu: 100m
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . /utils.sh
+
+        imagewithouttag=$(echo -n $IMAGE_URL | sed "s/\(.*\):.*/\1/")
+        imageanddigest=$(echo $imagewithouttag@$IMAGE_DIGEST)
+        echo "Inspecting raw image manifest $imageanddigest."
+
+        # Get the arch and image manifests by inspecting the image
+        image_manifests=$(get_image_manifests -i "${imageanddigest}")
+        if [ -n "$image_manifests" ]; then
+          echo "$image_manifests" | jq -r 'to_entries[] | "\(.key) \(.value)"' | while read -r arch arch_sha; do
+            echo "$arch_sha" > /tekton/home/image-manifest-$arch.sha
+          done
+        else
+          echo "Failed to get image manifests from image \"$imageanddigest\""
+          note="Task $(context.task.name) failed: Failed to get image manifests from image \"$imageanddigest\". For details, check Tekton task log."
+          ERROR_OUTPUT=$(make_result_json -r "ERROR" -t "$note")
+          echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
