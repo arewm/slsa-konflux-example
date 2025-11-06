@@ -1,3 +1,4 @@
+{{- $policyData := .Values.release.policy.policyData | default (printf "%s//managed-context/policies/ec-policy-data/data" (.Values.repositoryUrl | replace "https://github.com/" "github.com/")) }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: EnterpriseContractPolicy
 metadata:
@@ -9,10 +10,10 @@ spec:
   sources:
     - name: Release Policies
       policy:
-        - oci::quay.io/enterprise-contract/ec-release-policy:konflux
+        - oci::{{ .Values.release.policy.policyBundle }}
       data:
-        - github.com/release-engineering/rhtap-ec-policy//data
-        - oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest
+        - {{ $policyData }}
+        - {{ .Values.release.policy.acceptableBundles }}
       config:
         include:
           - '@slsa3'

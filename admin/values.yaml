@@ -11,12 +11,29 @@ configMapName: build-pipeline-config
 # Default pipeline name (the pipeline used when no specific pipeline is requested)
 defaultPipelineName: slsa-e2e-oci-ta
 
+# Registry configuration for pipeline bundles
+# This allows easy customization for local development or custom registries
+registry:
+  # Registry host (e.g., quay.io, ghcr.io)
+  host: "quay.io"
+
+  # Registry namespace/organization
+  namespace: "arewm"
+
+  # Optional: Pipeline repository prefix
+  # If set, will be used as: {host}/{namespace}/{pipelinePrefix}{pipelineName}
+  # If empty, will be used as: {host}/{namespace}/pipeline-{pipelineName}
+  pipelinePrefix: "pipeline-"
+
 # Pipeline bundle overrides
 # Add entries here to override specific pipeline bundle references
-# Each entry should specify the pipeline name and the new bundle reference
+# Each entry should specify the pipeline name and optionally the bundle reference
+# If bundle is not specified, it will be constructed from registry settings as:
+#   {registry.host}/{registry.namespace}/{registry.pipelinePrefix}{name}:latest
 pipelines:
   - name: slsa-e2e-oci-ta
-    bundle: quay.io/arewm/pipeline-slsa-e2e-oci-ta:latest
+    # bundle: quay.io/arewm/pipeline-slsa-e2e-oci-ta:latest  # Optional: explicit bundle reference
+    # If bundle is omitted, will use: {registry.host}/{registry.namespace}/{registry.pipelinePrefix}slsa-e2e-oci-ta:latest
 
 # Full pipeline configuration (alternative to individual overrides)
 # If you need complete control, you can specify all pipelines here

@@ -93,14 +93,14 @@ First, configure the build-service pipeline bundles (this requires admin access)
 kubectl delete configmap build-pipeline-config -n build-service
 
 # Install the build configuration via Helm
-helm install build-config ./admin
+helm upgrade --install build-config ./admin
 ```
 
 Then, onboard your component:
 
 ```bash
 export FORK_ORG="yourfork"
-helm install festoji ./resources \
+helm upgrade --install festoji ./resources \
   --set applicationName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji \
   --set namespace=user-ns1 \

@@ -1,4 +1,5 @@
 {{- $destination := .Values.release.destination | default (printf "registry-service.kind-registry/released-%s" .Values.applicationName) }}
+{{- $pipelineUrl := .Values.release.pipeline.url | default .Values.repositoryUrl }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: ReleasePlanAdmission
 metadata:
@@ -16,11 +17,11 @@ spec:
       resolver: git
       params:
         - name: url
-          value: https://github.com/arewm/slsa-konflux-example
+          value: {{ $pipelineUrl }}
         - name: revision
-          value: main
+          value: {{ .Values.release.pipeline.revision }}
         - name: pathInRepo
-          value: managed-context/pipelines/slsa-e2e-release/slsa-e2e-release.yaml
+          value: {{ .Values.release.pipeline.pathInRepo }}
   data:
     mapping:
       components:
