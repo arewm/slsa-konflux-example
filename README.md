@@ -27,8 +27,22 @@ Before being able to explore SLSA with Konflux, you will need to have a running 
 **NOTE:** If you lose your kubeconfig to connect to your KinD cluster, you can re-establish it with
 
 ```bash
-$ kind export kubeconfig -n konflux 
+$ kind export kubeconfig -n konflux
 ```
+
+**Accessing the Konflux UI:**
+
+You can view pipeline runs and builds in the Konflulix web UI at https://localhost:9443
+
+Default user accounts:
+- **Tenant namespace** (`user-ns1`):
+  - Username: `user1@konflux.dev`
+  - Password: `password`
+- **Managed namespace** (`user-ns2`):
+  - Username: `user2@konflux.dev`
+  - Password: `password`
+
+Use `user1@konflux.dev` to onboard components and view tenant builds.
 
 Create two namespaces on your cluster.
   - One is a tenant namespace where the artifact builds will occur
