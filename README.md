@@ -178,6 +178,9 @@ TODO: introduce vulnerability, have policy exception
 
 ## Additional references
 
+### Development
+For information about building and testing custom tasks and pipelines, see [docs/building-tasks-pipelines.md](docs/building-tasks-pipelines.md).
+
 ### Documentation
 ### Recordings
 ### Controllers

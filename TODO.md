@@ -40,33 +40,9 @@ params:
 
 ---
 
-## Pipeline Bundle Development
-
-### 2. Create Custom Tekton Pipeline Bundle
-**Status**: Review needed
-**Priority**: High
-
-Build a pipeline tekton bundle based on the upstream [docker-build-oci-ta pipeline](https://github.com/konflux-ci/build-definitions/tree/main/pipelines/docker-build-oci-ta) with the following modifications:
-
-- **Base Content**: Start with the same task configuration as docker-build-oci-ta
-- **Task Removal**: Remove unnecessary tasks that don't apply to our SLSA demonstration
-- **Task Addition**: Include the new `verify-source` task for source verification
-- **Location**: Create in `tenant-context/pipelines/docker-build-slsa-oci-ta/`
-
-**Dependencies**:
-- verify-source task implementation (see tenant-context/tasks/)
-- Understanding of which upstream tasks are essential vs. optional
-
-**Validation**:
-- Pipeline should build successfully with sample applications
-- verify-source task should execute and produce trust artifacts
-- Bundle should be compatible with Konflux deployment
-
----
-
 ## Helm Chart for Configuration Management
 
-### 3. Create Helm Chart for Build Services ConfigMap Patching
+### 2. Create Helm Chart for Build Services ConfigMap Patching
 **Status**: ✅ **COMPLETED**
 **Priority**: High
 
@@ -113,7 +89,7 @@ helm install build-config ./admin
 
 ## Enterprise Contract Policy Updates
 
-### 4. Update ECP to Require verify-source Task
+### 2. Update ECP to Require verify-source Task
 **Status**: Review needed
 **Priority**: Medium
 
@@ -148,9 +124,80 @@ deny[msg] {
 
 ---
 
+## Workarounds and Temporary Solutions
+
+### 3. Remove build-image-index Workaround
+**Status**: Blocked - Waiting on upstream PR
+**Priority**: Medium
+**Blocking**: [PR #2965](https://github.com/konflux-ci/build-definitions/pull/2965)
+
+Currently using a patched version of build-image-index task to support CA trust in KinD environments:
+
+- **Current Reference**: `quay.io/arewm/task-build-image-index@sha256:17ed551...`
+- **Location**: `managed-context/slsa-e2e-pipeline/slsa-e2e-pipeline.yaml:284`
+- **Reason**: Upstream task doesn't install mounted CA certificates
+
+**Required Actions**:
+1. Monitor PR #2965 for merge
+2. Once merged, update pipeline to use upstream task reference
+3. Remove comment: "Change back to this once the task supports mounting certs"
+4. Test with KinD registry to ensure CA trust still works
+
+---
+
+### 4. Migrate Custom Tasks to Official Namespace
+**Status**: Not Started
+**Priority**: High
+
+Several custom tasks and bundles are currently in the `arewm` namespace and need to be migrated:
+
+**Task Bundles**:
+- `quay.io/arewm/task-trivy-sbom-scan:0.1` (managed-context/slsa-e2e-pipeline/slsa-e2e-pipeline.yaml:340)
+- Decision needed: Contribute to konflux-ci/build-definitions or maintain separately?
+
+**Pipeline Bundles**:
+- `quay.io/arewm/pipeline-slsa-e2e-oci-ta:*`
+- Referenced in: admin/values.yaml, pipeline-bundle-list
+- Needs migration to official namespace
+
+**Implementation Steps**:
+1. Decide on target namespace for custom artifacts
+2. Create CI/CD automation for building bundles
+3. Update all references in:
+   - Pipeline definitions
+   - Helm chart values
+   - Documentation
+   - Build scripts (hack/build-and-push.sh)
+4. Consider contributing trivy-sbom-scan upstream to build-definitions
+
+**Success Criteria**:
+- No references to `quay.io/arewm/*` in codebase
+- All bundles published to official namespace
+- Documentation updated with new references
+
+---
+
+### 5. Add Documentation for Custom Task/Pipeline Development
+**Status**: Not Started
+**Priority**: Low
+
+Users may want to build and test custom tasks/pipelines locally:
+
+**Required Documentation**:
+- Link to or create docs/building-tasks-pipelines.md
+- Document hack/build-and-push.sh usage
+- Explain bundle versioning and pinning strategy
+- Document testing workflow (build → push → update pipeline → test)
+- Include troubleshooting for common issues
+
+**Reference from README**:
+Add a section in README.md pointing to this documentation for advanced users
+
+---
+
 ## Demonstration Scenarios
 
-### 5. Demonstrate CVE Scan Failure
+### 6. Demonstrate CVE Scan Failure
 **Status**: Not Started
 **Priority**: Medium
 
@@ -175,7 +222,7 @@ Create a demonstration showing security scanning in action:
 
 ---
 
-### 6. Demonstrate volatileConfig Exception
+### 7. Demonstrate volatileConfig Exception
 **Status**: Not Started
 **Priority**: Medium
 
@@ -220,10 +267,12 @@ spec:
 ### Sequencing
 These tasks have dependencies and should be implemented in order:
 1. Task #1 (Release Pipeline) - Critical foundation for trusted artifacts
-2. Task #2 (Build Pipeline Bundle) - Foundation for build configuration
-3. Task #3 (Helm Chart) - Enables automated deployment
-4. Task #4 (ECP Updates) - Enforces security requirements
-5. Tasks #5 & #6 (Demonstrations) - Validate complete workflow
+2. ~~Task #2 (Build Pipeline Bundle)~~ - ✅ COMPLETED
+3. ~~Task #3 (Helm Chart)~~ - ✅ COMPLETED
+4. Task #3 (Remove build-image-index Workaround) - Blocked on upstream PR
+5. Task #4 (Migrate to Official Namespace) - High priority
+6. Task #2 (ECP Updates) - Enforces security requirements
+7. Tasks #6 & #7 (Demonstrations) - Validate complete workflow
 
 ### Testing Strategy
 Each task should include:
