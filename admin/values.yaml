@@ -34,6 +34,27 @@ pipelines:
   - name: slsa-e2e-oci-ta
     # bundle: quay.io/arewm/pipeline-slsa-e2e-oci-ta:latest  # Optional: explicit bundle reference
     # If bundle is omitted, will use: {registry.host}/{registry.namespace}/{registry.pipelinePrefix}slsa-e2e-oci-ta:latest
+    description: "SLSA end-to-end pipeline with configurable security scanners"
+    detail: |
+      This pipeline demonstrates SLSA compliance with trusted artifacts and configurable security scanning.
+
+      Features:
+      - Buildah container image creation with trusted artifacts
+      - Configurable vulnerability scanning (Clair and/or Trivy)
+      - Optional source image generation
+      - Build-time security checks (SAST)
+      - Hermetic builds support
+      - Multi-architecture support via image index
+
+      Security scanning can be controlled via parameters:
+      - enable-clair-scan: Enable Clair vulnerability scanner (default: true)
+      - enable-trivy-sbom-scan: Enable Trivy SBOM scanner (default: true)
+
+      The pipeline uses OCI artifacts for data sharing instead of PVCs, ensuring trusted task compliance
+      for Enterprise Contract policies.
+    additionalParams:
+      - enable-clair-scan
+      - enable-trivy-sbom-scan
 
 # Full pipeline configuration (alternative to individual overrides)
 # If you need complete control, you can specify all pipelines here

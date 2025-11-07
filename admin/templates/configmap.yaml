@@ -21,6 +21,19 @@ data:
 {{- range .Values.pipelines }}
     - name: {{ .name }}
       bundle: {{ include "pipeline.bundle" (dict "name" .name "bundle" .bundle "Values" $.Values) }}
+{{- if .description }}
+      description: {{ .description | quote }}
+{{- end }}
+{{- if .detail }}
+      detail: |
+{{ .detail | indent 8 }}
+{{- end }}
+{{- if .additionalParams }}
+      additional-params:
+{{- range .additionalParams }}
+        - {{ . }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- else }}
     # No pipeline overrides specified

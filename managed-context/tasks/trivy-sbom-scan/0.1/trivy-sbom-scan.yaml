@@ -1,0 +1,337 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: "konflux"
+  name: trivy-sbom-scan
+spec:
+  description: >-
+    Scans container images for vulnerabilities using Trivy, analyzing container components against Trivy's vulnerability databases.
+  params:
+    - name: image-digest
+      description: Image digest to scan.
+    - name: image-url
+      description: Image URL.
+    - name: image-platform
+      description: The platform built by.
+      default: ""
+    - name: ca-trust-config-map-name
+      type: string
+      description: The name of the ConfigMap to read CA bundle data from.
+      default: trusted-ca
+    - name: ca-trust-config-map-key
+      type: string
+      description: The name of the key in the ConfigMap that contains the CA bundle data.
+      default: ca-bundle.crt
+  results:
+    - name: TEST_OUTPUT
+      description: Tekton task test output.
+    - name: SCAN_OUTPUT
+      description: Trivy scan result.
+    - name: IMAGES_PROCESSED
+      description: Images processed in the task.
+    - name: REPORTS
+      description: Mapping of image digests to report digests
+  stepTemplate:
+    volumeMounts:
+      - name: trusted-ca
+        mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+        subPath: ca-bundle.crt
+        readOnly: true
+  steps:
+    - name: get-image-manifests
+      image: quay.io/konflux-ci/konflux-test:v1.4.39@sha256:89cdc9d251e15d07018548137b4034669df8e9e2b171a188c8b8201d3638cb17
+      computeResources:
+        limits:
+          memory: 512Mi
+        requests:
+          memory: 256Mi
+          cpu: 100m
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . /utils.sh
+
+        imagewithouttag=$(echo -n $IMAGE_URL | sed "s/\(.*\):.*/\1/")
+        imageanddigest=$(echo $imagewithouttag@$IMAGE_DIGEST)
+        echo "Inspecting raw image manifest $imageanddigest."
+
+        # Get the arch and image manifests by inspecting the image
+        image_manifests=$(get_image_manifests -i "${imageanddigest}")
+        if [ -n "$image_manifests" ]; then
+          echo "$image_manifests" | jq -r 'to_entries[] | "\(.key) \(.value)"' | while read -r arch arch_sha; do
+            echo "$arch_sha" > /tekton/home/image-manifest-$arch.sha
+          done
+        else
+          echo "Failed to get image manifests from image \"$imageanddigest\""
+          note="Task $(context.task.name) failed: Failed to get image manifests from image \"$imageanddigest\". For details, check Tekton task log."
+          ERROR_OUTPUT=$(make_result_json -r "ERROR" -t "$note")
+          echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+    - name: scan-with-trivy
+      image: ghcr.io/aquasecurity/trivy:latest@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          memory: 1Gi
+          cpu: 500m
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: IMAGE_DIGEST
+          value: $(params.image-digest)
+        - name: IMAGE_PLATFORM
+          value: $(params.image-platform)
+      workingDir: /tekton/home
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        imagewithouttag=$(echo -n $IMAGE_URL | sed "s/\(.*\):.*/\1/")
+        images_processed_template='{"image": {"pullspec": "'"$IMAGE_URL"'", "digests": [%s]}}'
+        digests_processed=""
+
+        run_trivy_on_arch() {
+          arch="$1"
+          sha_file="image-manifest-$arch.sha"
+
+          if [ -e "$sha_file" ]; then
+            arch_sha=$(cat "$sha_file")
+            digest="${imagewithouttag}@${arch_sha}"
+
+            echo "Running trivy on $arch image manifest..."
+            trivy image --format json --scanners vuln --quiet "$digest" > "trivy-report-$arch.json" 2>/dev/null || true
+
+            if [ -n "$digests_processed" ]; then
+              digests_processed="${digests_processed}, \"$arch_sha\""
+            else
+              digests_processed="\"$arch_sha\""
+            fi
+          fi
+        }
+
+        convert_to_clair_format() {
+          for f in trivy-report-*.json; do
+            if [ -e "$f" ]; then
+              arch="${f#trivy-report-}"
+              arch="${arch%.json}"
+              echo "Converting $f to clair format..."
+              jq '{
+                vulnerabilities: ([.Results[]?.Vulnerabilities[]? | {
+                  name: .VulnerabilityID,
+                  normalized_severity: (.Severity | ascii_downcase),
+                  fixed_in_version: (.FixedVersion // ""),
+                  issued: .PublishedDate,
+                  description: .Description,
+                  package: {
+                    name: .PkgName,
+                    version: .InstalledVersion
+                  }
+                }] | unique_by(.name))
+              }' "$f" > "clair-report-${arch}.json"
+            fi
+          done
+        }
+
+        platform="$IMAGE_PLATFORM"
+
+        # If platform specified, extract architecture and run trivy on that manifest
+        if [ -n "$platform" ]; then
+          arch="${platform#*/}"
+          case "$arch" in
+            x86_64|local|localhost) arch="amd64" ;;
+          esac
+          case "$arch" in
+            amd64|ppc64le|arm64|s390x)
+              run_trivy_on_arch "$arch"
+              ;;
+            *)
+              echo "Error: Unsupported architecture: '$arch'"
+              exit 0
+              ;;
+          esac
+        else
+          # No platform specified, run on all available manifests
+          for sha_file in image-manifest-*.sha; do
+            if [ -e "$sha_file" ]; then
+              arch=$(basename "$sha_file" | sed 's/image-manifest-//;s/.sha//')
+              run_trivy_on_arch "$arch"
+            fi
+          done
+        fi
+
+        # Add image index digest if not already in list
+        case "$digests_processed" in
+          *"$IMAGE_DIGEST"*) ;;
+          *) digests_processed="${digests_processed}, \"$IMAGE_DIGEST\"" ;;
+        esac
+
+        images_processed=$(echo "${images_processed_template}" | sed "s/%s/$digests_processed/")
+        echo "$images_processed" > images-processed.json
+
+        # Convert trivy reports to clair-compatible format
+        convert_to_clair_format
+    - name: oci-attach-report
+      image: quay.io/konflux-ci/oras:latest@sha256:4542f5a2a046ca36653749a8985e46744a5d2d36ee10ca14409be718ce15129e
+      workingDir: /tekton/home
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        if ! compgen -G "trivy-report-*.json" > /dev/null; then
+          echo 'No Trivy reports generated. Skipping upload.'
+          exit 0
+        fi
+
+        echo "Selecting auth"
+        select-oci-auth "$IMAGE_URL" > "$HOME/auth.json"
+
+        repository="${IMAGE_URL/:*/}"
+
+        arch() {
+          report_file="$1"
+          arch="${report_file/*-}"
+          echo "${arch/.json/}"
+        }
+
+        TRIVY_MEDIA_TYPE='application/vnd.trivy.report+json'
+        CLAIR_MEDIA_TYPE='application/vnd.redhat.clair-report+json'
+
+        reports_json=""
+
+        # Attach trivy-format reports
+        for f in trivy-report-*.json; do
+          digest=$(cat "image-manifest-$(arch "$f").sha")
+          image_ref="${repository}@${digest}"
+          echo "Attaching $f to ${image_ref}"
+          if ! report_digest="$(oras attach --no-tty --format go-template='{{.digest}}' --registry-config \
+            "$HOME/auth.json" --artifact-type "${TRIVY_MEDIA_TYPE}" "${image_ref}" "$f:${TRIVY_MEDIA_TYPE}")"
+          then
+            echo "Failed to attach ${f} to ${image_ref}"
+            exit 1
+          fi
+          # shellcheck disable=SC2016
+          reports_json="$(yq --output-format json --indent=0 eval-all '. as $i ireduce ({}; . * $i)' <(echo "${reports_json}") <(echo "${digest}: ${report_digest}"))"
+        done
+
+        # Attach clair-format reports
+        for f in clair-report-*.json; do
+          digest=$(cat "image-manifest-$(arch "$f").sha")
+          image_ref="${repository}@${digest}"
+          echo "Attaching $f to ${image_ref}"
+          if ! report_digest="$(oras attach --no-tty --format go-template='{{.digest}}' --registry-config \
+            "$HOME/auth.json" --artifact-type "${CLAIR_MEDIA_TYPE}" "${image_ref}" "$f:${CLAIR_MEDIA_TYPE}")"
+          then
+            echo "Failed to attach ${f} to ${image_ref}"
+            exit 1
+          fi
+          # shellcheck disable=SC2016
+          reports_json="$(yq --output-format json --indent=0 eval-all '. as $i ireduce ({}; . * $i)' <(echo "${reports_json}") <(echo "${digest}: ${report_digest}"))"
+        done
+
+        echo "${reports_json}" > reports.json
+    - name: aggregate-results
+      image: quay.io/konflux-ci/konflux-test:v1.4.39@sha256:89cdc9d251e15d07018548137b4034669df8e9e2b171a188c8b8201d3638cb17
+      computeResources:
+        limits:
+          memory: 2Gi
+        requests:
+          memory: 256Mi
+          cpu: 100m
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        . /utils.sh
+        trap 'handle_error $(results.TEST_OUTPUT.path)' EXIT
+
+        trivy_result_files=$(ls /tekton/home/trivy-report-*.json 2>/dev/null || echo "")
+        if [ -z "$trivy_result_files" ]; then
+          echo "Previous step [scan-with-trivy] failed: No trivy-report files found."
+          note="Task $(context.task.name) failed: No trivy reports generated. For details, check Tekton task log."
+          ERROR_OUTPUT=$(make_result_json -r "ERROR" -t "$note")
+          echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        # Initialize counters
+        scan_result='{"vulnerabilities":{"critical":0, "high":0, "medium":0, "low":0, "unknown":0}, "unpatched_vulnerabilities":{"critical":0, "high":0, "medium":0, "low":0, "unknown":0}}'
+
+        for file in /tekton/home/trivy-report-*.json; do
+          if [ ! -s "$file" ]; then
+            echo "Warning: $file is empty, skipping"
+            continue
+          fi
+
+          # Aggregate total vulnerabilities by severity
+          result=$(jq -r '
+            {
+              vulnerabilities: {
+                critical: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length),
+                high: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length),
+                medium: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length),
+                low: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length),
+                unknown: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="UNKNOWN")] | length)
+              },
+              unpatched_vulnerabilities: {
+                critical: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" and (.Status=="affected" or .FixedVersion==null))] | length),
+                high: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH" and (.Status=="affected" or .FixedVersion==null))] | length),
+                medium: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM" and (.Status=="affected" or .FixedVersion==null))] | length),
+                low: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW" and (.Status=="affected" or .FixedVersion==null))] | length),
+                unknown: ([.Results[]?.Vulnerabilities[]? | select(.Severity=="UNKNOWN" and (.Status=="affected" or .FixedVersion==null))] | length)
+              }
+            }' "$file")
+
+          # Aggregate across all architectures
+          scan_result=$(jq -s '
+            .[0].vulnerabilities.critical += .[1].vulnerabilities.critical |
+            .[0].vulnerabilities.high += .[1].vulnerabilities.high |
+            .[0].vulnerabilities.medium += .[1].vulnerabilities.medium |
+            .[0].vulnerabilities.low += .[1].vulnerabilities.low |
+            .[0].vulnerabilities.unknown += .[1].vulnerabilities.unknown |
+            .[0].unpatched_vulnerabilities.critical += .[1].unpatched_vulnerabilities.critical |
+            .[0].unpatched_vulnerabilities.high += .[1].unpatched_vulnerabilities.high |
+            .[0].unpatched_vulnerabilities.medium += .[1].unpatched_vulnerabilities.medium |
+            .[0].unpatched_vulnerabilities.low += .[1].unpatched_vulnerabilities.low |
+            .[0].unpatched_vulnerabilities.unknown += .[1].unpatched_vulnerabilities.unknown |
+            .[0]' <<<"$scan_result $result")
+        done
+
+        echo "$scan_result" | tee "$(results.SCAN_OUTPUT.path)"
+
+        cat /tekton/home/images-processed.json | tee "$(results.IMAGES_PROCESSED.path)"
+        cat /tekton/home/reports.json > "$(results.REPORTS.path)"
+
+        note="Task $(context.task.name) completed: Refer to Tekton task result SCAN_OUTPUT for vulnerabilities scanned by Trivy."
+        TEST_OUTPUT=$(make_result_json -r "SUCCESS" -t "$note")
+        echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+  volumes:
+  - name: trusted-ca
+    configMap:
+      name: $(params.ca-trust-config-map-name)
+      items:
+        - key: $(params.ca-trust-config-map-key)
+          path: ca-bundle.crt
+      optional: true

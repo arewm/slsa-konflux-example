@@ -8,7 +8,7 @@ pipeline-required-tasks:
     - effective_on: "2025-04-01T00:00:00Z"
       tasks:
         - [buildah, buildah-remote, buildah-oci-ta, buildah-remote-oci-ta]
-        - clair-scan
+        - [clair-scan, trivy-sbom-scan]
         - [git-clone, git-clone-oci-ta]
         - init
         - [prefetch-dependencies, prefetch-dependencies-oci-ta]
@@ -18,7 +18,7 @@ pipeline-required-tasks:
     - effective_on: "2025-04-01T00:00:00Z"
       tasks:
         - [buildah, buildah-remote, buildah-oci-ta, buildah-remote-oci-ta]
-        - clair-scan
+        - [clair-scan, trivy-sbom-scan]
         - [git-clone, git-clone-oci-ta]
         - init
         - [prefetch-dependencies, prefetch-dependencies-oci-ta]
@@ -29,7 +29,7 @@ pipeline-required-tasks:
 required-tasks:
   - effective_on: "2025-04-01T00:00:00Z"
     tasks:
-      - clair-scan
+      - [clair-scan, trivy-sbom-scan]
       - [git-clone, git-clone-oci-ta]
       - init
       - [prefetch-dependencies, prefetch-dependencies-oci-ta]
