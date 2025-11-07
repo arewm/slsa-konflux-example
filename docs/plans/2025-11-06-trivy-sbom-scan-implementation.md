@@ -768,8 +768,9 @@ ARM-compatible alternative to clair-scan task. Analyzes container images for kno
 
 1. **get-image-manifests**: Extract manifest digests for multi-arch images
 2. **scan-with-trivy**: Run trivy scanner on each architecture
-3. **oci-attach-report**: Attach detailed reports to image via OCI
-4. **aggregate-results**: Parse and aggregate vulnerability counts
+3. **convert-to-clair-format**: Convert trivy reports to clair-compatible format
+4. **oci-attach-report**: Attach detailed reports to image via OCI
+5. **aggregate-results**: Parse and aggregate vulnerability counts
 
 ## Policy Integration
 

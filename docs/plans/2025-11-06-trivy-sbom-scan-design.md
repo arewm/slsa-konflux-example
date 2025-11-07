@@ -23,7 +23,7 @@ The clair-scan task (build-definitions/task/clair-scan/0.3/) cannot build on ARM
 
 Not in tenant-context because this is not a trusted task. In managed-context because it's part of the security scanning workflow controlled by the platform.
 
-### Four-Step Design
+### Five-Step Design
 
 **Step 1: get-image-manifests**
 - Image: `quay.io/konflux-ci/konflux-test:v1.4.39@sha256:...`
@@ -36,13 +36,18 @@ Not in tenant-context because this is not a trusted task. In managed-context bec
 - Scans each architecture's image using trivy
 - Outputs: `/tekton/home/trivy-report-{arch}.json` (full detailed reports)
 
-**Step 3: oci-attach-report**
+**Step 3: convert-to-clair-format**
+- Image: `quay.io/konflux-ci/konflux-test:v1.4.39@sha256:...`
+- Converts trivy reports to clair-compatible format using jq
+- Outputs: `/tekton/home/clair-report-{arch}.json`
+
+**Step 4: oci-attach-report**
 - Image: `quay.io/konflux-ci/oras:latest@sha256:...`
 - Attaches trivy reports to images via OCI
 - MIME type: `application/vnd.trivy.report+json`
 - Outputs: `reports.json` mapping digests to report digests
 
-**Step 4: aggregate-results**
+**Step 5: aggregate-results**
 - Image: `quay.io/konflux-ci/konflux-test:v1.4.39@sha256:...`
 - Parses trivy JSON reports
 - Aggregates vulnerability counts by severity
