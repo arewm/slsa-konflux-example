@@ -43,6 +43,14 @@ spec:
     description: Skip checks against built image
     name: skip-checks
     type: string
+  - default: "true"
+    description: Enable trivy sbom scan
+    name: enable-trivy-sbom-scan
+    type: string
+  - default: "true"
+    description: Enable clair scan
+    name: enable-clair-scan
+    type: string
   - default: "false"
     description: Execute the build with network isolation
     name: hermetic
@@ -290,6 +298,36 @@ spec:
       operator: in
       values:
       - "false"
+    - input: $(params.enable-clair-scan)
+      operator: in
+      values:
+      - "true"
+  - name: trivy-sbom-scan
+    params:
+    - name: image-digest
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: image-url
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    runAfter:
+    - build-image-index
+    taskRef:
+      resolver: bundles
+      params:
+        - name: name
+          value: trivy-sbom-scan
+        - name: bundle
+          value: quay.io/arewm/task-trivy-sbom-scan:0.1
+        - name: kind
+          value: task
+    when:
+    - input: $(params.skip-checks)
+      operator: in
+      values:
+      - "false"
+    - input: $(params.enable-trivy-sbom-scan)
+      operator: in
+      values:
+      - "true"
   - name: sast-shell-check
     params:
     - name: image-digest
