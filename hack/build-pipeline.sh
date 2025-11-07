@@ -128,16 +128,23 @@ pin_task_bundles() {
             continue
         fi
 
-        # Remove existing digest if present to always fetch latest
-        local bundle_without_digest="${bundle%%@sha256:*}"
+        # Check if bundle already has a digest
+        if [[ "$bundle" == *"@sha256:"* ]]; then
+            # Bundle already pinned, use as-is
+            local pinned_bundle="$bundle"
+            echo "  Task ${i}: ${bundle} (already pinned)" 1>&2
+        else
+            # Remove existing digest if present to always fetch latest
+            local bundle_without_digest="${bundle%%@sha256:*}"
 
-        local digest
-        digest=$(fetch_task_digest "$bundle_without_digest")
+            local digest
+            digest=$(fetch_task_digest "$bundle_without_digest")
 
-        # Format: quay.io/org/repo:tag@sha256:digest
-        local pinned_bundle="${bundle_without_digest}@${digest}"
+            # Format: quay.io/org/repo:tag@sha256:digest
+            local pinned_bundle="${bundle_without_digest}@${digest}"
 
-        echo "  Task ${i}: ${bundle_without_digest} -> ${pinned_bundle}" 1>&2
+            echo "  Task ${i}: ${bundle_without_digest} -> ${pinned_bundle}" 1>&2
+        fi
 
         # Update the bundle value with digest - escape special characters for yq
         local escaped_bundle="${pinned_bundle//\\/\\\\}"
