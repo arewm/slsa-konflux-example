@@ -90,6 +90,14 @@ spec:
       VMs
     name: privileged-nested
     type: string
+  - default: trusted-ca
+    description: The name of the ConfigMap to read CA bundle data from
+    name: ca-trust-config-map-name
+    type: string
+  - default: ca-bundle.crt
+    description: The name of the key in the ConfigMap that contains the CA bundle data
+    name: ca-trust-config-map-key
+    type: string
   results:
   - name: IMAGE_URL
     value: $(tasks.build-image-index.results.IMAGE_URL)
@@ -260,10 +268,10 @@ spec:
       - $(tasks.build-container.results.IMAGE_URL)@$(tasks.build-container.results.IMAGE_DIGEST)
     - name: BUILDAH_FORMAT
       value: $(params.buildah-format)
-    - name: ca-trust-config-map-name
-      value: trusted-ca
-    - name: ca-trust-config-map-key
-      value: ca-bundle.crt
+    - name: caTrustConfigMapName
+      value: $(params.ca-trust-config-map-name)
+    - name: caTrustConfigMapKey
+      value: $(params.ca-trust-config-map-key)
     runAfter:
     - build-container
     taskRef:
@@ -272,7 +280,8 @@ spec:
         - name: name
           value: build-image-index
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.1
+          # value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.1 Change back to this once the task supports mounting certs
+          value: quay.io/arewm/task-build-image-index@sha256:17ed551197a81bab11689696e6f3ff10525be30819fd339f6f67042ebe049a15
         - name: kind
           value: task
     when:
@@ -287,9 +296,9 @@ spec:
     - name: image-url
       value: $(tasks.build-image-index.results.IMAGE_URL)
     - name: ca-trust-config-map-name
-      value: trusted-ca
+      value: $(params.ca-trust-config-map-name)
     - name: ca-trust-config-map-key
-      value: ca-bundle.crt
+      value: $(params.ca-trust-config-map-key)
     runAfter:
     - build-image-index
     taskRef:
@@ -317,9 +326,9 @@ spec:
     - name: image-url
       value: $(tasks.build-image-index.results.IMAGE_URL)
     - name: ca-trust-config-map-name
-      value: trusted-ca
+      value: $(params.ca-trust-config-map-name)
     - name: ca-trust-config-map-key
-      value: ca-bundle.crt
+      value: $(params.ca-trust-config-map-key)
     runAfter:
     - build-image-index
     taskRef:
@@ -373,6 +382,10 @@ spec:
       value: $(tasks.build-image-index.results.IMAGE_URL)
     - name: IMAGE_DIGEST
       value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+    - name: CA_TRUST_CONFIG_MAP_NAME
+      value: $(params.ca-trust-config-map-name)
+    - name: CA_TRUST_CONFIG_MAP_KEY
+      value: $(params.ca-trust-config-map-key)
     runAfter:
     - build-image-index
     taskRef:
