@@ -3,6 +3,8 @@ kind: Component
 metadata:
   name: {{ .Values.applicationName }}
   namespace: {{ .Values.namespace }}
+  annotations:
+    build.appstudio.openshift.io/request: "configure-pac"
 spec:
   componentName: {{ .Values.applicationName }}
   application: {{ .Values.applicationName }}
