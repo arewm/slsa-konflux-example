@@ -126,6 +126,29 @@ spec:
           fi
         }
 
+        convert_to_clair_format() {
+          for f in trivy-report-*.json; do
+            if [ -e "$f" ]; then
+              arch="${f#trivy-report-}"
+              arch="${arch%.json}"
+              echo "Converting $f to clair format..."
+              jq '{
+                vulnerabilities: ([.Results[]?.Vulnerabilities[]? | {
+                  name: .VulnerabilityID,
+                  normalized_severity: (.Severity | ascii_downcase),
+                  fixed_in_version: (.FixedVersion // ""),
+                  issued: .PublishedDate,
+                  description: .Description,
+                  package: {
+                    name: .PkgName,
+                    version: .InstalledVersion
+                  }
+                }] | unique_by(.name))
+              }' "$f" > "clair-report-${arch}.json"
+            fi
+          done
+        }
+
         platform="$IMAGE_PLATFORM"
 
         # If platform specified, extract architecture and run trivy on that manifest
@@ -161,6 +184,9 @@ spec:
 
         images_processed=$(echo "${images_processed_template}" | sed "s/%s/$digests_processed/")
         echo "$images_processed" > images-processed.json
+
+        # Convert trivy reports to clair-compatible format
+        convert_to_clair_format
     - name: oci-attach-report
       image: quay.io/konflux-ci/oras:latest@sha256:4542f5a2a046ca36653749a8985e46744a5d2d36ee10ca14409be718ce15129e
       workingDir: /tekton/home
@@ -187,15 +213,18 @@ spec:
           echo "${arch/.json/}"
         }
 
-        MEDIA_TYPE='application/vnd.trivy.report+json'
+        TRIVY_MEDIA_TYPE='application/vnd.trivy.report+json'
+        CLAIR_MEDIA_TYPE='application/vnd.redhat.clair-report+json'
 
         reports_json=""
+
+        # Attach trivy-format reports
         for f in trivy-report-*.json; do
           digest=$(cat "image-manifest-$(arch "$f").sha")
           image_ref="${repository}@${digest}"
           echo "Attaching $f to ${image_ref}"
           if ! report_digest="$(oras attach --no-tty --format go-template='{{.digest}}' --registry-config \
-            "$HOME/auth.json" --artifact-type "${MEDIA_TYPE}" "${image_ref}" "$f:${MEDIA_TYPE}")"
+            "$HOME/auth.json" --artifact-type "${TRIVY_MEDIA_TYPE}" "${image_ref}" "$f:${TRIVY_MEDIA_TYPE}")"
           then
             echo "Failed to attach ${f} to ${image_ref}"
             exit 1
@@ -203,6 +232,22 @@ spec:
           # shellcheck disable=SC2016
           reports_json="$(yq --output-format json --indent=0 eval-all '. as $i ireduce ({}; . * $i)' <(echo "${reports_json}") <(echo "${digest}: ${report_digest}"))"
         done
+
+        # Attach clair-format reports
+        for f in clair-report-*.json; do
+          digest=$(cat "image-manifest-$(arch "$f").sha")
+          image_ref="${repository}@${digest}"
+          echo "Attaching $f to ${image_ref}"
+          if ! report_digest="$(oras attach --no-tty --format go-template='{{.digest}}' --registry-config \
+            "$HOME/auth.json" --artifact-type "${CLAIR_MEDIA_TYPE}" "${image_ref}" "$f:${CLAIR_MEDIA_TYPE}")"
+          then
+            echo "Failed to attach ${f} to ${image_ref}"
+            exit 1
+          fi
+          # shellcheck disable=SC2016
+          reports_json="$(yq --output-format json --indent=0 eval-all '. as $i ireduce ({}; . * $i)' <(echo "${reports_json}") <(echo "${digest}: ${report_digest}"))"
+        done
+
         echo "${reports_json}" > reports.json
     - name: aggregate-results
       image: quay.io/konflux-ci/konflux-test:v1.4.39@sha256:89cdc9d251e15d07018548137b4034669df8e9e2b171a188c8b8201d3638cb17
