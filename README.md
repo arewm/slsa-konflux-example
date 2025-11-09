@@ -114,6 +114,7 @@ Then, onboard your component:
 
 ```bash
 export FORK_ORG="yourfork"
+# If you want to force the component to re-onboard with the upgrade, use the --force option for helm
 helm upgrade --install festoji ./resources \
   --set applicationName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji \

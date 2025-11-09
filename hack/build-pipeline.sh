@@ -231,3 +231,77 @@ echo ""
 echo "Pipeline bundle pushed successfully!"
 echo "Bundle reference saved to: $OUTPUT_PIPELINE_BUNDLE_LIST"
 cat "$OUTPUT_PIPELINE_BUNDLE_LIST"
+
+# Build acceptable bundles data bundle
+echo ""
+echo "Building acceptable bundles data bundle..."
+
+if ! command -v ec >/dev/null 2>&1; then
+    echo "Error: ec CLI not found. Please install it from https://github.com/enterprise-contract/ec-cli/releases" 1>&2
+    exit 1
+fi
+
+DATA_BUNDLE_REPO="${REGISTRY}/${REGISTRY_NAMESPACE}/slsa-e2e-data-acceptable-bundles"
+DATA_BUNDLE_TAG="${BUILD_TAG}"
+
+# Build bundle parameters from task list
+BUNDLE_PARAMS=()
+while IFS= read -r bundle; do
+    # Skip empty lines
+    [ -z "$bundle" ] && continue
+    # Verify bundle has proper format (should contain repository path)
+    if [[ ! "$bundle" =~ ^[a-z0-9.-]+(/[a-z0-9._-]+)+:[a-z0-9._-]+@sha256:[a-f0-9]+$ ]]; then
+        echo "Warning: Skipping malformed bundle reference: $bundle" 1>&2
+        continue
+    fi
+    BUNDLE_PARAMS+=("--bundle=${bundle}")
+done < "$task_bundle_list"
+
+# Add the pipeline bundle itself
+pipeline_digest=$(grep -o 'sha256:[a-f0-9]*' "$OUTPUT_PIPELINE_BUNDLE_LIST" | head -1)
+BUNDLE_PARAMS+=("--bundle=${pipeline_bundle}@${pipeline_digest}")
+
+echo "Creating acceptable bundles with ${#BUNDLE_PARAMS[@]} bundles..."
+if [ ${#BUNDLE_PARAMS[@]} -eq 0 ]; then
+    echo "Error: No valid bundle references found" 1>&2
+    exit 1
+fi
+
+# Check if the latest tag exists, if not omit --input flag
+EC_INPUT_FLAG=()
+if command -v skopeo >/dev/null 2>&1; then
+    if skopeo inspect "docker://${DATA_BUNDLE_REPO}:latest" >/dev/null 2>&1; then
+        EC_INPUT_FLAG=("--input" "oci:${DATA_BUNDLE_REPO}:latest")
+        echo "Using existing data bundle as base: ${DATA_BUNDLE_REPO}:latest"
+    else
+        echo "No existing data bundle found, creating new one"
+    fi
+elif command -v crane >/dev/null 2>&1; then
+    if crane manifest "${DATA_BUNDLE_REPO}:latest" >/dev/null 2>&1; then
+        EC_INPUT_FLAG=("--input" "oci:${DATA_BUNDLE_REPO}:latest")
+        echo "Using existing data bundle as base: ${DATA_BUNDLE_REPO}:latest"
+    else
+        echo "No existing data bundle found, creating new one"
+    fi
+fi
+
+ec track bundle --debug \
+    --in-effect-days 60 \
+    "${EC_INPUT_FLAG[@]}" \
+    --output "oci:${DATA_BUNDLE_REPO}:${DATA_BUNDLE_TAG}" \
+    --timeout "15m0s" \
+    --freshen \
+    --prune \
+    "${BUNDLE_PARAMS[@]}"
+
+# Tag with latest
+if command -v skopeo >/dev/null 2>&1; then
+    retry skopeo copy "docker://${DATA_BUNDLE_REPO}:${DATA_BUNDLE_TAG}" "docker://${DATA_BUNDLE_REPO}:latest"
+elif command -v crane >/dev/null 2>&1; then
+    retry crane copy "${DATA_BUNDLE_REPO}:${DATA_BUNDLE_TAG}" "${DATA_BUNDLE_REPO}:latest"
+fi
+
+echo "Acceptable bundles data bundle: ${DATA_BUNDLE_REPO}:${DATA_BUNDLE_TAG}"
+echo "Acceptable bundles data bundle: ${DATA_BUNDLE_REPO}:latest"
+
+# vim: set et sw=4 ts=4:

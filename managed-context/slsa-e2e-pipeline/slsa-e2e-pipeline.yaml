@@ -47,7 +47,7 @@ spec:
     description: Enable trivy sbom scan
     name: enable-trivy-sbom-scan
     type: string
-  - default: "true"
+  - default: "false"
     description: Enable clair scan
     name: enable-clair-scan
     type: string
@@ -280,8 +280,7 @@ spec:
         - name: name
           value: build-image-index
         - name: bundle
-          # value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.1 Change back to this once the task supports mounting certs
-          value: quay.io/arewm/task-build-image-index@sha256:17ed551197a81bab11689696e6f3ff10525be30819fd339f6f67042ebe049a15
+          value: quay.io/konflux-ci/tekton-catalog/task-build-image-index:0.1
         - name: kind
           value: task
     when:

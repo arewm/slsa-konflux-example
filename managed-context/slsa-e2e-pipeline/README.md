@@ -59,7 +59,7 @@ export REGISTRY="quay.io"
 export BUILD_TAG="$(git rev-parse --short HEAD)"
 
 # Build and push
-./managed-context/slsa-e2e-pipeline/hack/build-and-push.sh
+./hack/build-pipeline.sh
 ```
 
 The script will:
@@ -79,7 +79,7 @@ The script will:
 ```bash
 export REGISTRY_NAMESPACE="arewm"
 export BUILD_TAG="v1.0.0"
-./managed-context/slsa-e2e-pipeline/hack/build-and-push.sh
+./hack/build-pipeline.sh
 ```
 
 Output:

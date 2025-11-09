@@ -16,7 +16,8 @@ kubeconfig
 kind-config.yaml
 
 # Build artifacts
-managed-context/slsa-e2e-pipeline/pipeline-bundle-list
+**/pipeline-bundle-list
+**/task-bundle-list
 
 # Claude related things
 .serena

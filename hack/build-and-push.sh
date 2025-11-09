@@ -126,3 +126,5 @@ case "$MODE" in
         exit 1
         ;;
 esac
+
+# vim: set et sw=4 ts=4:

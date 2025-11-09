@@ -176,3 +176,5 @@ echo ""
 echo "Task bundle pushed successfully!"
 echo "Bundle reference saved to: $OUTPUT_TASK_BUNDLE_LIST"
 cat "$OUTPUT_TASK_BUNDLE_LIST"
+
+# vim: set et sw=4 ts=4:
