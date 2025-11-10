@@ -79,20 +79,21 @@ release:
 
   # Trusted artifacts configuration
   trustedArtifacts:
-    # Generate ImageRepository for trusted artifacts (requires image-controller)
-    # Set to true to create a dedicated Quay repository for trusted artifacts storage
-    # Default: false (use manually specified ociStorage)
-    generateRepository: false
-
     # OCI repository for storing trusted artifacts
     # This is where intermediate build artifacts are stored during release
-    # If generateRepository is true and image-controller is available, this will be auto-generated
-    # If generateRepository is false, this must be set to a registry the release SA can access
     # Examples:
     #   - For KinD: "registry-service.kind-registry/trusted-artifacts"
     #   - For Quay: "quay.io/myorg/trusted-artifacts"
     # Default: registry-service.kind-registry/trusted-artifacts
     ociStorage: "registry-service.kind-registry/trusted-artifacts"
+
+    # Username for trusted artifacts registry authentication
+    # Required when using external registries (leave empty for internal KinD registry)
+    username: ""
+
+    # Password/token for trusted artifacts registry authentication
+    # Required when using external registries (leave empty for internal KinD registry)
+    password: ""
 
   # Pipeline configuration
   pipeline:
