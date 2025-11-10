@@ -44,6 +44,18 @@ Default user accounts:
 
 Use `user1@konflux.dev` to onboard components and view tenant builds.
 
+**Accessing the Kind Cluster Registry:**
+
+The KinD cluster includes a local registry accessible at `localhost:5001` by default. This registry is used for storing container images built and released within the cluster.
+
+To access images built by Konflux in the registry:
+```bash
+# Pull an image from the registry
+podman pull localhost:5001/repository/image:tag
+```
+
+Within the cluster, the registry is accessible as `registry-service.kind-registry`.
+
 Create two namespaces on your cluster.
   - One is a tenant namespace where the artifact builds will occur
   - One is a managed namespace which will be where privileged operations occur
