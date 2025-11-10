@@ -28,7 +28,21 @@ spec:
         #!/usr/bin/env bash
         set -eo pipefail
 
-        echo "Checking for mounted registry credentials..."
+        echo "Checking for ImageRepository resources..."
+
+        # First, try to find ImageRepository for trusted-artifacts
+        IMAGE_REPO=$(kubectl get imagerepository -o json 2>/dev/null | \
+          jq -r '.items[] | select(.metadata.name | contains("trusted-artifacts")) | .spec.image.name // .status.image.url // empty' | \
+          head -1 || echo "")
+
+        if [ -n "$IMAGE_REPO" ]; then
+          echo "Found ImageRepository for trusted artifacts: $IMAGE_REPO"
+          echo -n "$IMAGE_REPO" | tee $(results.ociStorage.path)
+          echo -n "external" | tee $(results.registryType.path)
+          exit 0
+        fi
+
+        echo "No ImageRepository found, checking for mounted registry credentials..."
 
         # Common locations for mounted docker configs
         DOCKER_CONFIG_LOCATIONS=(
@@ -92,6 +106,6 @@ spec:
         # Use the detected registry path as-is since we have credentials for it
         OCI_STORAGE="$REGISTRY"
 
-        echo "Detected external registry: $OCI_STORAGE"
+        echo "Detected external registry from credentials: $OCI_STORAGE"
         echo -n "$OCI_STORAGE" | tee $(results.ociStorage.path)
         echo -n "external" | tee $(results.registryType.path)
