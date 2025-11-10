@@ -89,15 +89,8 @@ spec:
           exit 0
         fi
 
-        # Construct trusted artifacts path
-        # For registries like "quay.io/namespace", extract namespace and use it
-        if [[ "$REGISTRY" == *"/"* ]]; then
-          # Registry includes namespace (e.g., quay.io/redhat-user-workloads)
-          OCI_STORAGE="${REGISTRY}/trusted-artifacts"
-        else
-          # Registry is just domain (e.g., quay.io) - append /trusted-artifacts
-          OCI_STORAGE="${REGISTRY}/trusted-artifacts"
-        fi
+        # Use the detected registry path as-is since we have credentials for it
+        OCI_STORAGE="$REGISTRY"
 
         echo "Detected external registry: $OCI_STORAGE"
         echo -n "$OCI_STORAGE" | tee $(results.ociStorage.path)
