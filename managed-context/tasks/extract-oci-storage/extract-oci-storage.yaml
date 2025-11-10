@@ -1,0 +1,44 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: extract-oci-storage
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: release
+spec:
+  description: |-
+    Extracts the ociStorage value from ReleasePlanAdmission data.
+
+    This allows the pipeline to use the ociStorage configured in the RPA
+    instead of relying on pipeline parameter defaults.
+  params:
+    - name: releasePlanAdmission
+      type: string
+      description: Namespaced name of the ReleasePlanAdmission (e.g., namespace/name)
+  results:
+    - name: ociStorage
+      description: OCI storage location from RPA spec.data.ociStorage
+  steps:
+    - name: extract
+      image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f
+      script: |
+        #!/usr/bin/env bash
+        set -eo pipefail
+
+        echo "Extracting ociStorage from ReleasePlanAdmission: $(params.releasePlanAdmission)"
+
+        # Extract namespace and name
+        NAMESPACE=$(echo "$(params.releasePlanAdmission)" | cut -d/ -f1)
+        NAME=$(echo "$(params.releasePlanAdmission)" | cut -d/ -f2)
+
+        # Get ociStorage from RPA spec.data
+        OCI_STORAGE=$(kubectl get releaseplanadmission "$NAME" -n "$NAMESPACE" \
+          -o jsonpath='{.spec.data.ociStorage}')
+
+        if [ -z "$OCI_STORAGE" ]; then
+          echo "ERROR: No ociStorage found in ReleasePlanAdmission spec.data"
+          exit 1
+        fi
+
+        echo "Found ociStorage: $OCI_STORAGE"
+        echo -n "$OCI_STORAGE" | tee $(results.ociStorage.path)
