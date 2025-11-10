@@ -5,6 +5,8 @@ metadata:
   namespace: {{ .Values.namespace }}
   annotations:
     release.appstudio.openshift.io/auto-release: "true"
+  labels:
+    release.appstudio.openshift.io/author: {{ .Values.release.author | default "user1" | quote }}
 spec:
   application: {{ .Values.applicationName }}
   target: {{ .Values.release.targetNamespace }}

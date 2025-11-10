@@ -74,6 +74,16 @@ spec:
       # inside the volume.
       default: "/var/workdir/release"
   tasks:
+    - name: detect-oci-storage
+      taskRef:
+        resolver: "git"
+        params:
+          - name: url
+            value: $(params.taskGitUrl)
+          - name: revision
+            value: $(params.taskGitRevision)
+          - name: pathInRepo
+            value: managed-context/tasks/detect-oci-storage/detect-oci-storage.yaml
     - name: verify-access-to-resources
       taskRef:
         resolver: "git"
@@ -84,6 +94,8 @@ spec:
             value: trusted-ca
           - name: pathInRepo
             value: tasks/managed/verify-access-to-resources/verify-access-to-resources.yaml
+      runAfter:
+        - detect-oci-storage
       params:
         - name: release
           value: $(params.release)
@@ -123,7 +135,7 @@ spec:
         - name: subdirectory
           value: $(context.pipelineRun.uid)
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: dataDir
           value: $(params.dataDir)
         - name: trustedArtifactsDebug
@@ -162,7 +174,7 @@ spec:
         - name: taskGitRevision
           value: "trusted-ca"
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.collect-data.results.sourceDataArtifact)"
         - name: trustedArtifactsDebug
@@ -185,7 +197,7 @@ spec:
               {"systemName": "mapping", "dynamic": false}
             ]
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.collect-data.results.sourceDataArtifact)"
         - name: dataDir
@@ -231,7 +243,7 @@ spec:
         - name: SNAPSHOT_PATH
           value: $(params.dataDir)/$(tasks.collect-data.results.snapshotSpec)
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.collect-data.results.sourceDataArtifact)"
         - name: dataDir
@@ -265,7 +277,7 @@ spec:
         - name: snapshotPath
           value: "$(tasks.collect-data.results.snapshotSpec)"
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.reduce-snapshot.results.sourceDataArtifact)"
         - name: dataDir
@@ -341,7 +353,7 @@ spec:
         - name: resultsDirPath
           value: "$(tasks.collect-data.results.resultsDir)"
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.apply-mapping.results.sourceDataArtifact)"
         - name: dataDir
@@ -370,7 +382,7 @@ spec:
         - name: dataPath
           value: "$(tasks.collect-data.results.data)"
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.collect-data.results.sourceDataArtifact)"
         - name: dataDir
@@ -408,7 +420,7 @@ spec:
         - name: registrySecret
           value: $(tasks.collect-registry-token-secret.results.registrySecret)
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
           value: "$(tasks.push-snapshot.results.sourceDataArtifact)"
         - name: dataDir
@@ -431,7 +443,7 @@ spec:
         - name: resultsDirPath
           value: $(tasks.collect-data.results.resultsDir)
         - name: ociStorage
-          value: $(params.ociStorage)
+          value: $(tasks.detect-oci-storage.results.ociStorage)
         - name: resultArtifacts
           value:
             - "$(tasks.push-snapshot.results.sourceDataArtifact)=$(params.dataDir)"

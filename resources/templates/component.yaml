@@ -5,10 +5,15 @@ metadata:
   namespace: {{ .Values.namespace }}
   annotations:
     build.appstudio.openshift.io/request: "configure-pac"
+{{- if .Values.image.generateRepository }}
+    image.redhat.com/generate: '{"visibility": "public"}'
+{{- end }}
 spec:
   componentName: {{ .Values.applicationName }}
   application: {{ .Values.applicationName }}
+{{- if not .Values.image.generateRepository }}
   containerImage: {{ .Values.customContainerImage | default .Values.containerImage }}
+{{- end }}
 {{- if .Values.customContainerImage }}
   secret: {{ .Values.applicationName }}-pull-secret
 {{- end }}

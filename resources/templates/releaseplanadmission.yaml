@@ -1,5 +1,6 @@
 {{- $destination := .Values.release.destination | default (printf "registry-service.kind-registry/released-%s" .Values.applicationName) }}
 {{- $pipelineUrl := .Values.release.pipeline.url | default .Values.repositoryUrl }}
+{{- $ociStorage := .Values.release.trustedArtifacts.ociStorage }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: ReleasePlanAdmission
 metadata:
@@ -23,6 +24,7 @@ spec:
         - name: pathInRepo
           value: {{ .Values.release.pipeline.pathInRepo }}
   data:
+    ociStorage: {{ $ociStorage }}
     mapping:
       components:
         - name: {{ .Values.applicationName }}

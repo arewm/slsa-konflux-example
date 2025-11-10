@@ -1,6 +1,11 @@
 # Default values for konflux-onboarding
 # This is a YAML-formatted file.
 
+# Cluster configuration
+# Set to false when deploying to managed clusters without cluster-admin access
+# This will skip resources that require cluster-level permissions (e.g., ClusterRole bindings)
+requiresClusterAdmin: true
+
 # Repository URL for slsa-konflux-example (used for pipelines and policy data)
 # This can be customized for forks or local development
 repositoryUrl: "https://github.com/arewm/slsa-konflux-example"
@@ -37,11 +42,23 @@ customContainerImage: ""
 # Example: eyJhdXRocyI6eyJyZWdpc3RyeS5leGFtcGxlLmNvbSI6eyJ1c2VybmFtZSI6InVzZXIiLCJwYXNzd29yZCI6InBhc3MiLCJhdXRoIjoiZFhObGNqcHdZWE56In19fQ==
 dockerconfigjson: ""
 
+# Image repository configuration
+image:
+  # Generate ImageRepository via image-controller (requires image-controller to be deployed)
+  # Set to true to trigger automatic Quay repository and credential creation
+  # Default: false (use manually specified containerImage)
+  generateRepository: false
+
 # Release configuration
 release:
   # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
   # This is where the release plan admission will be created (managed namespace)
   targetNamespace: "user-ns2"
+
+  # Author for automated releases
+  # This is required for automated releases to pass validation
+  # Default: user1
+  author: "user1"
 
   # Optional: Release destination registry
   # This is where the component will be pushed after release
@@ -59,6 +76,23 @@ release:
   # Optional: Service account for release pipeline
   # Default: release-service-account
   serviceAccount: "release-service-account"
+
+  # Trusted artifacts configuration
+  trustedArtifacts:
+    # Generate ImageRepository for trusted artifacts (requires image-controller)
+    # Set to true to create a dedicated Quay repository for trusted artifacts storage
+    # Default: false (use manually specified ociStorage)
+    generateRepository: false
+
+    # OCI repository for storing trusted artifacts
+    # This is where intermediate build artifacts are stored during release
+    # If generateRepository is true and image-controller is available, this will be auto-generated
+    # If generateRepository is false, this must be set to a registry the release SA can access
+    # Examples:
+    #   - For KinD: "registry-service.kind-registry/trusted-artifacts"
+    #   - For Quay: "quay.io/myorg/trusted-artifacts"
+    # Default: registry-service.kind-registry/trusted-artifacts
+    ociStorage: "registry-service.kind-registry/trusted-artifacts"
 
   # Pipeline configuration
   pipeline:

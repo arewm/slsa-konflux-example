@@ -22,6 +22,13 @@ This Helm chart creates the necessary Konflux resources to onboard a new applica
 - A namespace where you want to deploy the resources
 - A Git repository URL containing your application code
 
+**Optional Requirements:**
+- **Image Controller**: Required for automatic Quay.io repository creation and credential management. The Component CR includes an annotation (`image.redhat.com/generate`) that triggers ImageRepository creation, but this only works if image-controller is deployed in your cluster.
+  - **Note**: The default `konflux-ci/konflux-ci` installation does **NOT** include image-controller
+  - Without image-controller, you must manually specify `containerImage` in values.yaml
+  - For KinD/local development, using the local registry is simplest: `registry-service.kind-registry/<app-name>:latest`
+  - To deploy image-controller: `https://github.com/konflux-ci/konflux-ci/blob/main/deploy-image-controller.sh`
+
 ## Installation
 
 ### Basic Usage
@@ -371,6 +378,31 @@ kubectl get pipelineruns -n my-namespace
 # View logs for a specific pipeline run
 kubectl logs -n my-namespace pipelinerun/<pipelinerun-name> --all-containers
 ```
+
+## Creating Releases
+
+This chart includes a helper script to manually create releases from the latest snapshot:
+
+```bash
+# Basic usage with defaults
+./create-release.sh <application-name> <namespace> <author> [managed-namespace]
+
+# Example
+./create-release.sh festoji slsa-e2e-tenant user1 slsa-e2e-managed-tenant
+```
+
+The script will:
+1. Find the latest snapshot for the application
+2. Create a Release resource with the proper author attribution
+3. Link it to the application's ReleasePlan
+
+Check release status:
+```bash
+kubectl get release -n my-namespace --sort-by=.metadata.creationTimestamp
+kubectl get release <release-name> -n my-namespace -o yaml
+```
+
+**Note**: The author label is automatically set to the current Kubernetes user by the release-service webhook, ensuring proper attribution for manual releases.
 
 ## License
 

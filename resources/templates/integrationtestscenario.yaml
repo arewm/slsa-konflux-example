@@ -11,7 +11,7 @@ spec:
       - name: url
         value: https://github.com/konflux-ci/build-definitions
       - name: revision
-        value: main
+        value: renovate/ec
       - name: pathInRepo
         value: pipelines/enterprise-contract.yaml
   params:

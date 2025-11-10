@@ -1,0 +1,17 @@
+{{- if .Values.release.trustedArtifacts.generateRepository }}
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Component
+metadata:
+  name: {{ .Values.applicationName }}-trusted-artifacts
+  namespace: {{ .Values.release.targetNamespace }}
+  annotations:
+    image.redhat.com/generate: '{"visibility": "public"}'
+spec:
+  componentName: {{ .Values.applicationName }}-trusted-artifacts
+  application: {{ .Values.applicationName }}
+  source:
+    git:
+      # Use the same repo as the main component - this is just for credential generation
+      url: {{ .Values.gitRepoUrl }}
+      revision: {{ .Values.gitRevision }}
+{{- end }}

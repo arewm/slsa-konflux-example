@@ -1,0 +1,104 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: detect-oci-storage
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: release
+spec:
+  description: |-
+    Detects the appropriate OCI storage location for trusted artifacts based on available credentials.
+
+    Checks the service account's mounted docker config for external registry credentials.
+    If found, uses that registry for trusted artifacts. Otherwise, defaults to internal registry.
+  params:
+    - name: defaultOciStorage
+      type: string
+      description: Default OCI storage to use if no external credentials found
+      default: "registry-service.kind-registry/trusted-artifacts"
+  results:
+    - name: ociStorage
+      description: The OCI repository to use for trusted artifacts
+    - name: registryType
+      description: Type of registry detected (internal or external)
+  steps:
+    - name: detect-registry
+      image: quay.io/konflux-ci/release-service-utils:e633d51cd41d73e4b3310face21bb980af7a662f
+      script: |
+        #!/usr/bin/env bash
+        set -eo pipefail
+
+        echo "Checking for mounted registry credentials..."
+
+        # Common locations for mounted docker configs
+        DOCKER_CONFIG_LOCATIONS=(
+          "$HOME/.docker/config.json"
+          "/tekton/creds/.docker/config.json"
+          "/workspace/.docker/config.json"
+        )
+
+        DOCKERCONFIG=""
+        for CONFIG_PATH in "${DOCKER_CONFIG_LOCATIONS[@]}"; do
+          if [ -f "$CONFIG_PATH" ]; then
+            echo "Found docker config at: $CONFIG_PATH"
+            DOCKERCONFIG=$(cat "$CONFIG_PATH")
+            break
+          fi
+        done
+
+        if [ -z "$DOCKERCONFIG" ]; then
+          echo "No external registry credentials found, using default: $(params.defaultOciStorage)"
+          echo -n "$(params.defaultOciStorage)" | tee $(results.ociStorage.path)
+          echo -n "internal" | tee $(results.registryType.path)
+          exit 0
+        fi
+
+        # Extract all registries and prefer external registries over internal
+        REGISTRIES=$(echo "$DOCKERCONFIG" | jq -r '.auths | keys[]' 2>/dev/null || echo "")
+
+        if [ -z "$REGISTRIES" ]; then
+          echo "Could not extract registries from config, using default: $(params.defaultOciStorage)"
+          echo -n "$(params.defaultOciStorage)" | tee $(results.ociStorage.path)
+          echo -n "internal" | tee $(results.registryType.path)
+          exit 0
+        fi
+
+        # Prefer quay.io or other external registries over internal OpenShift registry
+        REGISTRY=""
+        for REG in $REGISTRIES; do
+          # Skip OpenShift internal registries
+          if [[ "$REG" == *"openshift-image-registry"* ]] || [[ "$REG" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            continue
+          fi
+          # Prefer quay.io
+          if [[ "$REG" == *"quay.io"* ]]; then
+            REGISTRY="$REG"
+            break
+          fi
+          # Use first non-internal registry found
+          if [ -z "$REGISTRY" ]; then
+            REGISTRY="$REG"
+          fi
+        done
+
+        # If no external registry found, use internal or default
+        if [ -z "$REGISTRY" ]; then
+          echo "Only internal registries found, using default: $(params.defaultOciStorage)"
+          echo -n "$(params.defaultOciStorage)" | tee $(results.ociStorage.path)
+          echo -n "internal" | tee $(results.registryType.path)
+          exit 0
+        fi
+
+        # Construct trusted artifacts path
+        # For registries like "quay.io/namespace", extract namespace and use it
+        if [[ "$REGISTRY" == *"/"* ]]; then
+          # Registry includes namespace (e.g., quay.io/redhat-user-workloads)
+          OCI_STORAGE="${REGISTRY}/trusted-artifacts"
+        else
+          # Registry is just domain (e.g., quay.io) - append /trusted-artifacts
+          OCI_STORAGE="${REGISTRY}/trusted-artifacts"
+        fi
+
+        echo "Detected external registry: $OCI_STORAGE"
+        echo -n "$OCI_STORAGE" | tee $(results.ociStorage.path)
+        echo -n "external" | tee $(results.registryType.path)
