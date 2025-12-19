@@ -23,8 +23,8 @@ spec:
           value: {{ .Values.release.pipeline.revision }}
         - name: pathInRepo
           value: {{ .Values.release.pipeline.pathInRepo }}
+      ociStorage: {{ $ociStorage }}
   data:
-    ociStorage: {{ $ociStorage }}
     mapping:
       components:
         - name: {{ .Values.applicationName }}
