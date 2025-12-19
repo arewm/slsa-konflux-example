@@ -309,6 +309,10 @@ spec:
           value: "$(tasks.apply-mapping.results.sourceDataArtifact)"
         - name: TRUSTED_ARTIFACTS_DEBUG
           value: "$(params.trustedArtifactsDebug)"
+        - name: CA_TRUST_CONFIGMAP_NAME
+          value: "trusted-ca"
+        - name: CA_TRUST_CONFIG_MAP_KEY
+          value: "ca-bundle.crt"
       runAfter:
         - apply-mapping
         - collect-task-params
