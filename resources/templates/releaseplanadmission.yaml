@@ -37,3 +37,6 @@ spec:
       components:
         - name: {{ .Values.applicationName }}
           repository: {{ $destination }}
+          tags:
+            - latest
+            - "{{{{ git_sha }}}}"
