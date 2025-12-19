@@ -52,7 +52,7 @@ spec:
     - name: taskGitRevision
       type: string
       description: The revision in the taskGitUrl repo to be used
-      default: "trusted-ca"
+      default: "development"
     # The release service does not allow ociStorage to be set from the RPA, so customize this value in our local fork when running the e2e demo.
     # The serviceAccount running the release pipelineRun will need to have access to push to this registry.
     - name: ociStorage
@@ -146,7 +146,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
         - name: orasOptions
           value: $(params.orasOptions)
       runAfter:
@@ -175,7 +175,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
         - name: ociStorage
           value: $(tasks.extract-oci-storage.results.ociStorage)
         - name: sourceDataArtifact
@@ -210,7 +210,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       taskRef:
         params:
           - name: url
@@ -256,7 +256,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       runAfter:
         - collect-data
     - name: apply-mapping
@@ -290,7 +290,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       runAfter:
         - reduce-snapshot
     - name: verify-conforma
@@ -366,7 +366,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       runAfter:
         - verify-conforma
     - name: collect-registry-token-secret
@@ -395,7 +395,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       runAfter:
         - collect-data
     - name: make-repo-public
@@ -433,7 +433,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       runAfter:
         - collect-registry-token-secret
         - push-snapshot
@@ -457,7 +457,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "trusted-ca"
+          value: "development"
       taskRef:
         resolver: "git"
         params:

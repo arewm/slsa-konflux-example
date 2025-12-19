@@ -3,9 +3,8 @@ kind: ReleasePlan
 metadata:
   name: {{ .Values.applicationName }}-release
   namespace: {{ .Values.namespace }}
-  annotations:
-    release.appstudio.openshift.io/auto-release: "true"
   labels:
+    release.appstudio.openshift.io/auto-release: "true"
     release.appstudio.openshift.io/author: {{ .Values.release.author | default "user1" | quote }}
 spec:
   application: {{ .Values.applicationName }}
