@@ -49,10 +49,6 @@ spec:
       type: string
       description: The url to the git repo where the release-service-catalog tasks to be used are stored
       default: https://github.com/konflux-ci/release-service-catalog.git
-    - name: taskGitRevision
-      type: string
-      description: The revision in the taskGitUrl repo to be used
-      default: "development"
     # The release service does not allow ociStorage to be set from the RPA, so customize this value in our local fork when running the e2e demo.
     # The serviceAccount running the release pipelineRun will need to have access to push to this registry.
     - name: ociStorage
