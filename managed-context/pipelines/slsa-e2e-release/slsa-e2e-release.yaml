@@ -1,4 +1,4 @@
-# Customized from https://github.com/konflux-ci/release-service-catalog/tree/development/pipelines/managed/push-to-external-registry
+# Customized from https://github.com/arewm/release-service-catalog/tree/development/pipelines/managed/push-to-external-registry
 ---
 apiVersion: tekton.dev/v1
 kind: Pipeline
@@ -12,7 +12,7 @@ spec:
     Tekton pipeline to release Snapshots to an external registry.
 
     This is a simple release pipeline to illustrate performing privileged operations after verifying a Snapshot. A majority of
-    its tasks come from https://github.com/konflux-ci/release-service-catalog.git.
+    its tasks come from https://github.com/arewm/release-service-catalog.git.
 
     IMPORTANT: You need to set the `ociStorage` parameter to an OCI repository where the managed pipeline has permissions to store
     intermediate artifacts.
@@ -48,7 +48,7 @@ spec:
     - name: taskGitUrl
       type: string
       description: The url to the git repo where the release-service-catalog tasks to be used are stored
-      default: https://github.com/konflux-ci/release-service-catalog.git
+      default: https://github.com/arewm/release-service-catalog.git
     # The release service does not allow ociStorage to be set from the RPA, so customize this value in our local fork when running the e2e demo.
     # The serviceAccount running the release pipelineRun will need to have access to push to this registry.
     - name: ociStorage
@@ -75,7 +75,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -100,7 +100,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -125,9 +125,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
         - name: orasOptions
           value: $(params.orasOptions)
       runAfter:
@@ -137,7 +137,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -154,9 +154,9 @@ spec:
               {"resultIndex": 1, "key": ".conforma.timeout", "default": "8h0m0s"}
             ]
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
         - name: ociStorage
           value: $(params.ociStorage)
         - name: sourceDataArtifact
@@ -174,7 +174,7 @@ spec:
         - name: dataPath
           value: "$(tasks.collect-data.results.data)"
         - name: schema
-          value: https://github.com/konflux-ci/release-service-catalog/raw/development/schema/dataKeys.json
+          value: https://github.com/arewm/release-service-catalog/raw/development/schema/dataKeys.json
         - name: systems
           value: |
             [
@@ -189,13 +189,13 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       taskRef:
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -208,7 +208,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -235,9 +235,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       runAfter:
         - collect-data
     - name: apply-mapping
@@ -269,9 +269,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       runAfter:
         - reduce-snapshot
     - name: verify-conforma
@@ -326,7 +326,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -349,9 +349,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       runAfter:
         - verify-conforma
     - name: collect-registry-token-secret
@@ -359,7 +359,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -378,9 +378,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       runAfter:
         - collect-data
     - name: make-repo-public
@@ -393,7 +393,7 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
@@ -416,9 +416,9 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       runAfter:
         - collect-registry-token-secret
         - push-snapshot
@@ -440,14 +440,14 @@ spec:
         - name: trustedArtifactsDebug
           value: "$(params.trustedArtifactsDebug)"
         - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
+          value: "https://github.com/arewm/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "update-release-service-utils-multiarch"
       taskRef:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
+            value: https://github.com/arewm/release-service-catalog
           - name: revision
             value: development
           - name: pathInRepo
