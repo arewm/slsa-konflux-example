@@ -77,7 +77,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/verify-access-to-resources/verify-access-to-resources.yaml
       params:
@@ -102,7 +102,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/collect-data/collect-data.yaml
       params:
@@ -139,7 +139,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/collect-task-params/collect-task-params.yaml
       params:
@@ -197,7 +197,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/check-data-keys/check-data-keys.yaml
         resolver: git
@@ -210,7 +210,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/reduce-snapshot/reduce-snapshot.yaml
       params:
@@ -328,7 +328,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/push-snapshot/push-snapshot.yaml
       params:
@@ -361,7 +361,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/collect-registry-token-secret/collect-registry-token-secret.yaml
       params:
@@ -395,7 +395,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/make-repo-public/make-repo-public.yaml
       params:
@@ -449,7 +449,7 @@ spec:
           - name: url
             value: https://github.com/arewm/release-service-catalog
           - name: revision
-            value: development
+            value: update-release-service-utils-multiarch
           - name: pathInRepo
             value: tasks/managed/update-cr-status/update-cr-status.yaml
       runAfter:
