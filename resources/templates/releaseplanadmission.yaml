@@ -39,4 +39,4 @@ spec:
           repository: {{ $destination }}
           tags:
             - latest
-            - "{{{{ git_sha }}}}"
+            - "{{ "{{" }} git_sha {{ "}}" }}"
