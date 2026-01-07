@@ -34,6 +34,8 @@ spec:
             memory: 1Gi
   data:
     mapping:
+      defaults:
+        pushSourceContainer: false
       components:
         - name: {{ .Values.applicationName }}
           repository: {{ $destination }}
