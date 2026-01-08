@@ -18,7 +18,7 @@ TODO: complete
 ## Pre-requisites
 
 Before being able to explore SLSA with Konflux, you will need to have a running instance of it. We have [instructions](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#trying-out-konflux). While these instructions describe the process for building artifacts, we will also do that here. So you can stop after you complete the following:
-- [Installing Software Dependencies](lux-ci?tab=readme-ov-file#installing-software-dependencies)
+- [Installing Software Dependencies](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#installing-software-dependencies)
 - [Bootstrapping the cluster](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#bootstrapping-the-cluster)
 - [Enabling Pipelines Triggering via Webhooks](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#enable-pipelines-triggering-via-webhooks)
 
@@ -32,9 +32,9 @@ $ kind export kubeconfig -n konflux
 
 **Accessing the Konflux UI:**
 
-You can view pipeline runs and builds in the Konflulix web UI at https://localhost:9443
+You can view pipeline runs and builds in the Konflux web UI at https://localhost:9443
 
-Default user accounts:
+Demo user accounts (if you applied dex-users.yaml):
 - **Tenant namespace** (`user-ns1`):
   - Username: `user1@konflux.dev`
   - Password: `password`
