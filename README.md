@@ -56,16 +56,31 @@ podman pull localhost:5001/repository/image:tag
 
 Within the cluster, the registry is accessible as `registry-service.kind-registry`.
 
-Create two namespaces on your cluster.
-  - One is a tenant namespace where the artifact builds will occur
-  - One is a managed namespace which will be where privileged operations occur
+**Note:** When deploying Konflux using the konflux-ci repository, set `DEPLOY_DEMO_RESOURCES=0` in your `scripts/deploy-e2e.env` file to skip the default demo namespace creation. The helm chart in this repository will create the necessary namespaces and user permissions for the SLSA example.
 
-Install the required cli tools for this demo:
+Install the required CLI tools for this demo:
+- [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) to interact with the Kubernetes cluster
 - [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation), a tool for fetching attestations for OCI artifacts
-- [helm](https://github.com/helm/helm?tab=readme-ov-file#install) to deploy the resources to the KindD cluster
+- [helm](https://github.com/helm/helm?tab=readme-ov-file#install) to deploy the resources to the Kind cluster
 - [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) to view Tekton pipelines
 
-- (Optional) create push credentials for two different image repositories.
+**Configure demo authentication:**
+
+After deploying Konflux (with `DEPLOY_DEMO_RESOURCES=0`), configure Dex with demo users to access the UI:
+
+```bash
+# Apply demo user configuration
+kubectl apply -f dex-users.yaml
+kubectl rollout restart deployment/dex -n dex
+```
+
+This creates two demo users:
+- **user1@konflux.dev** / password (for tenant namespace access)
+- **user2@konflux.dev** / password (for managed namespace access)
+
+**WARNING:** These are insecure demo credentials for testing only. Do not use in production.
+
+**Note on image registries:** This demo uses the in-cluster Kind registry (`registry-service.kind-registry`) by default. If you want to use external registries (e.g., Quay.io), you'll need to configure `dockerconfigjson` credentials in the helm values and optionally deploy image-controller (see konflux-ci deployment options with `QUAY_TOKEN`).
 
 ## Setting up your builds
 
@@ -96,23 +111,26 @@ TODO: instructions
 
 ## Onboard the component
 
-If you installed Konflux using the instructions [above](#pre-requisites), we will use the two namespaces created for you
+The helm chart in this repository creates and configures the necessary namespaces for the SLSA example:
 
-- `user-ns1`: This will be the unprivileged tenant namespace
-- `user-ns2`: This will be the privileged managed namespace
+- `user-ns1`: The unprivileged tenant namespace where builds occur
+- `user-ns2`: The privileged managed namespace where releases are validated
+
+The chart automatically creates:
+- Namespaces with proper labels (`konflux-ci.dev/type: tenant`)
+- User role bindings for admin access (defaults to `user1@konflux.dev`)
+- Cluster role bindings for self-access review
+- Release pipeline service account in the tenant namespace
+- All application, component, and release configuration
 
 If you need to connect to the cluster, you can export the kubeconfig:
 
 ```bash
 # By default, the cluster name is konflux
-kind export kubeconfig -n konflux 
+kind export kubeconfig -n konflux
 ```
 
-Once your Konflux instance is deployed, we need to make sure that your tenant and managed namespaces are configured. This not only includes
-configuring Pipelines as Code so that you can create builds from your git commits, but also ensuring that we have the necessary configuration
-to test and release all of the artifacts you build.
-
-First, configure the build-service pipeline bundles (this requires admin access):
+Once your Konflux instance is deployed, configure the build-service pipeline bundles (this requires admin access):
 
 ```bash
 # Delete any existing non-Helm managed ConfigMap
@@ -122,16 +140,37 @@ kubectl delete configmap build-pipeline-config -n build-service
 helm upgrade --install build-config ./admin
 ```
 
-Then, onboard your component:
+Then, onboard your component using the helm chart. The chart will create both namespaces and configure all necessary resources:
 
 ```bash
 export FORK_ORG="yourfork"
-# If you want to force the component to re-onboard with the upgrade, use the --force option for helm
+# The helm chart creates namespaces, users, and onboards the component
+# Use --force to re-onboard an existing component
 helm upgrade --install festoji ./resources \
   --set applicationName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji \
   --set namespace=user-ns1 \
-  --set release.targetNamespace=user-ns2
+  --set release.targetNamespace=user-ns2 \
+  --set createNamespace=true \
+  --set users[0]=user1
+```
+
+**Helm chart configuration options:**
+- `createNamespace`: Set to `true` to create the namespace (default: `true`)
+- `users`: List of users to grant admin access (default: `["user1"]`)
+- `createReleaseServiceAccount`: Create release-pipeline service account in tenant namespace (default: `true`)
+- `requiresClusterAdmin`: Enable cluster-level permissions like ClusterRoleBindings (default: `true`)
+
+For a second namespace (managed context), you can deploy again with different values:
+
+```bash
+# Create the managed namespace separately if needed
+helm upgrade --install managed-ns ./resources \
+  --set namespace=user-ns2 \
+  --set createNamespace=true \
+  --set users[0]=user2 \
+  --set applicationName="" \
+  --set gitRepoUrl=""
 ```
 
 Now that you have onboarded your component, your PR will report a running build and you can use `tkn` to see it in the cluster!

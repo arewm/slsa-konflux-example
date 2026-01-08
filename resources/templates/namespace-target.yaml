@@ -1,0 +1,9 @@
+{{- if and .Values.createTargetNamespace .Values.release.targetNamespace }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.release.targetNamespace }}
+  labels:
+    konflux-ci.dev/type: tenant
+{{- end }}

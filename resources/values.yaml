@@ -10,6 +10,29 @@ requiresClusterAdmin: true
 # This can be customized for forks or local development
 repositoryUrl: "https://github.com/arewm/slsa-konflux-example"
 
+# User and namespace configuration
+# Create the namespace (set to false if namespace already exists)
+createNamespace: true
+
+# List of users to grant admin access in the tenant namespace
+# Each user will get a RoleBinding to konflux-admin-user-actions
+# and a ClusterRoleBinding for self-access-reviewer (if requiresClusterAdmin is true)
+users:
+  - user1
+
+# Create the target (managed) namespace (set to true to auto-create the managed namespace)
+# When enabled, creates the namespace specified in release.targetNamespace
+createTargetNamespace: true
+
+# List of users to grant admin access in the target (managed) namespace
+# Typically different from tenant users for proper separation of concerns
+targetUsers:
+  - user2
+
+# Create release-pipeline service account in the tenant namespace
+# This is needed for release operations from the tenant context
+createReleaseServiceAccount: true
+
 # Name of the application and component
 applicationName: ""
 
