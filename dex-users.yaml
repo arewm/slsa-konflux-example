@@ -49,3 +49,24 @@ data:
       userID: "ea8e8ee1-2283-4e03-83d4-b00f8b821b64"
     telemetry:
       http: 0.0.0.0:5558
+---
+# Password CRD resources required when dex uses kubernetes storage
+apiVersion: dex.coreos.com/v1
+kind: Password
+metadata:
+  name: user1-konflux.dev
+  namespace: dex
+email: "user1@konflux.dev"
+hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # gitleaks:allow
+username: "user1"
+userID: "7138d2fe-724e-4e86-af8a-db7c4b080e20"
+---
+apiVersion: dex.coreos.com/v1
+kind: Password
+metadata:
+  name: user2-konflux.dev
+  namespace: dex
+email: "user2@konflux.dev"
+hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # gitleaks:allow
+username: "user2"
+userID: "ea8e8ee1-2283-4e03-83d4-b00f8b821b64"
