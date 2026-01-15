@@ -40,7 +40,7 @@ applicationName: ""
 gitRepoUrl: ""
 
 # Namespace to deploy resources
-namespace: "user-ns1"
+namespace: "slsa-e2e-tenant"
 
 # Optional: Git revision/branch to track (defaults to main)
 gitRevision: "main"
@@ -76,7 +76,7 @@ image:
 release:
   # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
   # This is where the release plan admission will be created (managed namespace)
-  targetNamespace: "user-ns2"
+  targetNamespace: "slsa-e2e-managed-tenant"
 
   # Author for automated releases
   # This is required for automated releases to pass validation

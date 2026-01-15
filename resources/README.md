@@ -33,7 +33,7 @@ This Helm chart creates the necessary Konflux resources to onboard a new applica
 
 ### Basic Usage
 
-Using default namespaces (`user-ns1` for application, `user-ns2` for release):
+Using default namespaces (`slsa-e2e-tenant` for application, `slsa-e2e-managed-tenant` for release):
 
 ```bash
 helm install my-app ./konflux-onboarding \
@@ -84,14 +84,14 @@ helm install my-app ./konflux-onboarding -f my-values.yaml
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `namespace` | Kubernetes namespace to deploy resources | `user-ns1` |
+| `namespace` | Kubernetes namespace to deploy resources | `slsa-e2e-tenant` |
 | `gitRevision` | Git branch/tag to track | `main` |
 | `gitContext` | Context directory in the repository | `.` |
 | `displayName` | Display name for the application | Same as `applicationName` |
 | `containerImage` | Container image for the component | `registry-service.kind-registry/rbean-festoji:latest` |
 | `customContainerImage` | Custom container image URL (requires `dockerconfigjson`) | `""` |
 | `dockerconfigjson` | Base64-encoded dockerconfigjson for custom image authentication | `""` |
-| `release.targetNamespace` | Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy | `user-ns2` |
+| `release.targetNamespace` | Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy | `slsa-e2e-managed-tenant` |
 | `release.destination` | Release destination registry for the component | `registry-service.kind-registry/released-{applicationName}` |
 | `release.environment` | Environment name for the release | `production` |
 | `release.policyName` | Enterprise Contract policy name for release | `ec-policy` |
@@ -210,8 +210,8 @@ release:
 The chart automatically creates ReleasePlan and ReleasePlanAdmission resources to enable automatic releases of your application to an external registry.
 
 The chart uses two separate namespaces by default:
-- **Application namespace** (`namespace`): Default is `user-ns1` - where the Application, Component, IntegrationTestScenario, and ReleasePlan are created
-- **Managed namespace** (`release.targetNamespace`): Default is `user-ns2` - where the EnterpriseContractPolicy, ReleasePlanAdmission, ServiceAccount, and RoleBindings are created
+- **Application namespace** (`namespace`): Default is `slsa-e2e-tenant` - where the Application, Component, IntegrationTestScenario, and ReleasePlan are created
+- **Managed namespace** (`release.targetNamespace`): Default is `slsa-e2e-managed-tenant` - where the EnterpriseContractPolicy, ReleasePlanAdmission, ServiceAccount, and RoleBindings are created
 
 You can override these defaults as needed for your environment.
 
