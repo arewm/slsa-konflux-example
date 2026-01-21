@@ -49,6 +49,14 @@ spec:
       type: string
       description: The url to the git repo where the release-service-catalog tasks to be used are stored
       default: https://github.com/konflux-ci/release-service-catalog.git
+    - name: demoTasksGitUrl
+      type: string
+      description: The url to the git repo where custom demo release tasks are stored
+      default: https://github.com/arewm/slsa-konflux-example
+    - name: demoTasksGitRevision
+      type: string
+      description: The git revision to use for custom demo release tasks
+      default: main
     # The release service does not allow ociStorage to be set from the RPA, so customize this value in our local fork when running the e2e demo.
     # The serviceAccount running the release pipelineRun will need to have access to push to this registry.
     - name: ociStorage
@@ -246,9 +254,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.taskGitUrl)
+            value: $(params.demoTasksGitUrl)
           - name: revision
-            value: main
+            value: $(params.demoTasksGitRevision)
           - name: pathInRepo
             value: managed-context/tasks/apply-mapping/apply-mapping.yaml
       params:
@@ -280,9 +288,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: https://github.com/enterprise-contract/ec-cli
+            value: https://github.com/arewm/ec-cli
           - name: revision
-            value: "$(params.verify_ec_task_git_revision)"
+            value: feature/vsa-format-flag
           - name: pathInRepo
             value: "tasks/verify-conforma-konflux-ta/0.1/verify-conforma-konflux-ta.yaml"
       params:
@@ -313,6 +321,22 @@ spec:
           value: "trusted-ca"
         - name: CA_TRUST_CONFIG_MAP_KEY
           value: "ca-bundle.crt"
+        - name: ENABLE_VSA
+          value: "true"
+        - name: ATTESTATION_FORMAT
+          value: "predicate"
+        - name: VSA_SIGNING_KEY
+          value: "k8s://slsa-e2e-managed-tenant/release-signing-key"
+        - name: VSA_UPLOAD
+          value: "local@/var/workdir/vsa"
+        - name: ociStorage
+          value: $(params.ociStorage)
+        - name: dataDir
+          value: $(params.dataDir)
+        - name: taskGitUrl
+          value: "https://github.com/konflux-ci/release-service-catalog"
+        - name: taskGitRevision
+          value: "development"
       runAfter:
         - apply-mapping
         - collect-task-params
@@ -354,6 +378,48 @@ spec:
           value: "development"
       runAfter:
         - verify-conforma
+    - name: attach-vsa
+      when:
+        - input: "$(tasks.verify-conforma.results.VSA_GENERATED)"
+          operator: in
+          values: ["true"]
+        - input: "$(tasks.apply-mapping.results.mapped)"
+          operator: in
+          values: ["true"]
+      taskRef:
+        resolver: "git"
+        params:
+          - name: url
+            value: $(params.demoTasksGitUrl)
+          - name: revision
+            value: $(params.demoTasksGitRevision)
+          - name: pathInRepo
+            value: "managed-context/tasks/attach-vsa/0.1/attach-vsa.yaml"
+      params:
+        - name: SNAPSHOT_FILENAME
+          value: "$(tasks.collect-data.results.snapshotSpec)"
+        - name: SOURCE_DATA_ARTIFACT
+          value: "$(tasks.verify-conforma.results.sourceDataArtifact)"
+        - name: VSA_GENERATED
+          value: "$(tasks.verify-conforma.results.VSA_GENERATED)"
+        - name: VSA_SIGNING_KEY
+          value: "k8s://slsa-e2e-managed-tenant/release-signing-key"
+        - name: ORAS_OPTIONS
+          value: $(params.orasOptions)
+        - name: TRUSTED_ARTIFACTS_DEBUG
+          value: "$(params.trustedArtifactsDebug)"
+        - name: TRUSTED_ARTIFACTS_EXTRACT_DIR
+          value: "$(params.dataDir)/attach-vsa"
+        - name: HOMEDIR
+          value: "$(params.dataDir)"
+        - name: SSL_CERT_DIR
+          value: /var/run/secrets/kubernetes.io/serviceaccount
+        - name: CA_TRUST_CONFIGMAP_NAME
+          value: "trusted-ca"
+        - name: CA_TRUST_CONFIG_MAP_KEY
+          value: "ca-bundle.crt"
+      runAfter:
+        - push-snapshot
     - name: collect-registry-token-secret
       taskRef:
         resolver: "git"
