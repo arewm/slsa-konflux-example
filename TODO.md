@@ -19,7 +19,7 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Configure GPG/signing keys for commit verification
   - Set up gittuf root of trust and metadata repository
   - Include troubleshooting for common setup issues
-  - **Location:** README.md section at line 110 (currently "TODO: instructions")
+  - **Current:** README line 103 has TODO placeholder
 
 - [ ] **gittuf Policy Configuration**
   - Define reference authorization policies (branch protection)
@@ -48,40 +48,25 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 
 ### Build Track Documentation (SLSA Build Level 3)
 
-**Why Critical:** Core demonstration of unforgeable build attestations. Multiple README placeholders block SLSA submission.
+**Why Critical:** Core demonstration of unforgeable build attestations. README placeholder blocks SLSA submission.
+
+**Status:** Build provenance examples and SBOM documentation are complete (README lines 398-446).
 
 **Tasks:**
-- [ ] **Build Provenance Examples**
-  - Replace placeholder at README.md:189 with working commands
-  - Complete `cosign download attestation` example with actual image reference
-  - Display SLSA provenance structure (JSON output)
-  - Explain key fields (builder, materials, metadata, invocation)
-  - Demonstrate Tekton Chains signature verification
-  - **Current:** `cosign download [...] | jq [...]`
-
-- [ ] **SBOM Documentation**
-  - Replace placeholder at README.md:194-196 with real commands
-  - Download SBOM from OCI registry using cosign
-  - Inspect SBOM contents (syft SPDX format)
-  - Link SBOM attestation to build provenance
-  - Verify SBOM signatures
-  - **Current:** `[...]`
-
 - [ ] **Hermetic Build Configuration**
-  - Complete section at README.md:225
   - Enable hermetic builds in Tekton pipeline
   - Document network isolation configuration
   - Demonstrate reproducible builds
   - Document dependency prefetching setup
   - Show hermetic flag in SLSA provenance
-  - **Current:** "TODO: change to hermetic with more accurate SBOM"
+  - **Current:** README line 626 has TODO placeholder
 
 - [ ] **Vulnerability Scanning Documentation**
-  - Document clair-scan results in build provenance
-  - Show clamAV malware scan attestations
-  - Explain how scan results link to artifacts
-  - Provide vulnerability data format examples
-  - Show how to query scan results from attestations
+  - Document how to download Trivy and Clair vulnerability reports
+  - Show how to interpret scan results
+  - Explain vulnerability data format
+  - Show how scan results link to artifacts
+  - Demonstrate querying scan results from attestations
 
 - [ ] **Build Environment Attestations**
   - Document builder image verification
@@ -99,13 +84,11 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 
 **Tasks:**
 - [ ] **Policy Language & Structure**
-  - Complete section at README.md:219-221
   - Explain Conforma policy language and structure
   - Show how policies consume attestations
   - Document available policy predicates and functions
   - Provide policy template examples with annotations
   - Link to Conforma documentation
-  - **Current:** "TODO: Talk more about what Conforma can consume..."
 
 - [ ] **Example Policy: Source Verification**
   - Verify gittuf attestation exists
@@ -142,16 +125,14 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Show policy success allowing compliant build
   - VSA generation after policy pass
   - Explain policy evaluation logs and debugging
-  - Replace placeholder at README.md:213 (`kubectl get [...]`)
 
 - [ ] **Policy Exceptions**
-  - Complete section at README.md:229
   - Create policy exceptions in Conforma
   - Example: accepting known vulnerability with justification
   - Exception approval workflow
   - Exception attestation format
   - Exception audit trail and expiration
-  - **Current:** "TODO: introduce vulnerability, have policy exception"
+  - **Current:** README line 630 has TODO placeholder
 
 **Estimated Effort:** 1.5-2 days
 
@@ -199,11 +180,12 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 **Why Critical:** Table of contents and removing placeholders are required for SLSA submission.
 
 **Tasks:**
-- [ ] **Complete Table of Contents** (README.md:16)
+- [ ] **Complete Table of Contents**
   - Map sections to SLSA tracks (Source, Build, Verification, Publication, Consumption)
   - Create clear navigation structure
   - Link to all subsections
   - Ensure ToC reflects complete documentation
+  - **Current:** README line 16 has TODO placeholder
 
 - [ ] **Add Expected Outputs**
   - Include example output for all commands throughout README
@@ -212,55 +194,20 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Document error messages and resolutions
   - Include timing information where relevant
 
-- [ ] **Complete Additional References** (README.md:236-238)
+- [ ] **Complete Additional References**
   - Add relevant documentation links
   - Link to controller documentation (build-service, integration-service, release-service)
   - Add gittuf resources and guides
   - Link to Conforma documentation and policy examples
   - Add SLSA specification references (Source, Build, VSA specs)
   - Remove or populate empty sections (Documentation, Recordings, Controllers)
+  - **Current:** README Additional References section has empty subsections
 
 **Estimated Effort:** 0.5 day
 
 ---
 
 ## HIGH PRIORITY
-
-### Release Pipeline for Custom Registries
-
-**Why High:** Blocks ability to use custom registries for trusted artifacts storage. Referenced by upstream issue.
-
-**Issue:** Hardcoded trusted-artifacts location prevents using custom registries: https://github.com/konflux-ci/release-service-catalog/issues/1514
-
-**Tasks:**
-- [ ] Create modified release pipeline
-  - **Location:** Create in `managed-context/pipelines/push-to-external-registry-custom/`
-  - **Base Source:** Fork from upstream release-service-catalog push-to-external-registry pipeline
-- [ ] Make trusted-artifacts registry configurable
-  - Replace hardcoded `quay.io/konflux-ci/release-service-trusted-artifacts` references
-  - Add parameter for trusted-artifacts registry location
-  - Ensure both push and pull operations use configurable location
-  - Default to upstream location for backward compatibility
-- [ ] Validate implementation
-  - Test push/pull of trusted artifacts from custom registry
-  - Verify configuration is overridable via ReleasePlanAdmission
-  - Ensure backward compatibility with default registry
-
-**Example Implementation:**
-```yaml
-params:
-  - name: trustedArtifactsRegistry
-    description: Registry location for trusted artifacts storage
-    default: quay.io/konflux-ci/release-service-trusted-artifacts
-    type: string
-```
-
-**Dependencies:**
-- Understanding of current push-to-external-registry pipeline
-- Access to release-service-catalog repository for reference
-- Trusted artifacts registry setup and configuration
-
----
 
 ### Migrate Custom Artifacts to Official Namespace
 
@@ -301,39 +248,6 @@ params:
 ---
 
 ## MEDIUM PRIORITY
-
-### Update Conforma Policy to Require verify-source Task
-
-**Why Medium:** Enforces source verification in policy, but verify-source task must be implemented first.
-
-**Tasks:**
-- [ ] Implement policy rule requiring verify-source task
-  - **Policy Location:** Update policies in `managed-context/policies/`
-  - Add verify-source task to required tasks list
-  - Ensure builds fail policy evaluation without verify-source execution
-
-**Example Policy Rule (Rego):**
-```yaml
-package slsa_build_requirements
-
-deny[msg] {
-  # Check that verify-source task was executed
-  not has_verify_source_task(input.attestations)
-  msg := "verify-source task is required but was not executed"
-}
-```
-
-**Dependencies:**
-- verify-source task must be implemented and producing attestations
-- Understanding of current Conforma/ECP rule structure
-- Policy evaluation testing framework
-
-**Validation:**
-- Builds without verify-source should fail policy evaluation
-- Builds with verify-source should pass (assuming no other violations)
-- Policy violation messages should be clear and actionable
-
----
 
 ### Demonstration Scenarios
 
@@ -388,6 +302,27 @@ spec:
 - Documentation includes security review process
 - Example shows both granted exception and exception expiration
 
+#### Scenario 3: verify-source Policy Enforcement Demonstration
+
+**Purpose:** Demonstrate that Conforma policy enforcement actually catches missing required tasks.
+
+**Current State:**
+- Policy declares verify-source as required (managed-context/policies/ec-policy-data/data/required_tasks.yml)
+- Build pipelines do not currently run verify-source task
+- Need to show what happens during policy evaluation
+
+**Tasks:**
+- [ ] Trigger a build without verify-source task
+- [ ] Show policy evaluation failure in release pipeline
+- [ ] Document the specific error message from Conforma
+- [ ] Capture logs showing the policy violation
+- [ ] Document in README or examples/policy-enforcement-demonstration/
+
+**Success Criteria:**
+- Clear demonstration that policy catches missing verify-source
+- Error message is actionable and clear
+- Documentation shows the enforcement mechanism in action
+
 ---
 
 ## LOW PRIORITY
@@ -419,44 +354,21 @@ spec:
 
 ---
 
-## BLOCKED
-
-### Remove build-image-index Workaround
-
-**Why Blocked:** Waiting on upstream PR to merge CA trust support.
-
-**Current State:**
-- Using patched version: `quay.io/arewm/task-build-image-index@sha256:17ed551...`
-- **Location:** managed-context/slsa-e2e-pipeline/slsa-e2e-pipeline.yaml:284
-- **Reason:** Upstream task doesn't install mounted CA certificates needed for KinD registry
-
-**Blocking Issue:** https://github.com/konflux-ci/build-definitions/pull/2965
-
-**Tasks (when unblocked):**
-- [ ] Monitor PR #2965 for merge
-- [ ] Update pipeline to use upstream task reference
-- [ ] Remove comment: "Change back to this once the task supports mounting certs"
-- [ ] Test with KinD registry to ensure CA trust still works
-- [ ] Remove custom task image from quay.io/arewm
-
----
-
 ## Implementation Sequencing
 
 **Recommended Order:**
 1. **Week 1:** CRITICAL - Source Track (gittuf) + Build Track documentation
 2. **Week 2:** CRITICAL - Verification Track (Conforma policies) + VSA/Consumer docs
-3. **Week 3:** HIGH - Release pipeline modifications + namespace migration
-4. **Week 4:** MEDIUM - verify-source policy + demo scenarios
+3. **Week 3:** HIGH - Migrate Tekton bundles
+4. **Week 4:** MEDIUM - Demo scenarios (CVE, exceptions, verify-source enforcement)
 5. **Ongoing:** LOW - Custom task/pipeline docs
-6. **When unblocked:** Remove build-image-index workaround
 
 **For SLSA E2E Submission (Critical Path):**
 Source (gittuf) → Build examples → Conforma policies → VSA → Consumer guide → Table of Contents
 
 **Total Estimated Effort:**
 - CRITICAL items: 5-6 days focused work
-- HIGH items: 2-3 days
+- HIGH items: 1-2 days
 - MEDIUM items: 1-2 days
 - LOW items: 0.5-1 day
-- **Total:** ~9-12 days for complete implementation
+- **Total:** ~8-11 days for complete implementation
