@@ -38,13 +38,33 @@ $ kind export kubeconfig -n konflux
 
 ### Configure demo authentication
 
-After deploying Konflux (with `DEPLOY_DEMO_RESOURCES=0`), configure Dex with demo users to access the UI:
+After deploying Konflux (with `DEPLOY_DEMO_RESOURCES=0`), configure demo users to access the UI.
+
+Use the automated script from the konflux-ci repository:
 
 ```bash
-# Apply demo user configuration
-kubectl apply -f dex-users.yaml
-kubectl patch deployment dex -n dex --type=json -p='[{"op": "replace", "path": "/spec/template/spec/volumes/0/configMap/name", "value": "dex"}]'
-kubectl rollout restart deployment/dex -n dex
+cd /path/to/konflux-ci
+./scripts/deploy-demo-resources.sh
+```
+
+Or manually configure via the KonfluxUI custom resource:
+
+```bash
+kubectl patch konfluxui konflux-ui -n konflux-ui --type=merge -p '
+spec:
+  dex:
+    config:
+      enablePasswordDB: true
+      staticPasswords:
+      - email: "user1@konflux.dev"
+        username: "user1"
+        userID: "7138d2fe-724e-4e86-af8a-db7c4b080e20"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+      - email: "user2@konflux.dev"
+        username: "user2"
+        userID: "ea8e8ee1-2283-4e03-83d4-b00f8b821b64"
+        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+'
 ```
 
 This creates two demo users:
