@@ -217,7 +217,11 @@ Now that you have onboarded your component, the build-service PR will show pipel
 
 ## Build Your Component
 
-Build-service automatically created a pull request with pipeline definitions. Open a new pull request with a code change to trigger a build, or merge the build-service PR first and then create a test PR. The GitHub App webhook will notify Pipelines as Code, which will create a PipelineRun in your tenant namespace.
+Build-service automatically created a pull request with pipeline definitions. Before you can trigger builds:
+
+1. **Merge the build-service PR** - This PR contains the `.tekton/` directory with pipeline definitions required for builds. Your component won't build until these pipeline definitions exist in your repository.
+
+2. **Trigger a build** - After merging the build-service PR, open a new pull request with a code change. The GitHub App webhook will notify Pipelines as Code, which will create a PipelineRun in your tenant namespace.
 
 Monitor the build:
 
