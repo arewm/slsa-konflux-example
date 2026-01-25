@@ -1,6 +1,6 @@
 # Konflux Onboarding Helm Chart
 
-A Helm chart for onboarding applications to Konflux CI with SLSA3 policy verification.
+A Helm chart for onboarding applications to Konflux CI with SLSA 1.0 build L3 policy verification.
 
 ## Overview
 

@@ -25,12 +25,7 @@ slsa-konflux-example/
 │   ├── go-app/              # Go application demo
 │   └── python-app/          # Python application demo
 ├── scripts/                 # Installation and setup automation
-├── docs/                    # Documentation
-└── .internal/               # Local development resources
-    ├── repositories/        # 19 cloned Konflux/SLSA repositories
-    ├── REPOSITORY_ANALYSIS.md
-    ├── REPOSITORY_SUMMARY.md
-    └── story-arc-transcript.txt
+└── docs/                    # Documentation
 ```
 
 ## Development Context
@@ -47,31 +42,6 @@ This is an **active implementation project** with working code, trust boundaries
 - Enhanced Conforma task with VSA payload generation  
 - VSA signing and attestation publishing
 - Complete trust artifact schemas and validation
-
-## Local Repository Dependencies
-
-The `.internal/repositories/` directory contains 19 cloned repositories providing:
-- **Real implementation patterns** for task development
-- **ARM/macOS compatibility solutions** 
-- **Policy evaluation examples** and rule definitions
-- **SLSA compliance patterns** and VSA formats
-- **Signing and attestation** integration examples
-
-### Critical Dependencies
-- `build-definitions/` - Base for git-clone-slsa task
-- `release-service-catalog/` - Managed pipeline templates
-- `cli/` (conforma) - Policy evaluation patterns
-- `chains/` - SLSA provenance generation
-- `cosign/` - VSA signing implementation
-- `attestation/` - In-toto attestation formats
-
-## Key Planning and Analysis Documents
-
-- `.internal/SLSA_STORY_ARC_PLAN.md` - Complete implementation roadmap
-- `.internal/TRUST_BOUNDARY_VALIDATION.md` - Security architecture validation
-- `.internal/REPOSITORY_ANALYSIS.md` - Repository dependency analysis
-- `.internal/Dependant-repository-layout.md` - Konflux ecosystem mapping
-- `.internal/story-arc-transcript.txt` - Original planning discussions
 
 ## Development Workflow
 

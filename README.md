@@ -11,43 +11,58 @@ met before those artifacts are pushed anywhere outside their control.
 After you complete the prerequisites, this repository provides a self-contained example for how to configure a Konflux tenant, onboard a component, and release
 it while ensuring that we meet all required policies. We will show you along the way how we leverage guidance from many of SLSA's tracks.
 
-## Table of contents
+## Table of Contents
 
-TODO: complete
+- [Pre-requisites](#pre-requisites)
+  - [Configure Demo Authentication](#configure-demo-authentication)
+  - [Accessing the Konflux UI](#accessing-the-konflux-ui)
+  - [Accessing the Kind Cluster Registry](#accessing-the-kind-cluster-registry)
+  - [Tips](#tips)
+- [Workflow Overview](#workflow-overview)
+- [Administrator Setup](#administrator-setup)
+  - [Configure Build Pipeline Bundles](#configure-build-pipeline-bundles)
+- [Setup Your Repository](#setup-your-repository)
+  - [Fork the Demo Repository](#fork-the-demo-repository)
+  - [Install GitHub App on Your Fork](#install-github-app-on-your-fork)
+- [Onboard Your Component](#onboard-your-component)
+- [Build Your Component](#build-your-component)
+- [Inspect the Build Artifacts](#inspect-the-build-artifacts)
+- [Integration Tests](#integration-tests)
+- [Releasing Your Component](#releasing-your-component)
+- [Understanding the Policy](#understanding-the-policy)
+- [Next Steps](#next-steps)
 
 ## Pre-requisites
 
-Before being able to explore SLSA with Konflux, you will need to have a running instance of it. We have [instructions](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#trying-out-konflux). While these instructions describe the process for building artifacts, we will also do that here. So you can stop after you complete the following:
-- [Installing Software Dependencies](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#installing-software-dependencies)
-- [Bootstrapping the cluster](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#bootstrapping-the-cluster)
-- [Enabling Pipelines Triggering via Webhooks](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#enable-pipelines-triggering-via-webhooks)
+All commands in this guide assume you are in the root directory of the slsa-konflux-example repository unless otherwise specified.
 
-Install the required CLI tools for this demo:
-- [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) to interact with the Kubernetes cluster
-- [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation), a tool for fetching attestations for OCI artifacts
-- [helm](https://github.com/helm/helm?tab=readme-ov-file#install) to deploy the resources to the Kind cluster
-- [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) to view Tekton pipelines
+Before being able to explore SLSA with Konflux, you will need to have a running instance of it. Complete the following steps from the [Operator Deployment Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/operator-deployment.md):
+- **Installing Software Dependencies** (prerequisites section)
+- **Bootstrapping the cluster** (deployment section)
+- **Enabling Pipelines Triggering via Webhooks** (webhook section)
+
+Deploy Konflux without conflicting demo resources. Set DEPLOY_DEMO_RESOURCES=0 before deployment:
+
+```bash
+export DEPLOY_DEMO_RESOURCES=0
+./scripts/deploy-local-dev.sh my-konflux.yaml
+```
+
+This prevents conflicts between konflux-ci's default demo namespaces (user-ns1/user-ns2) and this demo's namespaces (slsa-e2e-tenant/slsa-e2e-managed-tenant).
+
+Install these CLI tools for the demo: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for cluster interaction, [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation) for inspecting OCI artifact attestations, [helm](https://github.com/helm/helm?tab=readme-ov-file#install) for deploying resources to the Kind cluster, [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) for viewing Tekton pipelines, and optionally [gh](https://cli.github.com/) for GitHub CLI operations.
 
 **NOTE:** You will need to configure your repository with the Pipelines as Code application, so make sure you don't lose track of it when you create it.
 
-**NOTE:** If you lose your kubeconfig to connect to your KinD cluster, you can re-establish it with
+### Configure Demo Authentication
 
-```bash
-$ kind export kubeconfig -n konflux
-```
+This demo requires demo users to access the UI.
 
-### Configure demo authentication
+**Important:** The slsa-konflux-example Helm chart creates namespaces and RBAC role bindings, but does NOT configure Dex static passwords (to avoid conflicts with other Konflux deployments). You must configure Dex authentication separately.
 
-After deploying Konflux (with `DEPLOY_DEMO_RESOURCES=0`), configure demo users to access the UI.
+For complete authentication setup options, see [Demo Users Configuration](https://github.com/konflux-ci/konflux-ci/blob/main/docs/demo-users.md).
 
-Use the automated script from the konflux-ci repository:
-
-```bash
-cd /path/to/konflux-ci
-./scripts/deploy-demo-resources.sh
-```
-
-Or manually configure via the KonfluxUI custom resource:
+Configure Dex static passwords using this kubectl patch:
 
 ```bash
 kubectl patch konfluxui konflux-ui -n konflux-ui --type=merge -p '
@@ -67,35 +82,78 @@ spec:
 '
 ```
 
-This creates two demo users:
-- **user1@konflux.dev** / password (for tenant namespace access)
-- **user2@konflux.dev** / password (for managed namespace access)
+Default credentials: `user1@konflux.dev` / `password` (for tenant namespace) and `user2@konflux.dev` / `password` (for managed namespace).
 
-Use `user1@konflux.dev` to onboard components and view tenant builds.
-
-**WARNING:** These are insecure demo credentials for testing only. Do not use in production.
+**WARNING:** These are insecure demo credentials for testing only.
 
 ### Accessing the Konflux UI
 
-You can view pipeline runs and builds in the Konflux web UI at https://localhost:9443
+After Konflux deployment completes, you can view pipeline runs and builds in the Konflux web UI at https://localhost:9443
 
 ### Accessing the Kind Cluster Registry
 
-The KinD cluster includes a local registry accessible at `localhost:5001` by default. This registry is used for storing container images built and released within the cluster.
+This demo uses the internal Kind registry by default. For complete registry configuration options (including external registries like Quay.io), see [Registry Configuration](https://github.com/konflux-ci/konflux-ci/blob/main/docs/registry-configuration.md).
 
-To access images built by Konflux in the registry:
+The internal registry is accessible at:
+- From host: `localhost:5001`
+- Within cluster: `registry-service.kind-registry.svc.cluster.local`
+
+Pull an image from the registry:
 ```bash
-# Pull an image from the registry
 podman pull localhost:5001/repository/image:tag
 ```
 
-Within the cluster, the registry is accessible as `registry-service.kind-registry`.
+### Tips
 
-**Note:** When deploying Konflux using the konflux-ci repository, set `DEPLOY_DEMO_RESOURCES=0` in your `scripts/deploy-e2e.env` file to skip the default demo namespace creation. The helm chart in this repository will create the necessary namespaces and user permissions for the SLSA example.
+**Recovering kubeconfig:** If you lose your kubeconfig connection to the Kind cluster:
+```bash
+kind export kubeconfig -n konflux
+```
 
-**Note on image registries:** This demo uses the in-cluster Kind registry (`registry-service.kind-registry`) by default. If you want to use external registries (e.g., Quay.io), you'll need to configure `dockerconfigjson` credentials in the helm values and optionally deploy image-controller (see konflux-ci deployment options with `QUAY_TOKEN`).
+For more troubleshooting, see [Troubleshooting Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/troubleshooting.md).
 
-## Setting up your builds
+## Workflow Overview
+
+Konflux automates the build-to-release pipeline. When you onboard a component, build-service automatically creates a pull request in your repository with Tekton pipeline definitions. Merging that PR enables the automated workflow.
+
+The build process runs in an unprivileged tenant namespace. After the build completes, Tekton Chains generates SLSA provenance and signs the artifacts. Integration tests validate the build against policies. When you merge to the main branch, the release pipeline runs in a privileged managed namespace where Conforma performs final policy validation before promoting images to the release registry.
+
+## Administrator Setup
+
+Configure the build service with available pipeline templates. This step requires cluster admin access.
+
+Disable operator management of the build-pipeline-config ConfigMap to allow Helm management:
+
+```bash
+kubectl patch konflux konflux --type=merge -p '
+spec:
+  buildService:
+    spec:
+      managePipelineConfig: false
+'
+```
+
+Delete the operator-managed ConfigMap (safe now that operator management is disabled):
+
+```bash
+kubectl delete configmap build-pipeline-config -n build-service --ignore-not-found=true
+```
+
+Install the build configuration:
+
+```bash
+helm upgrade --install build-config ./admin
+```
+
+Verify the configuration exists:
+
+```bash
+kubectl get configmap build-pipeline-config -n build-service
+```
+
+The ConfigMap defines which Tekton pipeline bundles build-service can use when generating pipeline definitions for components.
+
+## Setting Up Your Builds
 
 In order to achieve [SLSA build L3](https://slsa.dev/spec/v1.1/requirements), we need to ensure that builds are properly isolated
 both from other builds as well as from the secrets used to sign the provenance. Konflux relies on Kubernetes pods, as orchestrated by
@@ -105,24 +163,21 @@ ensure that the signing material that Tekton Chains uses when generating the pro
 Configuring the required Tekton definition can be onerous, so we use Pipelines as Code to help push out a default definition when you
 onboard a component.
 
-## Setup your repository
+## Setup Your Repository
 
-In this phase, we will walk you through what is needed to get your source repository ready to explore SLSA, Konflux style.
+### Fork the Demo Repository
 
-### Pick a repository
+Fork the festoji repository to your GitHub account. Navigate to https://github.com/lcarva/festoji and click Fork. Select your user or organization and create the fork. Note your fork URL for the helm installation step below: `https://github.com/ORGANIZATION/festoji`.
 
-If you don't have a repository you want to build a container image from, you can pick one and fork it. If you don't have one, you
-can always make [seasonally festive emojis](https://github.com/lcarva/festoji).
+Konflux uses Pipelines as Code, which requires write access to create `.tekton/` directory with pipeline definitions and webhook permissions to trigger builds on pull requests and pushes.
 
-Once you have a repository under your control, you will need to install the GitHub application that you previously created. If you
-have forgotten what your app is to install on your repository, you can see the apps that you have created 
-[here](https://github.com/settings/apps).
+### Install GitHub App on Your Fork
 
-### Onboard to source-tool
+Install the GitHub App you created during Konflux deployment on your forked repository. Navigate to https://github.com/settings/apps and find the GitHub App from the "Enable Pipelines Triggering via Webhooks" step. Click the app name, then Install App. Select your user or organization, choose "Only select repositories", and select your festoji fork. Click Install.
 
-TODO: instructions
+The GitHub App webhook sends pull request and push events to your Konflux cluster's Pipelines as Code controller, which triggers pipeline runs automatically.
 
-## Onboard the component
+## Onboard Your Component
 
 The helm chart in this repository creates and configures the necessary namespaces for the SLSA example:
 
@@ -136,27 +191,10 @@ The chart automatically creates:
 - Release pipeline service account in the tenant namespace
 - All application, component, and release configuration
 
-If you need to connect to the cluster, you can export the kubeconfig:
+Onboard your component using the helm chart. The chart will create both namespaces and configure all necessary resources:
 
 ```bash
-# By default, the cluster name is konflux
-kind export kubeconfig -n konflux
-```
-
-Once your Konflux instance is deployed, configure the build-service pipeline bundles (this requires admin access):
-
-```bash
-# Delete any existing non-Helm managed ConfigMap
-kubectl delete configmap build-pipeline-config -n build-service
-
-# Install the build configuration via Helm
-helm upgrade --install build-config ./admin
-```
-
-Then, onboard your component using the helm chart. The chart will create both namespaces and configure all necessary resources:
-
-```bash
-export FORK_ORG="yourfork"
+export FORK_ORG="ORGANIZATION"
 # The helm chart creates namespaces, users, and onboards the component
 # Use --force to re-onboard an existing component
 helm upgrade --install festoji ./resources \
@@ -166,7 +204,32 @@ helm upgrade --install festoji ./resources \
   --set release.targetNamespace=slsa-e2e-managed-tenant
 ```
 
-Now that you have onboarded your component, your PR will report a running build and you can use `tkn` to see it in the cluster!
+Verify the component was onboarded:
+
+```bash
+kubectl get component festoji -n slsa-e2e-tenant
+kubectl get repository -n slsa-e2e-tenant
+```
+
+Build-service automatically creates a pull request in your forked repository with Tekton pipeline definitions. Check your GitHub repository for the PR.
+
+Now that you have onboarded your component, the build-service PR will show pipeline status checks, and any new PRs you open will trigger builds and you can use `tkn` to see it in the cluster!
+
+## Build Your Component
+
+Build-service automatically created a pull request with pipeline definitions. Open a new pull request with a code change to trigger a build, or merge the build-service PR first and then create a test PR. The GitHub App webhook will notify Pipelines as Code, which will create a PipelineRun in your tenant namespace.
+
+Monitor the build:
+
+```bash
+# Watch pipeline runs
+tkn pipelinerun list -n slsa-e2e-tenant
+
+# Follow logs of the latest build
+tkn pipelinerun logs -n slsa-e2e-tenant -f
+```
+
+## Inspect the Build Artifacts
 
 ### Inspecting the Built Image and Artifacts
 
@@ -194,6 +257,10 @@ IMAGE_URL_EXTERNAL=$(echo ${IMAGE_URL} | sed 's/registry-service.kind-registry/l
 
 echo "Image URL: ${IMAGE_URL_EXTERNAL}"
 echo "Image Index Digest: ${IMAGE_DIGEST}"
+
+# Example output:
+# IMAGE_URL=registry-service.kind-registry.svc.cluster.local/slsa-e2e-tenant/festoji
+# IMAGE_DIGEST=sha256:abc123def456...
 ```
 
 The `IMAGE_DIGEST` is the digest of the **image index** (multi-platform manifest). To inspect platform-specific artifacts, you'll need the **image manifest digest** for your platform:
@@ -204,6 +271,9 @@ MANIFEST_DIGEST=$(skopeo inspect --tls-verify=false --raw \
   docker://${IMAGE_URL_EXTERNAL} | jq -r '.manifests[0].digest')
 
 echo "Image Manifest Digest: ${MANIFEST_DIGEST}"
+
+# Example output:
+# MANIFEST_DIGEST=sha256:789ghi012jkl...
 ```
 
 **Note on Artifacts:** Konflux attaches different artifacts at different levels:
@@ -251,11 +321,14 @@ podman run --rm ${IMAGE_URL_EXTERNAL}
 Since skopeo doesn't directly support the OCI Referrers API, use `curl` to check attached artifacts:
 
 ```bash
+# Extract repository path for curl commands (everything after registry address)
+REPO_PATH=$(echo ${IMAGE_URL} | sed 's|registry-service.kind-registry.svc.cluster.local/||')
+
 # Artifacts attached to the image index
-curl -sk https://localhost:5001/v2/konflux-festoji/referrers/${IMAGE_DIGEST} | jq
+curl -sk https://localhost:5001/v2/${REPO_PATH}/referrers/${IMAGE_DIGEST} | jq
 
 # Artifacts attached to the platform-specific manifest
-curl -sk https://localhost:5001/v2/konflux-festoji/referrers/${MANIFEST_DIGEST} | jq
+curl -sk https://localhost:5001/v2/${REPO_PATH}/referrers/${MANIFEST_DIGEST} | jq
 ```
 
 </details>
@@ -300,11 +373,14 @@ crane pull ${IMAGE_URL_EXTERNAL} image.tar --insecure
 `crane` doesn't directly support the OCI Referrers API. Use `curl` to inspect attached artifacts:
 
 ```bash
+# Extract repository path for curl commands (everything after registry address)
+REPO_PATH=$(echo ${IMAGE_URL} | sed 's|registry-service.kind-registry.svc.cluster.local/||')
+
 # Artifacts attached to the image index
-curl -sk https://localhost:5001/v2/konflux-festoji/referrers/${IMAGE_DIGEST} | jq
+curl -sk https://localhost:5001/v2/${REPO_PATH}/referrers/${IMAGE_DIGEST} | jq
 
 # Artifacts attached to the platform-specific manifest
-curl -sk https://localhost:5001/v2/konflux-festoji/referrers/${MANIFEST_DIGEST} | jq
+curl -sk https://localhost:5001/v2/${REPO_PATH}/referrers/${MANIFEST_DIGEST} | jq
 ```
 
 </details>
@@ -403,9 +479,11 @@ Konflux uses a **mixed approach** for storing artifacts due to varying tool supp
 
 This mixed scenario exists because different tasks are migrating to the OCI Referrers API at different rates. As tooling matures, more artifacts will move to the OCI Referrers API exclusively.
 
+## Integration Tests
+
 ## Building isn't enough
 
-Let's merge that PR, let the build run, and then look at what all we have configured Konflux to run.
+Merge your onboarding PR to trigger the on-push pipeline, let the build run, and then look at what all we have configured Konflux to run.
 
 ### Build pipeline
 
@@ -421,7 +499,12 @@ To view the attestations attached to your built image, use `cosign` (requires co
 
 ```bash
 # Get the image digest from your PipelineRun
-IMAGE_DIGEST=$(kubectl get pipelinerun <PIPELINERUN_NAME> -n slsa-e2e-tenant \
+PIPELINERUN=$(kubectl get pipelinerun -n slsa-e2e-tenant \
+  -l pipelines.appstudio.openshift.io/type=build \
+  --sort-by=.metadata.creationTimestamp \
+  -o name | tail -1)
+
+IMAGE_DIGEST=$(kubectl get ${PIPELINERUN} -n slsa-e2e-tenant \
   -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
 
 # View the attestation tree (shows provenance, signatures, and SBOM)
@@ -504,6 +587,8 @@ kubectl get pipelineruns -n slsa-e2e-tenant -l test.appstudio.openshift.io/scena
 
 This pre-release validation ensures you know immediately if a build will pass release policies, without waiting for the actual release pipeline.
 
+## Releasing Your Component
+
 ### Merging the PR and Triggering Auto-Release
 
 To trigger the full flow including auto-release, merge your pull request:
@@ -570,6 +655,8 @@ This is useful for:
 - Re-releasing after fixing release pipeline configuration
 - Releasing an older snapshot
 
+## Understanding the Policy
+
 #### What's in a policy?
 
 As we mentioned at the beginning, we are balancing flexibility with security. We use [Conforma](https://conforma.dev) as a policy engine to ensure that specific requirements
@@ -628,18 +715,72 @@ When the policy check fails:
 - The Release is marked as failed
 - Policy violation details are available in task logs
 
+Get the released image URL from the Release status:
+
+```bash
+# Get the release name from your earlier command
+RELEASE_NAME=$(kubectl get releases -n slsa-e2e-tenant --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d'/' -f2)
+
+# Extract the released image URL
+RELEASE_IMAGE_URL=$(kubectl get release ${RELEASE_NAME} -n slsa-e2e-tenant \
+  -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].repository}')
+RELEASE_IMAGE_DIGEST=$(kubectl get release ${RELEASE_NAME} -n slsa-e2e-tenant \
+  -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].digest}')
+
+echo "Released Image: ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}"
+```
+
+Verify the release completed successfully:
+
+```bash
+kubectl get release ${RELEASE_NAME} -n slsa-e2e-tenant \
+  -o jsonpath='{.status.conditions[?(@.type=="Released")].status}'
+# Should output: True
+```
+
 View released images and their attestations:
 
 ```bash
-# Check released images
-cosign tree localhost:5001/released-festoji:latest
+# Check released image artifacts
+cosign tree ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}
 
 # Download attestation from released image
-cosign download attestation localhost:5001/released-festoji@${IMAGE_DIGEST} \
+cosign download attestation ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
   | jq -r '.payload' | base64 -d | jq .
 ```
 
 The released image includes the same attestations as the build image, ensuring provenance is preserved through the release process.
+
+## Next Steps
+
+### Customizing for Your Use Case
+
+This demo uses festoji as an example application. To adapt Konflux for your own projects:
+
+Modify the helm chart values for your repository and organization. Edit `resources/values.yaml` or use `--set` flags:
+
+```bash
+helm upgrade --install myapp ./resources \
+  --set applicationName=myapp \
+  --set gitRepoUrl=https://github.com/YOUR_ORG/YOUR_REPO \
+  --set namespace=your-tenant-namespace \
+  --set release.targetNamespace=your-managed-namespace
+```
+
+Customize the Enterprise Contract policy to match your security requirements. Edit `managed-context/policies/ec-policy-data/data/rule_data.yml` to configure allowed registries, CVE remediation timeframes, disallowed packages, and release schedules.
+
+For hermetic builds with more accurate SBOMs, configure your build pipeline to use network isolation and generate complete dependency graphs. See the [Konflux documentation](https://konflux-ci.dev/docs/) for advanced build configurations.
+
+To understand policy exceptions and how to handle intentional violations, see the [Conforma documentation](https://conforma.dev/docs/policy/).
+
+### Additional Resources
+
+- [Konflux Documentation](https://konflux-ci.dev/docs/) - Complete platform documentation
+- [SLSA Specification](https://slsa.dev/spec/) - Supply-chain security framework
+- [Conforma Policy Engine](https://conforma.dev) - Policy validation and enforcement
+- [Tekton Chains](https://tekton.dev/docs/chains/) - Artifact signing and provenance
+
+TODO: is any of this needed?
 
 ## What else can this pipeline do?
 
@@ -652,7 +793,6 @@ TODO: introduce vulnerability, have policy exception
 ## Additional references
 
 ### Development
-For information about building and testing custom tasks and pipelines, see [docs/building-tasks-pipelines.md](docs/building-tasks-pipelines.md).
 
 ### Documentation
 ### Recordings
