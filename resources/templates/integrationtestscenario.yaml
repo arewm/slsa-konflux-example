@@ -17,5 +17,7 @@ spec:
   params:
     - name: POLICY_CONFIGURATION
       value: {{ .Values.release.targetNamespace }}/{{ .Values.release.policyName }}
+    - name: PUBLIC_KEY
+      value: k8s://tekton-pipelines/public-key
     - name: STRICT
       value: "true"
