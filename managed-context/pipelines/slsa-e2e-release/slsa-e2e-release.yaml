@@ -45,7 +45,7 @@ spec:
     - name: verify_ec_task_git_url
       type: string
       description: The git url to the repo where the verify-conforma task is stored
-      default: https://github.com/enterprise-contract/ec-cli
+      default: https://github.com/conforma/cli
     - name: verify_ec_task_git_revision
       type: string
       description: The git revision to be used when consuming the verify-conforma task
