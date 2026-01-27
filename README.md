@@ -120,38 +120,33 @@ The build process runs in an unprivileged tenant namespace. After the build comp
 
 ## Administrator Setup
 
-Configure the build service with available pipeline templates. This step requires cluster admin access.
+Configure the build service with available pipeline templates and set up demo authentication. This step requires cluster admin access.
 
-Disable operator management of the build-pipeline-config ConfigMap to allow Helm management:
+The prerequisites script performs these one-time setup tasks:
+- Creates tenant namespaces (`slsa-e2e-tenant` and `slsa-e2e-managed-tenant`) with Konflux labels
+- Disables operator management of `build-pipeline-config` to allow self-managed pipeline configuration
+- Deletes the operator-managed ConfigMap (safe after disabling operator management)
+- Configures Dex with demo users (`user1@konflux.dev` and `user2@konflux.dev`, password: `password`)
+- Installs build service configuration via Helm (defines available Tekton pipeline bundles)
+
+Run the prerequisites script:
 
 ```bash
-kubectl patch konflux konflux --type=merge -p '
-spec:
-  buildService:
-    spec:
-      managePipelineConfig: false
-'
+./scripts/setup-prerequisites.sh
 ```
 
-Delete the operator-managed ConfigMap (safe now that operator management is disabled):
+The script is idempotent and can be safely run multiple times. Verify the setup:
 
 ```bash
-kubectl delete configmap build-pipeline-config -n build-service --ignore-not-found=true
-```
+# Check namespaces were created
+kubectl get namespace slsa-e2e-tenant slsa-e2e-managed-tenant
 
-Install the build configuration:
-
-```bash
-helm upgrade --install build-config ./admin
-```
-
-Verify the configuration exists:
-
-```bash
+# Check build configuration exists
 kubectl get configmap build-pipeline-config -n build-service
-```
 
-The ConfigMap defines which Tekton pipeline bundles build-service can use when generating pipeline definitions for components.
+# Check demo users are configured
+kubectl get konfluxui konflux-ui -n konflux-ui -o jsonpath='{.spec.dex.config.staticPasswords}' | jq
+```
 
 ## Setting Up Your Builds
 
@@ -179,25 +174,23 @@ The GitHub App webhook sends pull request and push events to your Konflux cluste
 
 ## Onboard Your Component
 
-The helm chart in this repository creates and configures the necessary namespaces for the SLSA example:
+The helm chart in this repository onboards your component to the namespaces created by the prerequisites script:
 
 - `slsa-e2e-tenant`: The unprivileged tenant namespace where builds occur
 - `slsa-e2e-managed-tenant`: The privileged managed namespace where releases are validated
 
 The chart automatically creates:
-- Namespaces with proper labels (`konflux-ci.dev/type: tenant`)
 - User role bindings for admin access (defaults to `user1@konflux.dev`)
 - Cluster role bindings for self-access review
 - Release pipeline service account in the tenant namespace
-- All application, component, and release configuration
+- Application, component, and release configuration
 
-Onboard your component using the helm chart. The chart will create both namespaces and configure all necessary resources:
+Onboard your component using the helm chart:
 
 ```bash
 export FORK_ORG="ORGANIZATION"
-# The helm chart creates namespaces, users, and onboards the component
-# Use --force to re-onboard an existing component
-helm upgrade --install festoji ./resources \
+# Onboard the component (namespaces must already exist from setup-prerequisites.sh)
+helm install festoji ./resources \
   --set applicationName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji \
   --set namespace=slsa-e2e-tenant \

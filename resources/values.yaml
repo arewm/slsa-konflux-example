@@ -11,18 +11,13 @@ requiresClusterAdmin: true
 repositoryUrl: "https://github.com/arewm/slsa-konflux-example"
 
 # User and namespace configuration
-# Create the namespace (set to false if namespace already exists)
-createNamespace: true
+# Namespaces must be created using scripts/setup-prerequisites.sh before installing this chart
 
 # List of users to grant admin access in the tenant namespace
 # Each user will get a RoleBinding to konflux-admin-user-actions
 # and a ClusterRoleBinding for self-access-reviewer (if requiresClusterAdmin is true)
 users:
   - user1
-
-# Create the target (managed) namespace (set to true to auto-create the managed namespace)
-# When enabled, creates the namespace specified in release.targetNamespace
-createTargetNamespace: true
 
 # List of users to grant admin access in the target (managed) namespace
 # Typically different from tenant users for proper separation of concerns
