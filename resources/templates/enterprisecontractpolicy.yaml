@@ -18,3 +18,4 @@ spec:
       config:
         include:
           - '@slsa3'
+          - 'slsa_source'
