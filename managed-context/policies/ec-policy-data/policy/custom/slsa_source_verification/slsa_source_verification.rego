@@ -106,8 +106,8 @@ deny contains result if {
 	some verify_source_task in _verify_source_tasks(att)
 
 	# Get verify-source parameters
-	verify_url := tekton.task_param(verify_source_task, "URL")
-	verify_revision := tekton.task_param(verify_source_task, "REVISION")
+	verify_url := tekton.task_param(verify_source_task, "url")
+	verify_revision := tekton.task_param(verify_source_task, "revision")
 
 	# Check if there's ANY git-clone task that matches these parameters
 	matching_git_clones := [task |
@@ -162,8 +162,8 @@ deny contains result if {
 	# Check if there's a verify-source task for this material
 	verify_tasks := [task |
 		some task in _verify_source_tasks(att)
-		url := tekton.task_param(task, "URL")
-		revision := tekton.task_param(task, "REVISION")
+		url := tekton.task_param(task, "url")
+		revision := tekton.task_param(task, "revision")
 		_materials_match(material, url, revision)
 	]
 

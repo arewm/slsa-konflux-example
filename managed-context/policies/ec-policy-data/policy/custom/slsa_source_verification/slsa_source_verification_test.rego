@@ -69,7 +69,7 @@ test_url_mismatch if {
 	expected := {
 		{
 			"code": "slsa_source_verification.parameters_match_git_clone",
-			"msg": "verify-source task parameter URL=\"https://github.com/different/repo.git\" does not match git-clone result url=\"https://github.com/example/repo.git\"",
+			"msg": "verify-source task parameter url=\"https://github.com/different/repo.git\" does not match git-clone result url=\"https://github.com/example/repo.git\"",
 			"term": "verify-source",
 		},
 		{
@@ -89,7 +89,7 @@ test_revision_mismatch if {
 	expected := {
 		{
 			"code": "slsa_source_verification.parameters_match_git_clone",
-			"msg": "verify-source task parameter REVISION=\"def456\" does not match git-clone result commit=\"abc123\"",
+			"msg": "verify-source task parameter revision=\"def456\" does not match git-clone result commit=\"abc123\"",
 			"term": "verify-source",
 		},
 		{
@@ -301,8 +301,8 @@ _verify_source_task(level, url, revision) := {
 		"kind": "task",
 	},
 	"invocation": {"parameters": {
-		"URL": url,
-		"REVISION": revision,
+		"url": url,
+		"revision": revision,
 	}},
 	"results": [{
 		"name": "SLSA_SOURCE_LEVEL_ACHIEVED",
@@ -318,8 +318,8 @@ _verify_source_task_no_result(url, revision) := {
 		"kind": "task",
 	},
 	"invocation": {"parameters": {
-		"URL": url,
-		"REVISION": revision,
+		"url": url,
+		"revision": revision,
 	}},
 	"results": [],
 }
