@@ -19,7 +19,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Configure GPG/signing keys for commit verification
   - Set up gittuf root of trust and metadata repository
   - Include troubleshooting for common setup issues
-  - **Current:** README line 103 has TODO placeholder
 
 - [ ] **gittuf Policy Configuration**
   - Define reference authorization policies (branch protection)
@@ -42,15 +41,11 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Attempt non-compliant commit (violates policy)
   - Show how gittuf catches unauthorized changes
 
-**Estimated Effort:** 1.5-2 days
-
 ---
 
 ### Build Track Documentation (SLSA Build Level 3)
 
 **Why Critical:** Core demonstration of unforgeable build attestations. README placeholder blocks SLSA submission.
-
-**Status:** Build provenance examples and SBOM documentation are complete (README lines 398-446).
 
 **Tasks:**
 - [ ] **Hermetic Build Configuration**
@@ -59,7 +54,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Demonstrate reproducible builds
   - Document dependency prefetching setup
   - Show hermetic flag in SLSA provenance
-  - **Current:** README line 626 has TODO placeholder
 
 - [ ] **Vulnerability Scanning Documentation**
   - Document how to download Trivy and Clair vulnerability reports
@@ -73,8 +67,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Verify builder identity in provenance
   - Explain builder attestation format
   - Link to Tekton Chains configuration
-
-**Estimated Effort:** 1 day
 
 ---
 
@@ -90,13 +82,13 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Provide policy template examples with annotations
   - Link to Conforma documentation
 
-- [ ] **Example Policy: Source Verification**
+- [x] **Example Policy: Source Verification**
   - Verify gittuf attestation exists
   - Check source from approved repository
   - Verify required signatures on commits
   - Block unsigned commits
   - Show policy failure messages
-  - **Location:** Create in managed-context/policies/
+  - **Location:** managed-context/policies/ec-policy-data/policy/custom/slsa_source_verification/
 
 - [ ] **Example Policy: Build Requirements**
   - Verify SLSA Build L3 provenance is present
@@ -132,9 +124,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Exception approval workflow
   - Exception attestation format
   - Exception audit trail and expiration
-  - **Current:** README line 630 has TODO placeholder
-
-**Estimated Effort:** 1.5-2 days
 
 ---
 
@@ -171,8 +160,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Transparency log integration (Rekor)
   - Verify complete attestation coverage
 
-**Estimated Effort:** 0.5 day
-
 ---
 
 ### Documentation Completeness
@@ -185,7 +172,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Create clear navigation structure
   - Link to all subsections
   - Ensure ToC reflects complete documentation
-  - **Current:** README line 16 has TODO placeholder
 
 - [ ] **Add Expected Outputs**
   - Include example output for all commands throughout README
@@ -201,9 +187,6 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
   - Link to Conforma documentation and policy examples
   - Add SLSA specification references (Source, Build, VSA specs)
   - Remove or populate empty sections (Documentation, Recordings, Controllers)
-  - **Current:** README Additional References section has empty subsections
-
-**Estimated Effort:** 0.5 day
 
 ---
 
@@ -351,24 +334,3 @@ spec:
 - [ ] Add reference from README Additional References section
 
 **Location:** Link from README.md:234
-
----
-
-## Implementation Sequencing
-
-**Recommended Order:**
-1. **Week 1:** CRITICAL - Source Track (gittuf) + Build Track documentation
-2. **Week 2:** CRITICAL - Verification Track (Conforma policies) + VSA/Consumer docs
-3. **Week 3:** HIGH - Migrate Tekton bundles
-4. **Week 4:** MEDIUM - Demo scenarios (CVE, exceptions, verify-source enforcement)
-5. **Ongoing:** LOW - Custom task/pipeline docs
-
-**For SLSA E2E Submission (Critical Path):**
-Source (gittuf) → Build examples → Conforma policies → VSA → Consumer guide → Table of Contents
-
-**Total Estimated Effort:**
-- CRITICAL items: 5-6 days focused work
-- HIGH items: 1-2 days
-- MEDIUM items: 1-2 days
-- LOW items: 0.5-1 day
-- **Total:** ~8-11 days for complete implementation

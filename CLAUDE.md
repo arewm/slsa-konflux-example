@@ -10,22 +10,16 @@ This repository demonstrates end-to-end SLSA (Supply-chain Levels for Software A
 
 ```
 slsa-konflux-example/
-├── tenant-context/          # Developer-controlled components
-│   ├── tasks/               # Build-time verification tasks
-│   ├── pipelines/           # Build pipeline definitions
-│   └── policies/            # Build-time security policies
+├── admin/                   # Admin configuration
+├── hack/                    # Build/push scripts
 ├── managed-context/         # Platform-controlled components
-│   ├── tasks/               # Release-time tasks (conforma-vsa, vsa-sign)
+│   ├── tasks/               # Release-time tasks (verify-conforma, attach-vsa, etc.)
 │   ├── pipelines/           # Release pipeline definitions
+│   ├── slsa-e2e-pipeline/   # SLSA end-to-end pipeline
 │   └── policies/            # Release security policies
-├── shared/                  # Cross-context artifacts
-│   ├── trust-artifacts/     # Verification data exchange
-│   └── schemas/             # Common data formats
-├── examples/                # Sample applications
-│   ├── go-app/              # Go application demo
-│   └── python-app/          # Python application demo
-├── scripts/                 # Installation and setup automation
-└── docs/                    # Documentation
+├── resources/               # Helm chart for onboarding
+├── scripts/                 # Setup automation
+└── .internal/               # Internal development artifacts
 ```
 
 ## Development Context
@@ -35,26 +29,26 @@ This is an **active implementation project** with working code, trust boundaries
 ### Trust Boundary Architecture
 - **Tenant Context**: Source verification, builds (no signing keys)
 - **Managed Context**: Policy evaluation, VSA generation, signing
-- **Shared Context**: Cryptographically secured trust artifact exchange
 
 ### Key Implementation Components
-- Custom SLSA-aware git clone task
-- Enhanced Conforma task with VSA payload generation  
-- VSA signing and attestation publishing
-- Complete trust artifact schemas and validation
+- Conforma policy verification (`verify-conforma` task)
+- VSA attachment to release artifacts (`attach-vsa` task)
+- SBOM generation and scanning (`trivy-sbom-scan` task)
+- OCI storage extraction (`extract-oci-storage` task)
+- Mapping application for trust artifacts (`apply-mapping` task)
 
 ## Development Workflow
 
-1. **Task Development**: Extend existing patterns from `build-definitions/` and `release-service-catalog/`
+1. **Task Development**: Create Tekton tasks in `managed-context/tasks/` following established patterns
 2. **Trust Boundaries**: Maintain strict separation between tenant and managed contexts
-3. **SLSA Compliance**: Use patterns from `chains/`, `slsa/`, and `attestation/` repositories
-4. **ARM Compatibility**: Leverage solutions from `konflux-ci/` installer patterns
-5. **Policy Integration**: Build on `cli/`, `policy/`, and `rhtap-ec-policy/` examples
+3. **SLSA Compliance**: Implement SLSA provenance and VSA generation workflows
+4. **ARM Compatibility**: Use multi-arch base images and test on ARM/macOS
+5. **Policy Integration**: Integrate with Enterprise Contract policy evaluation
 
 ## Testing and Validation
 
-- Use example applications in `examples/` for end-to-end validation
-- Validate trust boundary separation with provided security tests
+- Dry-run validation of Tekton task definitions using `kubectl apply --dry-run=client`
+- Monitor pipeline runs in target namespaces
 - ARM/macOS compatibility testing using installation automation
 - SLSA compliance verification using policy evaluation frameworks
 
@@ -89,47 +83,34 @@ kubectl get releases -n default-tenant
 ### Development Tasks
 ```bash
 # Validate Tekton task definitions
-kubectl apply --dry-run=client -f tenant-context/tasks/git-clone-slsa/0.1/
-kubectl apply --dry-run=client -f managed-context/tasks/conforma-vsa/0.1/
-kubectl apply --dry-run=client -f managed-context/tasks/vsa-sign/0.1/
-
-# Test individual components
-kubectl create -f examples/go-app/pipeline-run.yaml
-kubectl create -f examples/python-app/pipeline-run.yaml
+kubectl apply --dry-run=client -f managed-context/tasks/verify-conforma/0.1/
+kubectl apply --dry-run=client -f managed-context/tasks/attach-vsa/0.1/
+kubectl apply --dry-run=client -f managed-context/tasks/trivy-sbom-scan/0.1/
+kubectl apply --dry-run=client -f managed-context/tasks/extract-oci-storage/
+kubectl apply --dry-run=client -f managed-context/tasks/apply-mapping/
 ```
-
-## Work Stream Implementation Strategy
-
-This repository follows a 6-stream parallel development approach defined in `.internal/work-streams/`:
-
-### Priority Order (Critical Path)
-1. **WS5 (Trust Artifact Schema)** - Foundation for all streams (.internal/work-streams/WS5-Trust-Artifact-Schema.md)
-2. **WS1 (Infrastructure & ARM Compatibility)** - Platform setup (.internal/work-streams/WS1-Infrastructure-ARM-Compatibility.md)  
-3. **WS3 (Managed Context Development)** - Security architecture (.internal/work-streams/WS3-Managed-Context-Development.md)
-4. **WS2 (Tenant Context Development)** - Build tasks (.internal/work-streams/WS2-Tenant-Context-Development.md)
-5. **WS4 (Policy Integration)** - Compliance framework (.internal/work-streams/WS4-Policy-Integration-Compliance.md)
-6. **WS6 (Documentation & Community)** - Adoption materials (.internal/work-streams/WS6-Documentation-Community-Adoption.md)
 
 ## Core Architecture Patterns
 
 ### Trust Boundary Enforcement
 - **Tenant Context**: Source verification, builds, no signing keys
-  - Primary task: `git-clone-slsa` - SLSA-aware source cloning with verification
-  - Output: Trust artifacts and build provenance
+  - Standard Konflux build pipelines
+  - Output: Build provenance via Tekton Chains
 - **Managed Context**: Policy evaluation, VSA generation, cryptographic signing
-  - Primary tasks: `conforma-vsa` (policy evaluation), `vsa-sign` (VSA signing)
-  - Input: Trust artifacts from tenant context
-  - Output: Signed VSAs and attestations
+  - Primary tasks: `verify-conforma` (policy evaluation), `attach-vsa` (VSA attachment)
+  - Additional tasks: `trivy-sbom-scan`, `extract-oci-storage`, `apply-mapping`
+  - Input: Artifacts and attestations from tenant context
+  - Output: Signed VSAs and release artifacts
 
 ### SLSA Integration Points
-- **Source Track**: Implemented in `git-clone-slsa` task using slsa-framework/source-tool
 - **Build Track**: Tekton Chains integration for SLSA provenance generation
-- **VSA Generation**: Policy evaluation results converted to verification summaries
-- **Attestation Publishing**: Signed VSAs published to OCI registries
+- **VSA Generation**: Policy evaluation results converted to verification summaries via `attach-vsa`
+- **Attestation Publishing**: Signed VSAs and attestations published to OCI registries
+- **Policy Verification**: Enterprise Contract integration via `verify-conforma` task
 
 ### Tekton Task Development
-- Extend patterns from `.internal/repositories/build-definitions/`
-- Use trusted artifact storage for cross-context communication
+- Create tasks in `managed-context/tasks/` with versioned subdirectories (e.g., `0.1/`)
+- Use OCI-based artifact storage for cross-context communication
 - Follow Tekton conventions for parameters, results, and workspaces
 - ARM/macOS compatibility using multi-arch base images
 
