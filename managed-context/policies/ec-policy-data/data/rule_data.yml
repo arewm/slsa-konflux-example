@@ -28,6 +28,13 @@ rule_data:
   # See https://conforma.dev/docs/policy/packages/release_trusted_task.html#trusted_task__current
   task_expiry_warning_days: 14
 
+  # Minimum SLSA source level required (1, 2, or 3)
+  # Level 1: Version controlled
+  # Level 2: Version controlled + verified history
+  # Level 3: Level 2 + retention/tamper resistance
+  # See https://slsa.dev/spec/v1.2/source-requirements for details
+  slsa_source_min_level: "1"
+
   allowed_java_component_sources:
   - none
   
@@ -36,7 +43,7 @@ rule_data:
   - git-revision
   - output-image
   # See also the additional default rule data values defined in
-  # https://github.com/enterprise-contract/ec-policies/blob/main/policy/lib/rule_data.rego
+  # https://github.com/conforma/policy/blob/main/policy/lib/rule_data.rego
 
   # https://conforma.dev/docs/policy/packages/release_hermetic_task.html
   # If more build or run-script tasks are created they should be added to this list
