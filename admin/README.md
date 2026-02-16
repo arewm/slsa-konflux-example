@@ -5,7 +5,8 @@
 > **STATUS**: This Helm chart is currently **not used** in the installation process.
 > The Konflux operator manages the `build-pipeline-config` ConfigMap and does not yet
 > support disabling this management. Custom pipeline configuration is currently applied
-> via direct `kubectl apply` (see `admin/build-pipeline-config.yaml`).
+> via the `scripts/patch-pipeline-config.sh` script, which takes ownership of the ConfigMap
+> away from the operator to prevent reconciliation.
 > This chart will be useful once the operator supports external ConfigMap management.
 
 ## Overview

@@ -135,15 +135,7 @@ Run the prerequisites script:
 ./scripts/setup-prerequisites.sh
 ```
 
-The script is idempotent and can be safely run multiple times. Verify the setup:
-
-```bash
-# Check both namespaces exist
-kubectl get namespace default-tenant managed-tenant
-
-# Check build configuration exists with custom pipelines
-kubectl get configmap build-pipeline-config -n build-service -o yaml | grep slsa-e2e-oci-ta
-```
+The script is idempotent and can be safely run multiple times.
 
 ## Setting Up Your Builds
 
@@ -756,7 +748,7 @@ Modify the helm chart values for your repository and organization. Edit `resourc
 ```bash
 helm upgrade --install myapp ./resources \
   --set applicationName=myapp \
-  --set gitRepoUrl=https://github.com/YOUR_ORG/YOUR_REPO \
+  --set gitRepoUrl=https://github.com/FORK_ORG/YOUR_REPO \
   --set namespace=your-tenant-namespace \
   --set release.targetNamespace=your-managed-namespace
 ```

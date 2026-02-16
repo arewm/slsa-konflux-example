@@ -131,8 +131,8 @@ release:
   # Enterprise Contract policy configuration
   policy:
     # Policy OCI bundle reference
-    # Default: quay.io/repository/conforma/release-policy:konflux
-    policyBundle: "quay.io/repository/conforma/release-policy:konflux"
+    # Default: quay.io/conforma/release-policy:konflux
+    policyBundle: "quay.io/conforma/release-policy:konflux"
 
     # Policy data source (git repository or OCI bundle with policy rules)
     # Defaults to managed-context/policies/ec-policy-data/data in .Values.repositoryUrl

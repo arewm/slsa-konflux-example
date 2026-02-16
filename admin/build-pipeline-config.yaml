@@ -1,11 +1,12 @@
 # Custom build-pipeline-config ConfigMap
-# Extends Konflux default pipelines with custom SLSA pipeline (slsa-e2e-oci-ta)
+# Replaces Konflux default pipelines with custom SLSA pipeline (slsa-e2e-oci-ta)
 #
 # Usage:
-#   kubectl apply -f admin/build-pipeline-config.yaml
+#   ./scripts/patch-pipeline-config.sh
 #
-# NOTE: This ConfigMap is managed by the Konflux operator. If the operator resets
-# this configuration, re-apply this file to restore the custom pipeline.
+# NOTE: This ConfigMap is managed by the Konflux operator. The patch script takes
+# ownership away from the operator using a different field-manager to prevent
+# automatic reconciliation. This file defines the desired configuration.
 
 apiVersion: v1
 kind: ConfigMap

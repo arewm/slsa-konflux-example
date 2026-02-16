@@ -152,7 +152,7 @@ spec:
   sources:
     - name: Release Policies
       policy:
-        - oci::quay.io/repository/conforma/release-policy:latest
+        - oci::quay.io/conforma/release-policy:latest
         # Add custom policy
         - github.com/your-org/your-repo//managed-context/policies/ec-policy-data/policy
       data:

@@ -68,7 +68,7 @@ cd /path/to/slsa-konflux-example
 # Onboard your application using helm chart
 helm install festoji ./resources \
   --set applicationName=festoji \
-  --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
+  --set gitRepoUrl=https://github.com/FORK_ORG/festoji
 ```
 
 ### Testing and Validation

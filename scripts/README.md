@@ -26,7 +26,7 @@ cd /path/to/slsa-konflux-example
 # Onboard application using helm chart
 helm install festoji ./resources \
   --set applicationName=festoji \
-  --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
+  --set gitRepoUrl=https://github.com/FORK_ORG/festoji
 
 # Verify onboarding
 kubectl get application,component -n default-tenant
@@ -86,7 +86,7 @@ cd /path/to/slsa-konflux-example
 # 3. Onboard your application
 helm install festoji ./resources \
   --set applicationName=festoji \
-  --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
+  --set gitRepoUrl=https://github.com/FORK_ORG/festoji
 
 # 4. Monitor builds and releases
 kubectl get pipelineruns -n default-tenant -w
