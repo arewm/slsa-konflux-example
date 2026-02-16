@@ -33,7 +33,7 @@ rule_data:
   # Level 2: Version controlled + verified history
   # Level 3: Level 2 + retention/tamper resistance
   # See https://slsa.dev/spec/v1.2/source-requirements for details
-  slsa_source_min_level: "1"
+  slsa_source_min_level: "2"
 
   allowed_java_component_sources:
   - none

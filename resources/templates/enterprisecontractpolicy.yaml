@@ -11,6 +11,7 @@ spec:
     - name: Release Policies
       policy:
         - oci::{{ .Values.release.policy.policyBundle }}
+        - github.com/arewm/slsa-konflux-example//managed-context/policies/ec-policy-data/policy/custom/slsa_source_verification?ref=main
       data:
         - {{ $policyData }}
         - {{ .Values.release.policy.acceptableBundles }}
