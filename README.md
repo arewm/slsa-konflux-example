@@ -36,55 +36,54 @@ it while ensuring that we meet all required policies. We will show you along the
 
 All commands in this guide assume you are in the root directory of the slsa-konflux-example repository unless otherwise specified.
 
-Before being able to explore SLSA with Konflux, you will need to have a running instance of it. Complete the following steps from the [Operator Deployment Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/operator-deployment.md):
-- **Installing Software Dependencies** (prerequisites section)
-- **Bootstrapping the cluster** (deployment section)
-- **Enabling Pipelines Triggering via Webhooks** (webhook section)
-
-Deploy Konflux without conflicting demo resources. Set DEPLOY_DEMO_RESOURCES=0 before deployment:
+Before being able to explore SLSA with Konflux, you will need to have a running instance of it. The simplest way to get started is using the [konflux-ci](https://github.com/konflux-ci/konflux-ci) deployment script:
 
 ```bash
-export DEPLOY_DEMO_RESOURCES=0
-./scripts/deploy-local-dev.sh my-konflux.yaml
+# Clone the konflux-ci repository
+git clone https://github.com/konflux-ci/konflux-ci.git
+cd konflux-ci
+
+# Deploy Konflux operator with default configuration
+./scripts/deploy-local.sh
 ```
 
-This prevents conflicts between konflux-ci's default demo namespaces (user-ns1/user-ns2) and this demo's namespaces (slsa-e2e-tenant/slsa-e2e-managed-tenant).
+This script automatically:
+- Creates a Kind cluster
+- Deploys the Konflux operator
+- Creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev)
+- Configures webhooks for Pipelines as Code
+
+After the operator is deployed, return to this repository and run the prerequisites script to complete the setup:
+
+```bash
+cd /path/to/slsa-konflux-example
+./scripts/setup-prerequisites.sh
+```
+
+The prerequisites script:
+- Creates the `managed-tenant` namespace for privileged release operations
+- Applies custom SLSA pipeline configuration to the build service
+
+For detailed deployment options, see the [Operator Deployment Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/operator-deployment.md).
 
 Install these CLI tools for the demo: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for cluster interaction, [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation) for inspecting OCI artifact attestations, [helm](https://github.com/helm/helm?tab=readme-ov-file#install) for deploying resources to the Kind cluster, [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) for viewing Tekton pipelines, and optionally [gh](https://cli.github.com/) for GitHub CLI operations.
 
 **NOTE:** You will need to configure your repository with the Pipelines as Code application, so make sure you don't lose track of it when you create it.
 
-### Configure Demo Authentication
+### Demo Authentication
 
-This demo requires demo users to access the UI.
+The Konflux operator automatically configures demo users for accessing the UI. The default deployment includes:
 
-**Important:** The slsa-konflux-example Helm chart creates namespaces and RBAC role bindings, but does NOT configure Dex static passwords (to avoid conflicts with other Konflux deployments). You must configure Dex authentication separately.
+- **user1@konflux.dev** / `password` - Has admin access to the `default-tenant` namespace (created by operator)
+- **user2@konflux.dev** / `password` - Has admin access to the `managed-tenant` namespace (created by prerequisites script)
 
-For complete authentication setup options, see [Demo Users Configuration](https://github.com/konflux-ci/konflux-ci/blob/main/docs/demo-users.md).
+**WARNING:** These are insecure demo credentials for testing only. For production deployments, configure proper authentication using the [Demo Users Configuration Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/demo-users.md).
 
-Configure Dex static passwords using this kubectl patch:
+You can verify the demo users are configured:
 
 ```bash
-kubectl patch konfluxui konflux-ui -n konflux-ui --type=merge -p '
-spec:
-  dex:
-    config:
-      enablePasswordDB: true
-      staticPasswords:
-      - email: "user1@konflux.dev"
-        username: "user1"
-        userID: "7138d2fe-724e-4e86-af8a-db7c4b080e20"
-        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
-      - email: "user2@konflux.dev"
-        username: "user2"
-        userID: "ea8e8ee1-2283-4e03-83d4-b00f8b821b64"
-        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
-'
+kubectl get konfluxui konflux-ui -n konflux-ui -o jsonpath='{.spec.dex.config.staticPasswords}' | jq
 ```
-
-Default credentials: `user1@konflux.dev` / `password` (for tenant namespace) and `user2@konflux.dev` / `password` (for managed namespace).
-
-**WARNING:** These are insecure demo credentials for testing only.
 
 ### Accessing the Konflux UI
 
@@ -120,14 +119,15 @@ The build process runs in an unprivileged tenant namespace. After the build comp
 
 ## Administrator Setup
 
-Configure the build service with available pipeline templates and set up demo authentication. This step requires cluster admin access.
+Configure the build service with custom pipeline bundles for SLSA compliance. This step requires cluster admin access.
 
-The prerequisites script performs these one-time setup tasks:
-- Creates tenant namespaces (`slsa-e2e-tenant` and `slsa-e2e-managed-tenant`) with Konflux labels
-- Disables operator management of `build-pipeline-config` to allow self-managed pipeline configuration
-- Deletes the operator-managed ConfigMap (safe after disabling operator management)
-- Configures Dex with demo users (`user1@konflux.dev` and `user2@konflux.dev`, password: `password`)
-- Installs build service configuration via Helm (defines available Tekton pipeline bundles)
+The Konflux operator deployment already created:
+- The `default-tenant` namespace (for unprivileged builds)
+- Demo users (user1@konflux.dev, user2@konflux.dev)
+
+The prerequisites script completes the setup by:
+- Creating the `managed-tenant` namespace (for privileged release operations)
+- Applying custom SLSA pipeline configuration (`slsa-e2e-oci-ta`) to the build service
 
 Run the prerequisites script:
 
@@ -138,14 +138,11 @@ Run the prerequisites script:
 The script is idempotent and can be safely run multiple times. Verify the setup:
 
 ```bash
-# Check namespaces were created
-kubectl get namespace slsa-e2e-tenant slsa-e2e-managed-tenant
+# Check both namespaces exist
+kubectl get namespace default-tenant managed-tenant
 
-# Check build configuration exists
-kubectl get configmap build-pipeline-config -n build-service
-
-# Check demo users are configured
-kubectl get konfluxui konflux-ui -n konflux-ui -o jsonpath='{.spec.dex.config.staticPasswords}' | jq
+# Check build configuration exists with custom pipelines
+kubectl get configmap build-pipeline-config -n build-service -o yaml | grep slsa-e2e-oci-ta
 ```
 
 ## Setting Up Your Builds
@@ -174,10 +171,10 @@ The GitHub App webhook sends pull request and push events to your Konflux cluste
 
 ## Onboard Your Component
 
-The helm chart in this repository onboards your component to the namespaces created by the prerequisites script:
+The helm chart in this repository onboards your component to Konflux using these namespaces:
 
-- `slsa-e2e-tenant`: The unprivileged tenant namespace where builds occur
-- `slsa-e2e-managed-tenant`: The privileged managed namespace where releases are validated
+- `default-tenant`: The unprivileged tenant namespace where builds occur (created by Konflux operator)
+- `managed-tenant`: The privileged managed namespace where releases are validated (created by prerequisites script)
 
 The chart automatically creates:
 - User role bindings for admin access (defaults to `user1@konflux.dev`)
@@ -189,19 +186,19 @@ Onboard your component using the helm chart:
 
 ```bash
 export FORK_ORG="ORGANIZATION"
-# Onboard the component (namespaces must already exist from setup-prerequisites.sh)
+# Onboard the component (uses default-tenant and managed-tenant by default)
 helm install festoji ./resources \
   --set applicationName=festoji \
-  --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji \
-  --set namespace=slsa-e2e-tenant \
-  --set release.targetNamespace=slsa-e2e-managed-tenant
+  --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
 ```
+
+**Note:** The namespace values default to `default-tenant` and `managed-tenant`. You only need to override them if using custom namespaces.
 
 Verify the component was onboarded:
 
 ```bash
-kubectl get component festoji -n slsa-e2e-tenant
-kubectl get repository -n slsa-e2e-tenant
+kubectl get component festoji -n default-tenant
+kubectl get repository -n default-tenant
 ```
 
 Build-service automatically creates a pull request in your forked repository with Tekton pipeline definitions. Check your GitHub repository for the PR.
@@ -220,10 +217,10 @@ Monitor the build:
 
 ```bash
 # Watch pipeline runs
-tkn pipelinerun list -n slsa-e2e-tenant
+tkn pipelinerun list -n default-tenant
 
 # Follow logs of the latest build
-tkn pipelinerun logs -n slsa-e2e-tenant -f
+tkn pipelinerun logs -n default-tenant -f
 ```
 
 ## Inspect the Build Artifacts
@@ -238,15 +235,15 @@ First, get the output image reference from your completed build PipelineRun:
 
 ```bash
 # Find your latest build PipelineRun (filter by type=build to exclude policy checks)
-PIPELINERUN=$(kubectl get pipelinerun -n slsa-e2e-tenant \
+PIPELINERUN=$(kubectl get pipelinerun -n default-tenant \
   -l pipelines.appstudio.openshift.io/type=build \
   --sort-by=.metadata.creationTimestamp \
   -o name | tail -1)
 
 # Get the IMAGE_URL and IMAGE_DIGEST from the PipelineRun results
-IMAGE_URL=$(kubectl get ${PIPELINERUN} -n slsa-e2e-tenant \
+IMAGE_URL=$(kubectl get ${PIPELINERUN} -n default-tenant \
   -o jsonpath='{.status.results[?(@.name=="IMAGE_URL")].value}')
-IMAGE_DIGEST=$(kubectl get ${PIPELINERUN} -n slsa-e2e-tenant \
+IMAGE_DIGEST=$(kubectl get ${PIPELINERUN} -n default-tenant \
   -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
 
 # Convert internal registry service name to external localhost address
@@ -256,7 +253,7 @@ echo "Image URL: ${IMAGE_URL_EXTERNAL}"
 echo "Image Index Digest: ${IMAGE_DIGEST}"
 
 # Example output:
-# IMAGE_URL=registry-service.kind-registry.svc.cluster.local/slsa-e2e-tenant/festoji
+# IMAGE_URL=registry-service.kind-registry.svc.cluster.local/default-tenant/festoji
 # IMAGE_DIGEST=sha256:abc123def456...
 ```
 
@@ -496,12 +493,12 @@ To view the attestations attached to your built image, use `cosign` (requires co
 
 ```bash
 # Get the image digest from your PipelineRun
-PIPELINERUN=$(kubectl get pipelinerun -n slsa-e2e-tenant \
+PIPELINERUN=$(kubectl get pipelinerun -n default-tenant \
   -l pipelines.appstudio.openshift.io/type=build \
   --sort-by=.metadata.creationTimestamp \
   -o name | tail -1)
 
-IMAGE_DIGEST=$(kubectl get ${PIPELINERUN} -n slsa-e2e-tenant \
+IMAGE_DIGEST=$(kubectl get ${PIPELINERUN} -n default-tenant \
   -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
 
 # View the attestation tree (shows provenance, signatures, and SBOM)
@@ -553,12 +550,12 @@ Our helm chart creates an IntegrationTestScenario that runs Conforma validation 
 
 ```bash
 # View the integration test scenario
-kubectl get integrationtestscenario policy -n slsa-e2e-tenant -o yaml
+kubectl get integrationtestscenario policy -n default-tenant -o yaml
 ```
 
 This scenario runs the Enterprise Contract (Conforma) policy check against the snapshot:
 - **Test name**: `policy`
-- **Policy**: References `slsa-e2e-managed-tenant/ec-policy` (the same policy used during release)
+- **Policy**: References `managed-tenant/ec-policy` (the same policy used during release)
 - **Strict mode**: Enabled - any policy violation fails the test
 
 When a build completes on a push event:
@@ -572,14 +569,14 @@ View integration test results:
 
 ```bash
 # Find the snapshot for your build
-kubectl get snapshots -n slsa-e2e-tenant --sort-by=.metadata.creationTimestamp
+kubectl get snapshots -n default-tenant --sort-by=.metadata.creationTimestamp
 
 # Check test status
-kubectl get snapshot <SNAPSHOT_NAME> -n slsa-e2e-tenant \
+kubectl get snapshot <SNAPSHOT_NAME> -n default-tenant \
   -o jsonpath='{.metadata.annotations.test\.appstudio\.openshift\.io/status}' | jq .
 
 # View the policy test PipelineRun
-kubectl get pipelineruns -n slsa-e2e-tenant -l test.appstudio.openshift.io/scenario=policy
+kubectl get pipelineruns -n default-tenant -l test.appstudio.openshift.io/scenario=policy
 ```
 
 This pre-release validation ensures you know immediately if a build will pass release policies, without waiting for the actual release pipeline.
@@ -602,7 +599,7 @@ When you merge to the main branch:
 3. **Snapshot created**: Represents the built artifacts
 4. **Integration test runs**: The `policy` scenario validates the snapshot
 5. **Auto-release triggers**: A Release resource is created automatically
-6. **Release pipeline executes**: In the managed namespace (`slsa-e2e-managed-tenant`)
+6. **Release pipeline executes**: In the managed namespace (`managed-tenant`)
 
 ### Pushing images elsewhere
 
@@ -617,16 +614,16 @@ View your release configuration:
 
 ```bash
 # View the ReleasePlan in the tenant namespace
-kubectl get releaseplan festoji-release -n slsa-e2e-tenant -o yaml
+kubectl get releaseplan festoji-release -n default-tenant -o yaml
 
 # View the ReleasePlanAdmission in the managed namespace
-kubectl get releaseplanadmission festoji-release-admission -n slsa-e2e-managed-tenant -o yaml
+kubectl get releaseplanadmission festoji-release-admission -n managed-tenant -o yaml
 
 # View releases
-kubectl get releases -n slsa-e2e-tenant
+kubectl get releases -n default-tenant
 
 # Check release pipeline runs
-kubectl get pipelineruns -n slsa-e2e-managed-tenant -l release.appstudio.openshift.io/name=<RELEASE_NAME>
+kubectl get pipelineruns -n managed-tenant -l release.appstudio.openshift.io/name=<RELEASE_NAME>
 ```
 
 #### Manually Creating a Release
@@ -640,7 +637,7 @@ apiVersion: appstudio.redhat.com/v1alpha1
 kind: Release
 metadata:
   generateName: festoji-manual-
-  namespace: slsa-e2e-tenant
+  namespace: default-tenant
 spec:
   releasePlan: festoji-release
   snapshot: <SNAPSHOT_NAME>
@@ -663,7 +660,7 @@ Our helm chart creates an EnterpriseContractPolicy resource that defines what mu
 
 ```bash
 # View the policy configuration
-kubectl get enterprisecontractpolicy ec-policy -n slsa-e2e-managed-tenant -o yaml
+kubectl get enterprisecontractpolicy ec-policy -n managed-tenant -o yaml
 ```
 
 The policy contains three key components:
@@ -694,10 +691,10 @@ The `verify-conforma` task in the release pipeline validates all of these requir
 
 ```bash
 # View verify-conforma task results
-kubectl get taskruns -n slsa-e2e-managed-tenant -l tekton.dev/pipelineTask=verify-conforma
+kubectl get taskruns -n managed-tenant -l tekton.dev/pipelineTask=verify-conforma
 
 # Check task logs for detailed policy evaluation
-kubectl logs -n slsa-e2e-managed-tenant <VERIFY_CONFORMA_TASKRUN> --container=report
+kubectl logs -n managed-tenant <VERIFY_CONFORMA_TASKRUN> --container=report
 ```
 
 When the policy check passes:
@@ -716,12 +713,12 @@ Get the released image URL from the Release status:
 
 ```bash
 # Get the release name from your earlier command
-RELEASE_NAME=$(kubectl get releases -n slsa-e2e-tenant --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d'/' -f2)
+RELEASE_NAME=$(kubectl get releases -n default-tenant --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d'/' -f2)
 
 # Extract the released image URL
-RELEASE_IMAGE_URL=$(kubectl get release ${RELEASE_NAME} -n slsa-e2e-tenant \
+RELEASE_IMAGE_URL=$(kubectl get release ${RELEASE_NAME} -n default-tenant \
   -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].repository}')
-RELEASE_IMAGE_DIGEST=$(kubectl get release ${RELEASE_NAME} -n slsa-e2e-tenant \
+RELEASE_IMAGE_DIGEST=$(kubectl get release ${RELEASE_NAME} -n default-tenant \
   -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].digest}')
 
 echo "Released Image: ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}"
@@ -730,7 +727,7 @@ echo "Released Image: ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}"
 Verify the release completed successfully:
 
 ```bash
-kubectl get release ${RELEASE_NAME} -n slsa-e2e-tenant \
+kubectl get release ${RELEASE_NAME} -n default-tenant \
   -o jsonpath='{.status.conditions[?(@.type=="Released")].status}'
 # Should output: True
 ```

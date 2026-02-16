@@ -167,18 +167,14 @@ publication:
 
 ## 🧪 Testing
 
+The managed context workflow is automatically triggered when applications are onboarded via the helm chart in `resources/`. Monitor the release pipeline runs:
+
 ```bash
-# Test complete managed workflow with demo Snapshot
-kubectl apply -f examples/test-managed-pipeline-pipelinerun.yaml -n managed-namespace
+# Monitor release pipeline runs in managed namespace
+kubectl get pipelineruns -n managed-tenant -w
 
-# Test individual VSA signing task
-kubectl apply -f examples/test-vsa-sign-pipelinerun.yaml -n managed-namespace
-
-# Test conforma-vsa task with sample VSA payload
-kubectl apply -f examples/test-vsa-payload-configmap.yaml -n managed-namespace
-
-# Run comprehensive end-to-end test
-./scripts/test-end-to-end.sh
+# Check VSA generation and signing results
+kubectl logs -n managed-tenant -l tekton.dev/task=vsa-sign --tail=100
 ```
 
 ## 🚨 Security Considerations

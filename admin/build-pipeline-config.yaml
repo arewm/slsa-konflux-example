@@ -1,0 +1,29 @@
+# Custom build-pipeline-config ConfigMap
+# Extends Konflux default pipelines with custom SLSA pipeline (slsa-e2e-oci-ta)
+#
+# Usage:
+#   kubectl apply -f admin/build-pipeline-config.yaml
+#
+# NOTE: This ConfigMap is managed by the Konflux operator. If the operator resets
+# this configuration, re-apply this file to restore the custom pipeline.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: build-pipeline-config
+  namespace: build-service
+data:
+  config.yaml: |
+    default-pipeline-name: slsa-e2e-oci-ta
+    pipelines:
+    - name: slsa-e2e-oci-ta
+      bundle: quay.io/arewm/pipeline-slsa-e2e-oci-ta:latest
+      description: "SLSA end-to-end pipeline with configurable security scanners"
+      detail: |
+        This pipeline demonstrates SLSA compliance with trusted artifacts and configurable security scanning.
+
+        The pipeline uses OCI artifacts for data sharing instead of PVCs, ensuring trusted task compliance
+        for Enterprise Contract policies.
+      additional-params:
+        - enable-clair-scan
+        - enable-trivy-sbom-scan

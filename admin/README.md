@@ -2,6 +2,12 @@
 
 **ADMIN-ONLY** Helm chart for configuring Konflux build-service pipeline bundles.
 
+> **STATUS**: This Helm chart is currently **not used** in the installation process.
+> The Konflux operator manages the `build-pipeline-config` ConfigMap and does not yet
+> support disabling this management. Custom pipeline configuration is currently applied
+> via direct `kubectl apply` (see `admin/build-pipeline-config.yaml`).
+> This chart will be useful once the operator supports external ConfigMap management.
+
 ## Overview
 
 This Helm chart manages the `build-pipeline-config` ConfigMap in the `build-service` namespace, which controls which Tekton pipeline bundles are used for building components in Konflux.

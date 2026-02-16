@@ -48,7 +48,7 @@ helm install my-app ./konflux-onboarding \
   --set applicationName=my-application \
   --set gitRepoUrl=https://github.com/myorg/myrepo \
   --set namespace=my-namespace \
-  --set release.targetNamespace=managed-namespace
+  --set release.targetNamespace=managed-tenant
 ```
 
 ### With Custom Values File
@@ -62,7 +62,7 @@ namespace: my-namespace
 gitRevision: main
 displayName: "My Application"
 release:
-  targetNamespace: managed-namespace
+  targetNamespace: managed-tenant
 ```
 
 Install the chart:
@@ -186,7 +186,7 @@ helm install my-app ./konflux-onboarding \
   --set applicationName=my-application \
   --set gitRepoUrl=https://github.com/myorg/myrepo \
   --set namespace=my-namespace \
-  --set release.targetNamespace=managed-namespace \
+  --set release.targetNamespace=managed-tenant \
   --set customContainerImage=registry.example.com/myorg/myimage:v1.0 \
   --set dockerconfigjson="$DOCKER_CONFIG"
 ```
@@ -200,7 +200,7 @@ namespace: my-namespace
 customContainerImage: registry.example.com/myorg/myimage:v1.0
 dockerconfigjson: eyJhdXRocyI6eyJyZWdpc3RyeS5leGFtcGxlLmNvbSI6eyJ1c2VybmFtZSI6InVzZXIiLCJwYXNzd29yZCI6InBhc3MiLCJhdXRoIjoiZFhObGNqcHdZWE56In19fQ==
 release:
-  targetNamespace: managed-namespace
+  targetNamespace: managed-tenant
 ```
 
 **Note**: When `customContainerImage` is provided, the chart automatically creates a pull secret and references it in the Component spec.
@@ -231,7 +231,7 @@ helm install my-app ./konflux-onboarding \
   --set applicationName=my-application \
   --set gitRepoUrl=https://github.com/myorg/myrepo \
   --set namespace=my-namespace \
-  --set release.targetNamespace=managed-namespace \
+  --set release.targetNamespace=managed-tenant \
   --set release.destination=quay.io/myorg/myapp
 ```
 
@@ -242,7 +242,7 @@ applicationName: my-application
 gitRepoUrl: https://github.com/myorg/myrepo
 namespace: my-namespace
 release:
-  targetNamespace: managed-namespace
+  targetNamespace: managed-tenant
   destination: quay.io/myorg/myapp
   environment: production
 ```
@@ -312,7 +312,7 @@ Note: This will remove the Helm release but may not delete all Konflux-generated
 To use a different Enterprise Contract policy, you can modify the EnterpriseContractPolicy after deployment:
 
 ```bash
-kubectl edit enterprisecontractpolicy example-policy -n managed-namespace
+kubectl edit enterprisecontractpolicy example-policy -n managed-tenant
 ```
 
 You can modify:
@@ -347,7 +347,7 @@ kubectl get integrationtestscenario policy -n my-namespace -o yaml
 ### Check EnterpriseContractPolicy Status
 ```bash
 # Check in the managed namespace
-kubectl get enterprisecontractpolicy example-policy -n managed-namespace -o yaml
+kubectl get enterprisecontractpolicy example-policy -n managed-tenant -o yaml
 ```
 
 ### Check ReleasePlan Status
@@ -385,7 +385,7 @@ This chart includes a helper script to manually create releases from the latest 
 
 ```bash
 # Basic usage with defaults
-./create-release.sh <application-name> <namespace> <author> [managed-namespace]
+./create-release.sh <application-name> <namespace> <author> [managed-tenant]
 
 # Example
 ./create-release.sh festoji slsa-e2e-tenant user1 slsa-e2e-managed-tenant

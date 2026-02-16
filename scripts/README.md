@@ -4,103 +4,95 @@ This directory contains automation scripts for SLSA-Konflux installation, config
 
 ## 🚀 Quick Start
 
-### Bootstrap External Cluster
+### Install Konflux Operator
 ```bash
-# Bootstrap tenant and managed namespaces on external cluster
-./scripts/bootstrap-cluster.sh
-
-# With custom configuration
-./scripts/bootstrap-cluster.sh \
-  --tenant-namespace my-tenant \
-  --managed-namespace my-managed \
-  --registry-url quay.io/my-org/slsa-demo
+# Clone and deploy Konflux operator
+git clone https://github.com/konflux-ci/konflux-ci.git
+cd konflux-ci
+./scripts/deploy-local.sh
 ```
 
-### Setup End-to-End Workflow  
+### Setup Prerequisites
 ```bash
-# Setup complete SLSA workflow (after bootstrap)
-./scripts/setup-end-to-end-demo.sh
+# Return to slsa-konflux-example repository
+cd /path/to/slsa-konflux-example
 
-# Setup with custom configuration
-./scripts/setup-end-to-end-demo.sh \
-  --tenant-namespace my-tenant \
-  --managed-namespace my-managed \
-  --git-url https://github.com/my-org/my-repo
+# Setup prerequisites (creates managed-tenant namespace and custom pipeline config)
+./scripts/setup-prerequisites.sh
+```
 
-# Test individual components
-./scripts/test-end-to-end.sh
+### Onboard Your Application
+```bash
+# Onboard application using helm chart
+helm install festoji ./resources \
+  --set applicationName=festoji \
+  --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
+
+# Verify onboarding
+kubectl get application,component -n default-tenant
 ```
 
 ## 📄 Available Scripts
 
-### ✅ **bootstrap-cluster.sh** (READY)
-**Purpose**: Complete cluster setup for SLSA-Konflux demonstration
+### ✅ **setup-prerequisites.sh**
+**Purpose**: Complete prerequisites setup after Konflux operator deployment
 
 **Features**:
-- ✅ Creates tenant and managed namespaces
-- ✅ Installs all Tekton tasks (git-clone-slsa, conforma-vsa, vsa-sign)
-- ✅ Sets up RBAC and service accounts
-- ✅ Generates and configures signing keys
-- ✅ Creates Konflux Application and Component
-- ✅ Configures Release Plans and Release Plan Admissions
-- ✅ Sets up workspace PVCs
-- ✅ Validates installation
+- Creates managed-tenant namespace for privileged release operations
+- Applies custom SLSA pipeline configuration (slsa-e2e-oci-ta) to build service
+- Idempotent (safe to run multiple times)
 
-### ✅ **test-end-to-end.sh** (READY)
-**Purpose**: Comprehensive testing of SLSA-Konflux workflow
+### ✅ **generate-release-signing-keys.sh**
+**Purpose**: Generate cosign signing keys for managed namespace VSA signing
 
 **Features**:
-- ✅ Tests tenant VSA generation (conforma-vsa task)
-- ✅ Tests managed VSA signing (vsa-sign task)
-- ✅ Tests complete managed pipeline
-- ✅ Validates trust boundary separation
-- ✅ Verifies VSA output and validation
-- ✅ Generates detailed test reports
-- ✅ Automatic cleanup of test resources
+- Generates cosign key-pair for release attestation signing
+- Creates Kubernetes secret in managed namespace
+- Supports password-protected keys (via COSIGN_PASSWORD env var)
+- Provides instructions for key usage
 
-### ✅ **setup-end-to-end-demo.sh** (READY)
-**Purpose**: Sets up complete SLSA-Konflux workflow for commit-triggered demos
+**Usage**:
+```bash
+# Generate keys in default managed-tenant namespace
+./scripts/generate-release-signing-keys.sh
 
-**Features**:
-- ✅ Deploys tenant build pipeline with SLSA verification
-- ✅ Configures release automation (ReleasePlan/ReleasePlanAdmission)
-- ✅ Deploys managed release pipeline with VSA generation
-- ✅ Configures Component to use custom SLSA pipeline
-- ✅ Validates all configuration components
-- ✅ Provides instructions for triggering via git commits
+# Generate keys in custom namespace
+./scripts/generate-release-signing-keys.sh my-managed-namespace
 
-### 🔄 **install-konflux.sh** *(Coming Soon)*
-ARM/macOS compatible Konflux installation with enhanced UX
-
-### 🔄 **validate-slsa-compliance.sh** *(Coming Soon)*
-Comprehensive SLSA compliance verification
+# Generate password-protected keys
+COSIGN_PASSWORD="secure-password" ./scripts/generate-release-signing-keys.sh
+```
 
 ## 📋 Prerequisites
 
 These scripts require:
-- Kubernetes cluster (local or cloud)
-- Docker/compatible container runtime
+- Konflux operator deployed (via konflux-ci/scripts/deploy-local.sh)
 - kubectl configured for your cluster
+- Helm for chart installation
 - Git for source code management
 
-## 🔧 Usage
+## 🔧 Complete Workflow
 
 ```bash
-# Complete setup
-./scripts/install-konflux.sh
-./scripts/bootstrap-managed-namespace.sh
-./scripts/run-demo.sh
+# 1. Deploy Konflux operator
+git clone https://github.com/konflux-ci/konflux-ci.git
+cd konflux-ci
+./scripts/deploy-local.sh
 
-# Validation
-./scripts/test-trust-boundaries.sh
-./scripts/validate-slsa-compliance.sh
+# 2. Setup prerequisites
+cd /path/to/slsa-konflux-example
+./scripts/setup-prerequisites.sh
+
+# 3. Onboard your application
+helm install festoji ./resources \
+  --set applicationName=festoji \
+  --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
+
+# 4. Monitor builds and releases
+kubectl get pipelineruns -n default-tenant -w
+kubectl get releases -n default-tenant
 ```
 
 ## 📖 Development
 
-Scripts are based on patterns from:
-- `.internal/repositories/konflux-ci/` - Installation automation
-- `.internal/repositories/build-service/` - Component onboarding
-- `.internal/repositories/release-service/` - Managed namespace setup
-
-All scripts maintain ARM/macOS compatibility and follow Konflux conventions.
+Scripts follow patterns from the Konflux project and maintain compatibility with the operator-based deployment model. The operator handles cluster-level resources while these scripts manage tenant-specific customizations.

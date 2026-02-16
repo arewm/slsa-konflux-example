@@ -51,7 +51,7 @@ params:
   - name: ENABLE_VSA
     value: "true"  # Enable VSA generation
   - name: VSA_SIGNING_KEY
-    value: "k8s://managed-namespace/vsa-signing-key"  # Private key for signing
+    value: "k8s://managed-tenant/vsa-signing-key"  # Private key for signing
   - name: VSA_UPLOAD
     value: "local@/var/workdir/vsa"  # Where to store VSA
 ```
@@ -108,13 +108,13 @@ cosign generate-key-pair
 kubectl create secret generic vsa-signing-key \
   --from-file=cosign.key=cosign.key \
   --from-file=cosign.pub=cosign.pub \
-  -n managed-namespace
+  -n managed-tenant
 ```
 
 Use in task:
 ```yaml
 - name: VSA_SIGNING_KEY
-  value: "k8s://managed-namespace/vsa-signing-key"
+  value: "k8s://managed-tenant/vsa-signing-key"
 ```
 
 ### Option 2: Keyless Signing (Future)
@@ -162,7 +162,7 @@ This task is designed to replace the standard `verify-conforma-konflux-ta` task 
     - name: ENABLE_VSA
       value: "true"
     - name: VSA_SIGNING_KEY
-      value: "k8s://managed-namespace/vsa-signing-key"
+      value: "k8s://managed-tenant/vsa-signing-key"
 ```
 
 ## Security Considerations

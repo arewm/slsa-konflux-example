@@ -62,26 +62,28 @@ This is an **active implementation project** with working code, trust boundaries
 
 ### Setup and Installation
 ```bash
-# Install Konflux (ARM/macOS compatible)
-./scripts/install-konflux.sh
+# Deploy Konflux operator
+git clone https://github.com/konflux-ci/konflux-ci.git
+cd konflux-ci
+./scripts/deploy-local.sh
 
-# Bootstrap managed namespace with signing keys
-./scripts/bootstrap-managed-namespace.sh
+# Setup prerequisites (creates managed-tenant namespace and custom pipeline config)
+cd /path/to/slsa-konflux-example
+./scripts/setup-prerequisites.sh
 
-# Run complete demonstration
-./scripts/run-demo.sh
+# Onboard your application using helm chart
+helm install festoji ./resources \
+  --set applicationName=festoji \
+  --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
 ```
 
 ### Testing and Validation
 ```bash
-# Test trust boundary separation
-./scripts/test-trust-boundaries.sh
+# Monitor pipeline runs
+kubectl get pipelineruns -n default-tenant -w
 
-# Validate SLSA compliance 
-./scripts/validate-slsa-compliance.sh
-
-# Verify attestations and VSAs
-./scripts/verify-attestations.sh
+# Check release status
+kubectl get releases -n default-tenant
 ```
 
 ### Development Tasks

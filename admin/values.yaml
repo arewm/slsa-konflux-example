@@ -38,18 +38,6 @@ pipelines:
     detail: |
       This pipeline demonstrates SLSA compliance with trusted artifacts and configurable security scanning.
 
-      Features:
-      - Buildah container image creation with trusted artifacts
-      - Configurable vulnerability scanning (Clair and/or Trivy)
-      - Optional source image generation
-      - Build-time security checks (SAST)
-      - Hermetic builds support
-      - Multi-architecture support via image index
-
-      Security scanning can be controlled via parameters:
-      - enable-clair-scan: Enable Clair vulnerability scanner (default: true)
-      - enable-trivy-sbom-scan: Enable Trivy SBOM scanner (default: true)
-
       The pipeline uses OCI artifacts for data sharing instead of PVCs, ensuring trusted task compliance
       for Enterprise Contract policies.
     additionalParams:

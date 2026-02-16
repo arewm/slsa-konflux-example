@@ -14,7 +14,7 @@
 #   ./generate-release-signing-keys.sh [NAMESPACE]
 #
 # Arguments:
-#   NAMESPACE   - Kubernetes namespace for the signing key secret (default: slsa-e2e-managed-tenant)
+#   NAMESPACE   - Kubernetes namespace for the signing key secret (default: managed-tenant)
 #
 # Environment Variables:
 #   COSIGN_PASSWORD - Password for encrypting the private key (optional, default: no password)
@@ -33,7 +33,7 @@
 set -euo pipefail
 
 # Configuration
-NAMESPACE="${1:-slsa-e2e-managed-tenant}"
+NAMESPACE="${1:-managed-tenant}"
 SECRET_NAME="release-signing-key"
 TEMP_DIR=$(mktemp -d)
 

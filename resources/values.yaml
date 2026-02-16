@@ -11,7 +11,8 @@ requiresClusterAdmin: true
 repositoryUrl: "https://github.com/arewm/slsa-konflux-example"
 
 # User and namespace configuration
-# Namespaces must be created using scripts/setup-prerequisites.sh before installing this chart
+# default-tenant is created by the Konflux operator
+# managed-tenant must be created using scripts/setup-prerequisites.sh before installing this chart
 
 # List of users to grant admin access in the tenant namespace
 # Each user will get a RoleBinding to konflux-admin-user-actions
@@ -35,7 +36,7 @@ applicationName: ""
 gitRepoUrl: ""
 
 # Namespace to deploy resources
-namespace: "slsa-e2e-tenant"
+namespace: "default-tenant"
 
 # Optional: Git revision/branch to track (defaults to main)
 gitRevision: "main"
@@ -71,7 +72,7 @@ image:
 release:
   # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
   # This is where the release plan admission will be created (managed namespace)
-  targetNamespace: "slsa-e2e-managed-tenant"
+  targetNamespace: "managed-tenant"
 
   # Author for automated releases
   # This is required for automated releases to pass validation
@@ -130,12 +131,12 @@ release:
   # Enterprise Contract policy configuration
   policy:
     # Policy OCI bundle reference
-    # Default: quay.io/enterprise-contract/ec-release-policy:konflux
-    policyBundle: "quay.io/enterprise-contract/ec-release-policy:konflux"
+    # Default: quay.io/repository/conforma/release-policy:konflux
+    policyBundle: "quay.io/repository/conforma/release-policy:konflux"
 
     # Policy data source (git repository or OCI bundle with policy rules)
     # Defaults to managed-context/policies/ec-policy-data/data in .Values.repositoryUrl
-    # Can be overridden to use: github.com/release-engineering/rhtap-ec-policy//data
+    # Can be overridden, i.e to use: github.com/release-engineering/rhtap-ec-policy//data
     policyData: ""
 
     # Acceptable bundles data source (OCI bundle with allowed Tekton task/pipeline bundles)

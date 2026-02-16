@@ -3,9 +3,9 @@ set -e
 
 # Usage: ./create-release.sh <application-name> <namespace> <author> [managed-namespace]
 APPLICATION_NAME=${1:-festoji}
-NAMESPACE=${2:-slsa-e2e-tenant}
+NAMESPACE=${2:-default-tenant}
 AUTHOR=${3:-user1}
-MANAGED_NAMESPACE=${4:-slsa-e2e-managed-tenant}
+MANAGED_NAMESPACE=${4:-managed-tenant}
 
 echo "Creating manual release for application: $APPLICATION_NAME"
 echo "Namespace: $NAMESPACE"
