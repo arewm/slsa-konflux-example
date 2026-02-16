@@ -15,6 +15,10 @@ spec:
       data:
         - {{ $policyData }}
         - {{ .Values.release.policy.acceptableBundles }}
+{{- if .Values.release.policy.slsaSourceMinLevel }}
+      ruleData:
+        slsa_source_min_level: {{ .Values.release.policy.slsaSourceMinLevel | quote }}
+{{- end }}
       config:
         include:
           - '@slsa3'

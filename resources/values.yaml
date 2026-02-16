@@ -145,6 +145,15 @@ release:
     #   Set to: oci::<registry>/<namespace>/slsa-e2e-data-acceptable-bundles:latest
     acceptableBundles: "oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest"
 
+    # SLSA source level requirement (1, 2, or 3)
+    # Level 1: Version controlled (default if not specified in policy data)
+    # Level 2: Version controlled + verified history
+    # Level 3: Level 2 + retention/tamper resistance
+    # See https://slsa.dev/spec/v1.2/source-requirements for details
+    # Leave empty to use value from policy data (currently "2")
+    # Override for testing: --set release.policy.slsaSourceMinLevel="1"
+    slsaSourceMinLevel: ""
+
 # Release signing configuration
 # Used for signing release-time attestations (VSAs, SBOMs, etc.)
 # Separate from build-time Tekton Chains signing for proper trust boundary separation
