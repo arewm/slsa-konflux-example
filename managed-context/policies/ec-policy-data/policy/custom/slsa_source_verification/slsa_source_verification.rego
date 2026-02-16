@@ -29,35 +29,7 @@ import data.lib.tekton
 #   - tasks.required_tasks_found
 #
 deny contains result if {
-	# Get the minimum required level from rule data
-	min_level_list := lib.rule_data("slsa_source_min_level")
-	count(min_level_list) > 0
-	min_level := min_level_list
-
-	# Find the verify-source task
-	some att in lib.pipelinerun_attestations
-	some task in tekton.tasks(att)
-	some task_name in tekton.task_names(task)
-	task_name == "verify-source"
-
-	# Get the actual level achieved
-	achieved_level := tekton.task_result(task, "SLSA_SOURCE_LEVEL_ACHIEVED")
-
-	# Compare levels (both should be strings like "1", "2", "3")
-	to_number(achieved_level) < to_number(min_level)
-
-	result := lib.result_helper_with_term(
-		rego.metadata.chain(),
-		[achieved_level, min_level],
-		"verify-source",
-	)
-}
-
-deny contains result if {
-	# Use default level "1" if not specified in rule data
-	min_level_list := lib.rule_data("slsa_source_min_level")
-	count(min_level_list) == 0
-	min_level := "1"
+	min_level := _slsa_source_min_level
 
 	# Find the verify-source task
 	some att in lib.pipelinerun_attestations
@@ -203,6 +175,13 @@ deny contains result if {
 		sprintf("%s@%s", [material.uri, material.digest.sha1]),
 	)
 }
+
+# Get the minimum required level from rule data
+# Default to "1" if we don't find it
+_slsa_source_min_level := min_level if {
+  min_level := lib.rule_data("slsa_source_min_level")
+  to_number(min_level)
+} else := "1"
 
 # Helper: Get all verify-source tasks
 _verify_source_tasks(attestation) := [task |
