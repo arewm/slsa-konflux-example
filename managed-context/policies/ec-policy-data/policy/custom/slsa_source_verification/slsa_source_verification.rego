@@ -38,7 +38,10 @@ deny contains result if {
 	task_name == "verify-source"
 
 	# Get the actual level achieved
-	achieved_level := tekton.task_result(task, "SLSA_SOURCE_LEVEL_ACHIEVED")
+	achieved_level_raw := tekton.task_result(task, "SLSA_SOURCE_LEVEL_ACHIEVED")
+
+	# Parse the level number from "SLSA_SOURCE_LEVEL_N" format
+	achieved_level := _parse_level(achieved_level_raw)
 
 	# Compare levels (both should be strings like "1", "2", "3")
 	to_number(achieved_level) < to_number(min_level)
@@ -90,9 +93,9 @@ deny contains result if {
 #   short_name: parameters_match_git_clone
 #   failure_msg: 'verify-source task parameter %s=%q does not match git-clone result %s=%q'
 #   solution: >-
-#     Ensure the verify-source task receives its URL and REVISION parameters from the
-#     git-clone task results. The URL parameter should use $(tasks.git-clone.results.url)
-#     and REVISION should use $(tasks.git-clone.results.commit).
+#     Ensure the verify-source task receives its url and revision parameters from the
+#     git-clone task results. The url parameter should use $(tasks.git-clone.results.url)
+#     and revision should use $(tasks.git-clone.results.commit).
 #   collections:
 #   - slsa_source
 #   depends_on:
@@ -213,7 +216,7 @@ _git_materials(att) := materials if {
 _parameter_mismatch(git_url, git_commit, verify_url, verify_revision) := mismatch if {
 	_normalize_git_url(git_url) != _normalize_git_url(verify_url)
 	mismatch := {
-		"param_name": "URL",
+		"param_name": "url",
 		"param_value": verify_url,
 		"result_name": "url",
 		"result_value": git_url,
@@ -221,7 +224,7 @@ _parameter_mismatch(git_url, git_commit, verify_url, verify_revision) := mismatc
 } else := mismatch if {
 	git_commit != verify_revision
 	mismatch := {
-		"param_name": "REVISION",
+		"param_name": "revision",
 		"param_value": verify_revision,
 		"result_name": "commit",
 		"result_value": git_commit,
@@ -245,4 +248,20 @@ _normalize_git_url(url) := normalized if {
 	# Add .git suffix
 	without_prefix := trim_prefix(url, "git+")
 	normalized := concat("", [without_prefix, ".git"])
+}
+
+# Helper: Parse level number from verify-source result
+# Handles formats like "SLSA_SOURCE_LEVEL_1" or "SLSA_SOURCE_LEVEL_1\n"
+# Returns just the level number as a string ("1", "2", "3")
+_parse_level(result_value) := level if {
+	# Remove whitespace and newlines
+	trimmed := trim_space(result_value)
+	# Check if it starts with the expected prefix
+	startswith(trimmed, "SLSA_SOURCE_LEVEL_")
+	# Extract just the level number
+	level := trim_prefix(trimmed, "SLSA_SOURCE_LEVEL_")
+} else := result_value if {
+	# If it doesn't match the expected format, return as-is
+	# This handles cases where the result is already just a number
+	true
 }

@@ -294,6 +294,7 @@ _git_clone_task(url, commit) := {
 }
 
 # Task helper: verify-source task
+# Level should be just the number ("1", "2", "3") - this helper formats it correctly
 _verify_source_task(level, url, revision) := {
 	"name": "verify-source",
 	"ref": {
@@ -306,7 +307,7 @@ _verify_source_task(level, url, revision) := {
 	}},
 	"results": [{
 		"name": "SLSA_SOURCE_LEVEL_ACHIEVED",
-		"value": level,
+		"value": sprintf("SLSA_SOURCE_LEVEL_%s\n", [level]),
 	}],
 }
 
