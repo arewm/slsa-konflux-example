@@ -7,7 +7,7 @@ A Helm chart for onboarding applications to Konflux CI with SLSA 1.0 build L3 po
 This Helm chart creates the necessary Konflux resources to onboard a new application:
 - **Application**: The top-level Konflux application resource
 - **Component**: A component linked to a Git repository for building
-- **IntegrationTestScenario**: A policy-based integration test using Enterprise Contract for SLSA3 verification
+- **IntegrationTestScenario** (two scenarios): Policy-based integration tests using Enterprise Contract for SLSA3 verification (separate scenarios for PR and push contexts)
 - **EnterpriseContractPolicy**: Defines the SLSA3 policy rules for integration and release validation
 - **ReleasePlan**: Defines how and where to release the application
 - **ReleasePlanAdmission**: Configures the release pipeline to push images to an external registry
@@ -108,12 +108,18 @@ Creates a Component that:
 - Points to your Git repository
 - Triggers builds when code changes
 
-### 3. IntegrationTestScenario (named "policy")
-Creates an integration test scenario that:
-- Runs the Enterprise Contract pipeline
-- References the EnterpriseContractPolicy for SLSA3 validation
-- Uses strict policy enforcement
-- Runs conformance tests on built images
+### 3. IntegrationTestScenario (two scenarios)
+Creates two integration test scenarios:
+
+**policy-pr** (pull_request context):
+- Validates PR builds at source level 1
+- PR source branches are not protected, so cannot achieve higher source levels
+- Provides early feedback on whether push builds will succeed
+
+**policy-push** (push context):
+- Validates push builds with strict policy (same as release)
+- Requires source level 2+ with source-tool provenance
+- Ensures builds meet full release requirements
 
 ### 4. EnterpriseContractPolicy (named "example-policy")
 Defines the SLSA3 policy for the application:
@@ -266,14 +272,24 @@ This creates:
 
 ## Integration Test Details
 
-The IntegrationTestScenario created by this chart:
-- **Name**: `policy`
-- **Pipeline**: Uses the Enterprise Contract pipeline from Konflux build-definitions
-- **Policy**: References the `example-policy` EnterpriseContractPolicy in the managed namespace
-- **Policy Configuration**: `{targetNamespace}/example-policy`
-- **Mode**: Strict enforcement (builds will fail if policy violations are found)
+This chart creates two IntegrationTestScenario resources for policy-driven development:
 
-The `example-policy` EnterpriseContractPolicy uses:
+**policy-pr** (pull_request context):
+- Validates PR builds at source level 1 (PR source branches are not protected)
+- Overrides policy with `EXTRA_RULE_DATA: "slsa_source_min_level=1"`
+- Provides early feedback on whether push builds will succeed
+
+**policy-push** (push context):
+- Validates push builds with strict policy (same as release)
+- Uses policy defaults without overrides
+- Requires source level 2+ with source-tool provenance
+
+Both scenarios use:
+- **Pipeline**: Enterprise Contract pipeline from Konflux build-definitions
+- **Policy**: `{targetNamespace}/{policyName}` EnterpriseContractPolicy
+- **Mode**: Strict enforcement (builds fail on policy violations)
+
+The EnterpriseContractPolicy uses:
 - **Policy Source**: `github.com/enterprise-contract/config//slsa3`
 - **Collections**: `slsa3` (SLSA v0.1 levels 1, 2 & 3 rules plus basic Konflux checks)
 - **Data Source**: Acceptable Tekton bundles from `quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles`
@@ -341,7 +357,9 @@ kubectl get component my-application -n my-namespace -o yaml
 
 ### Check Integration Test Status
 ```bash
-kubectl get integrationtestscenario policy -n my-namespace -o yaml
+kubectl get integrationtestscenario -n my-namespace
+kubectl get integrationtestscenario policy-pr -n my-namespace -o yaml
+kubectl get integrationtestscenario policy-push -n my-namespace -o yaml
 ```
 
 ### Check EnterpriseContractPolicy Status

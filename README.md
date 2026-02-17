@@ -536,42 +536,31 @@ The SBOM is in SPDX 2.3 format and includes:
 
 ### Integration tests
 
-Once Tekton Chains has finished processing the Pipeline Run and generating provenance for the artifacts, the integration service will trigger any tests that are configured.
+After Tekton Chains generates provenance, integration tests run based on the build context.
 
-Our helm chart creates an IntegrationTestScenario that runs Conforma validation **before** any release is triggered. This provides early feedback about whether the build will pass release policies:
+The helm chart creates two IntegrationTestScenario resources:
 
-```bash
-# View the integration test scenario
-kubectl get integrationtestscenario policy -n default-tenant -o yaml
-```
+**policy-pr** (pull_request context): Validates PR builds at source level 1. PR source branches are not protected, so they cannot achieve higher source levels. This validates whether the resulting push will succeed.
 
-This scenario runs the Enterprise Contract (Conforma) policy check against the snapshot:
-- **Test name**: `policy`
-- **Policy**: References `managed-tenant/ec-policy` (the same policy used during release)
-- **Strict mode**: Enabled - any policy violation fails the test
-
-When a build completes on a push event:
-
-1. **Snapshot created**: After Chains signs the artifacts
-2. **Integration test runs**: The `policy` scenario executes Conforma validation
-3. **Test passes**: If all policy rules are satisfied
-4. **Auto-release triggers**: A Release is automatically created (when `auto-release: "true"`)
-
-View integration test results:
+**policy-push** (push context): Validates push builds with the same strict policy used during release. Requires source level 2+ with source-tool provenance.
 
 ```bash
-# Find the snapshot for your build
+# View integration test scenarios
+kubectl get integrationtestscenario -n default-tenant
+
+# Find snapshots for your builds
 kubectl get snapshots -n default-tenant --sort-by=.metadata.creationTimestamp
 
-# Check test status
+# Check test results on a snapshot
 kubectl get snapshot <SNAPSHOT_NAME> -n default-tenant \
   -o jsonpath='{.metadata.annotations.test\.appstudio\.openshift\.io/status}' | jq .
 
-# View the policy test PipelineRun
-kubectl get pipelineruns -n default-tenant -l test.appstudio.openshift.io/scenario=policy
+# View PipelineRuns for specific test scenarios
+kubectl get pipelineruns -n default-tenant -l test.appstudio.openshift.io/scenario=policy-pr
+kubectl get pipelineruns -n default-tenant -l test.appstudio.openshift.io/scenario=policy-push
 ```
 
-This pre-release validation ensures you know immediately if a build will pass release policies, without waiting for the actual release pipeline.
+**Note on SLSA source track**: Source verification at level 2+ only applies to push builds and releases. source-tool only generates provenance for pushes to protected branches, not PRs.
 
 ## Releasing Your Component
 
