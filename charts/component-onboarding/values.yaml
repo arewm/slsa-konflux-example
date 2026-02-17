@@ -1,0 +1,96 @@
+# Default values for component-onboarding
+# Onboard a component/repository to Konflux - repeatable per component
+
+# Repository URL for slsa-konflux-example (used for pipelines)
+# This should match the repositoryUrl in platform-config
+repositoryUrl: "https://github.com/arewm/slsa-konflux-example"
+
+# Name of the application and component
+applicationName: ""
+
+# Git repository URL for the component
+gitRepoUrl: ""
+
+# Namespace configuration
+# IMPORTANT: These values must match the platform-config chart installation
+namespace: "default-tenant"
+
+# Optional: Git revision/branch to track (defaults to main)
+gitRevision: "main"
+
+# Optional: Context directory in the repository
+gitContext: "."
+
+# Optional: Application display name (if different from applicationName)
+displayName: ""
+
+# Optional: Container image for the component (defaults to registry-service.kind-registry/konflux-festoji:latest)
+# If you provide a custom image, you must also provide dockerconfigjson
+containerImage: "registry-service.kind-registry/konflux-festoji:latest"
+
+# Optional: Custom container image URL (overrides containerImage default)
+# When set, you must provide dockerconfigjson for authentication
+customContainerImage: ""
+
+# Optional: Docker config JSON for custom container image authentication
+# Required when customContainerImage is set
+# This should be the base64-encoded .dockerconfigjson content
+# Example: eyJhdXRocyI6eyJyZWdpc3RyeS5leGFtcGxlLmNvbSI6eyJ1c2VybmFtZSI6InVzZXIiLCJwYXNzd29yZCI6InBhc3MiLCJhdXRoIjoiZFhObGNqcHdZWE56In19fQ==
+dockerconfigjson: ""
+
+# Image repository configuration
+image:
+  # Generate ImageRepository via image-controller (requires image-controller to be deployed)
+  # Set to true to trigger automatic Quay repository and credential creation
+  # Default: false (use manually specified containerImage)
+  generateRepository: false
+
+# Release configuration
+release:
+  # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
+  # IMPORTANT: Must match platform-config chart installation
+  targetNamespace: "managed-tenant"
+
+  # Author for automated releases
+  # This is required for automated releases to pass validation
+  # Default: user1
+  author: "user1"
+
+  # Optional: Release destination registry
+  # This is where the component will be pushed after release
+  # If not set, defaults to registry-service.kind-registry/released-{applicationName}
+  destination: ""
+
+  # Optional: Environment name for the release
+  # Default: production
+  environment: "production"
+
+  # Enterprise Contract policy name
+  # IMPORTANT: Must match platform-config chart installation
+  policyName: "ec-policy"
+
+  # Service account for release pipeline
+  # IMPORTANT: Must match platform-config chart installation
+  serviceAccount: "release-service-account"
+
+  # Pipeline configuration
+  # IMPORTANT: These should match platform-config for consistency
+  pipeline:
+    # Git repository URL for the pipeline
+    # Defaults to .Values.repositoryUrl
+    url: ""
+
+    # Git revision/branch for the pipeline
+    # Default: main
+    revision: "main"
+
+    # Path to the pipeline YAML in the repository
+    # Default: managed-context/pipelines/slsa-e2e-release/slsa-e2e-release.yaml
+    pathInRepo: "managed-context/pipelines/slsa-e2e-release/slsa-e2e-release.yaml"
+
+  # Trusted artifacts configuration
+  # IMPORTANT: Must match platform-config chart installation
+  trustedArtifacts:
+    # OCI repository for storing trusted artifacts
+    # Default: registry-service.kind-registry/trusted-artifacts
+    ociStorage: "registry-service.kind-registry/trusted-artifacts"

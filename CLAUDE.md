@@ -10,14 +10,16 @@ This repository demonstrates end-to-end SLSA (Supply-chain Levels for Software A
 
 ```
 slsa-konflux-example/
-├── admin/                   # Admin configuration
+├── charts/                  # Helm charts
+│   ├── admin/               # Admin configuration (currently unused)
+│   ├── platform-config/     # Platform setup (once per cluster)
+│   └── component-onboarding/  # Component onboarding (per component)
 ├── hack/                    # Build/push scripts
 ├── managed-context/         # Platform-controlled components
 │   ├── tasks/               # Release-time tasks (verify-conforma, attach-vsa, etc.)
 │   ├── pipelines/           # Release pipeline definitions
 │   ├── slsa-e2e-pipeline/   # SLSA end-to-end pipeline
 │   └── policies/            # Release security policies
-├── resources/               # Helm chart for onboarding
 ├── scripts/                 # Setup automation
 └── .internal/               # Internal development artifacts
 ```
@@ -65,8 +67,11 @@ cd konflux-ci
 cd /path/to/slsa-konflux-example
 ./scripts/setup-prerequisites.sh
 
-# Onboard your application using helm chart
-helm install festoji ./resources \
+# Install platform configuration (once per cluster)
+helm install platform ./charts/platform-config
+
+# Onboard your application using component chart
+helm install festoji ./charts/component-onboarding \
   --set applicationName=festoji \
   --set gitRepoUrl=https://github.com/FORK_ORG/festoji
 ```

@@ -163,33 +163,53 @@ The GitHub App webhook sends pull request and push events to your Konflux cluste
 
 ## Onboard Your Component
 
-The helm chart in this repository onboards your component to Konflux using these namespaces:
+This repository provides two helm charts for setting up Konflux:
+
+- **platform-config**: One-time setup for tenant infrastructure (policies, signing keys, permissions)
+- **component-onboarding**: Repeatable per component (application, integration tests, release plan)
+
+Both charts use these namespaces:
 
 - `default-tenant`: The unprivileged tenant namespace where builds occur (created by Konflux operator)
 - `managed-tenant`: The privileged managed namespace where releases are validated (created by prerequisites script)
 
-The chart automatically creates:
-- User role bindings for admin access (defaults to `user1@konflux.dev`)
-- Cluster role bindings for self-access review
-- Release pipeline service account in the tenant namespace
-- Application, component, and release configuration
+### Step 1: Install Platform Configuration
 
-Onboard your component using the helm chart:
+Install the platform configuration **once per cluster**:
+
+```bash
+helm install platform ./charts/platform-config
+```
+
+This creates:
+- EnterpriseContractPolicy for SLSA3 validation
+- User role bindings for admin access
+- Release pipeline service accounts
+- Signing keys for release attestations
+
+### Step 2: Onboard Components
+
+Install the component-onboarding chart **once per component**:
 
 ```bash
 export FORK_ORG="ORGANIZATION"
-# Onboard the component (uses default-tenant and managed-tenant by default)
-helm install festoji ./resources \
+helm install festoji ./charts/component-onboarding \
   --set applicationName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
 ```
 
-**Note:** The namespace values default to `default-tenant` and `managed-tenant`. You only need to override them if using custom namespaces.
+This creates:
+- Application and Component resources
+- IntegrationTestScenarios (policy-pr and policy-push)
+- ReleasePlan and ReleasePlanAdmission
+
+**Note:** Namespace values default to `default-tenant` and `managed-tenant`. Override if using custom namespaces, but values must match between platform-config and component-onboarding.
 
 Verify the component was onboarded:
 
 ```bash
 kubectl get component festoji -n default-tenant
+kubectl get integrationtestscenario -n default-tenant
 kubectl get repository -n default-tenant
 ```
 
@@ -732,10 +752,18 @@ The released image includes the same attestations as the build image, ensuring p
 
 This demo uses festoji as an example application. To adapt Konflux for your own projects:
 
-Modify the helm chart values for your repository and organization. Edit `resources/values.yaml` or use `--set` flags:
+First, install platform configuration once per cluster (if not already done):
 
 ```bash
-helm upgrade --install myapp ./resources \
+helm install platform ./charts/platform-config \
+  --set namespace=your-tenant-namespace \
+  --set release.targetNamespace=your-managed-namespace
+```
+
+Then onboard your components:
+
+```bash
+helm install myapp ./charts/component-onboarding \
   --set applicationName=myapp \
   --set gitRepoUrl=https://github.com/FORK_ORG/YOUR_REPO \
   --set namespace=your-tenant-namespace \

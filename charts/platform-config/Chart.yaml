@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform-config
+description: Platform configuration for Konflux tenant namespaces - one-time setup for policies, signing, and permissions
+type: application
+version: 0.1.0
+appVersion: "1.0"

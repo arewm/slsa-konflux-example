@@ -1,5 +1,5 @@
-# Default values for konflux-onboarding
-# This is a YAML-formatted file.
+# Default values for platform-config
+# Platform configuration for Konflux tenant setup - install once per tenant
 
 # Cluster configuration
 # Set to false when deploying to managed clusters without cluster-admin access
@@ -29,71 +29,23 @@ targetUsers:
 # This is needed for release operations from the tenant context
 createReleaseServiceAccount: true
 
-# Name of the application and component
-applicationName: ""
-
-# Git repository URL for the component
-gitRepoUrl: ""
-
-# Namespace to deploy resources
+# Namespace configuration
+# IMPORTANT: These values must match between platform-config and component-onboarding charts
 namespace: "default-tenant"
-
-# Optional: Git revision/branch to track (defaults to main)
-gitRevision: "main"
-
-# Optional: Context directory in the repository
-gitContext: "."
-
-# Optional: Application display name (if different from applicationName)
-displayName: ""
-
-# Optional: Container image for the component (defaults to registry-service.kind-registry/konflux-festoji:latest)
-# If you provide a custom image, you must also provide dockerconfigjson
-containerImage: "registry-service.kind-registry/konflux-festoji:latest"
-
-# Optional: Custom container image URL (overrides containerImage default)
-# When set, you must provide dockerconfigjson for authentication
-customContainerImage: ""
-
-# Optional: Docker config JSON for custom container image authentication
-# Required when customContainerImage is set
-# This should be the base64-encoded .dockerconfigjson content
-# Example: eyJhdXRocyI6eyJyZWdpc3RyeS5leGFtcGxlLmNvbSI6eyJ1c2VybmFtZSI6InVzZXIiLCJwYXNzd29yZCI6InBhc3MiLCJhdXRoIjoiZFhObGNqcHdZWE56In19fQ==
-dockerconfigjson: ""
-
-# Image repository configuration
-image:
-  # Generate ImageRepository via image-controller (requires image-controller to be deployed)
-  # Set to true to trigger automatic Quay repository and credential creation
-  # Default: false (use manually specified containerImage)
-  generateRepository: false
 
 # Release configuration
 release:
   # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
   # This is where the release plan admission will be created (managed namespace)
+  # IMPORTANT: Must match component-onboarding chart
   targetNamespace: "managed-tenant"
 
-  # Author for automated releases
-  # This is required for automated releases to pass validation
-  # Default: user1
-  author: "user1"
-
-  # Optional: Release destination registry
-  # This is where the component will be pushed after release
-  # If not set, defaults to registry-service.kind-registry/released-{applicationName}
-  destination: ""
-
-  # Optional: Environment name for the release
-  # Default: production
-  environment: "production"
-
-  # Optional: Enterprise Contract policy name
-  # Default: ec-policy
+  # Enterprise Contract policy name
+  # IMPORTANT: Must match component-onboarding chart
   policyName: "ec-policy"
 
-  # Optional: Service account for release pipeline
-  # Default: release-service-account
+  # Service account for release pipeline
+  # IMPORTANT: Must match component-onboarding chart
   serviceAccount: "release-service-account"
 
   # Trusted artifacts configuration

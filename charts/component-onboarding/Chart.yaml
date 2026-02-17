@@ -1,0 +1,6 @@
+apiVersion: v2
+name: component-onboarding
+description: Onboard a component/repository to Konflux - repeatable per component
+type: application
+version: 0.1.0
+appVersion: "1.0"
