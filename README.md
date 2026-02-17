@@ -3,13 +3,9 @@
 This repository demonstrates how to achieve end-to-end SLSA (Supply-chain Levels for Software Artifacts) compliance using [Konflux](https://konflux-ci.dev).
 It is created in response to the SLSA [request for examples](https://slsa.dev/blog/2025/07/slsa-e2e).
 
-If you are not familiar with Konflux, it is an open source, cloud-native software factory focused on software supply chain security. We understand that there
-are often competing interests between software developers and security professionals, but we try to strike a balance. By hardening our platform so that we can
-achieve SLSA Build L3 out of the box, we give developers the flexibility to build what they need to while also ensuring that the necessary requirements are
-met before those artifacts are pushed anywhere outside their control.
+If you are not familiar with Konflux, it is an open source, cloud-native software factory focused on software supply chain security. Developers need flexibility to build software quickly; security teams need controls to prevent supply chain attacks. Konflux hardens the platform to achieve SLSA Build L3 by default, giving developers flexibility to build what they need while ensuring security requirements are met before artifacts leave their control.
 
-After you complete the prerequisites, this repository provides a self-contained example for how to configure a Konflux tenant, onboard a component, and release
-it while ensuring that we meet all required policies. We will show you along the way how we leverage guidance from many of SLSA's tracks.
+After you complete the prerequisites, this repository walks you through configuring a Konflux tenant, onboarding a component, and releasing it with full policy compliance. Along the way, we show how Konflux applies guidance from SLSA's tracks.
 
 ## Table of Contents
 
@@ -36,7 +32,7 @@ it while ensuring that we meet all required policies. We will show you along the
 
 All commands in this guide assume you are in the root directory of the slsa-konflux-example repository unless otherwise specified.
 
-Before being able to explore SLSA with Konflux, you will need to have a running instance of it. The simplest way to get started is using the [konflux-ci](https://github.com/konflux-ci/konflux-ci) deployment script:
+To explore SLSA with Konflux, you need a running instance. The simplest way is the [konflux-ci](https://github.com/konflux-ci/konflux-ci) deployment script:
 
 ```bash
 # Clone the konflux-ci repository
@@ -47,13 +43,9 @@ cd konflux-ci
 ./scripts/deploy-local.sh
 ```
 
-This script automatically:
-- Creates a Kind cluster
-- Deploys the Konflux operator
-- Creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev)
-- Configures webhooks for Pipelines as Code
+This script creates a Kind cluster, deploys the Konflux operator, creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev), and configures webhooks for Pipelines as Code.
 
-After the operator is deployed, return to this repository and run the prerequisites script to complete the setup:
+After deploying the operator, run the prerequisites script:
 
 ```bash
 cd /path/to/slsa-konflux-example
@@ -68,7 +60,7 @@ For detailed deployment options, see the [Operator Deployment Guide](https://git
 
 Install these CLI tools for the demo: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for cluster interaction, [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation) for inspecting OCI artifact attestations, [helm](https://github.com/helm/helm?tab=readme-ov-file#install) for deploying resources to the Kind cluster, [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) for viewing Tekton pipelines, and optionally [gh](https://cli.github.com/) for GitHub CLI operations.
 
-**NOTE:** You will need to configure your repository with the Pipelines as Code application, so make sure you don't lose track of it when you create it.
+**NOTE:** Save your Pipelines as Code GitHub App URL after creating it. You need it to configure your repository.
 
 ### Demo Authentication
 
@@ -87,7 +79,7 @@ kubectl get konfluxui konflux-ui -n konflux-ui -o jsonpath='{.spec.dex.config.st
 
 ### Accessing the Konflux UI
 
-After Konflux deployment completes, you can view pipeline runs and builds in the Konflux web UI at https://localhost:9443
+After you deploy Konflux, view pipeline runs and builds in the Konflux web UI at https://localhost:9443
 
 ### Accessing the Kind Cluster Registry
 
@@ -113,9 +105,9 @@ For more troubleshooting, see [Troubleshooting Guide](https://github.com/konflux
 
 ## Workflow Overview
 
-Konflux automates the build-to-release pipeline. When you onboard a component, build-service automatically creates a pull request in your repository with Tekton pipeline definitions. Merging that PR enables the automated workflow.
+Konflux separates builds and releases into distinct trust boundaries to prevent unauthorized artifact signing (see [Trusting Artifacts](TRUSTING_ARTIFACTS.md) for the threat model). When you onboard a component, build-service creates a pull request in your repository with Tekton pipeline definitions. Merging that PR enables the automated workflow.
 
-The build process runs in an unprivileged tenant namespace. After the build completes, Tekton Chains generates SLSA provenance and signs the artifacts. Integration tests validate the build against policies. When you merge to the main branch, the release pipeline runs in a privileged managed namespace where Conforma performs final policy validation before promoting images to the release registry.
+Builds run in an unprivileged tenant namespace where signing keys are absent. After a build completes, Tekton Chains generates SLSA provenance and signs the artifacts. Integration tests validate the build against policies. When you merge to the main branch, the release pipeline runs in a privileged managed namespace where Conforma performs final policy validation before promoting images to the release registry.
 
 ## Administrator Setup
 
@@ -139,13 +131,9 @@ The script is idempotent and can be safely run multiple times.
 
 ## Setting Up Your Builds
 
-In order to achieve [SLSA build L3](https://slsa.dev/spec/v1.1/requirements), we need to ensure that builds are properly isolated
-both from other builds as well as from the secrets used to sign the provenance. Konflux relies on Kubernetes pods, as orchestrated by
-Tekton, to ensure that parallel builds are sufficiently isolated from each other. It also relies on Kubernetes namespace isolation to
-ensure that the signing material that Tekton Chains uses when generating the provenance cannot be accessed by builds.
+[SLSA Build L3](https://slsa.dev/spec/v1.1/requirements) requires builds to be isolated from each other and from signing secrets. Konflux achieves this through Kubernetes pod isolation (via Tekton) for parallel build separation and namespace isolation to keep Tekton Chains signing material inaccessible to builds.
 
-Configuring the required Tekton definition can be onerous, so we use Pipelines as Code to help push out a default definition when you
-onboard a component.
+Pipelines as Code creates default Tekton pipeline definitions when you onboard a component.
 
 ## Setup Your Repository
 
@@ -183,9 +171,9 @@ helm install platform ./charts/platform-config
 
 This creates:
 - EnterpriseContractPolicy for SLSA3 validation
-- User role bindings for admin access
-- Release pipeline service accounts
-- Signing keys for release attestations
+- RoleBindings for admin access
+- ServiceAccounts for release pipeline execution
+- Signing keys for release attestation signing
 
 ### Step 2: Onboard Components
 
@@ -213,7 +201,7 @@ kubectl get integrationtestscenario -n default-tenant
 kubectl get repository -n default-tenant
 ```
 
-Build-service automatically creates a pull request in your forked repository with Tekton pipeline definitions. Check your GitHub repository for the PR.
+Build-service creates a pull request in your forked repository with Tekton pipeline definitions. Check your GitHub repository for the PR.
 
 Now that you have onboarded your component, the build-service PR will show pipeline status checks, and any new PRs you open will trigger builds and you can use `tkn` to see it in the cluster!
 
@@ -487,9 +475,7 @@ This mixed scenario exists because different tasks are migrating to the OCI Refe
 
 ## Integration Tests
 
-## Building isn't enough
-
-Merge your onboarding PR to trigger the on-push pipeline, let the build run, and then look at what all we have configured Konflux to run.
+Building an image is only the first step. Konflux also validates builds against policy before release. Merge your onboarding PR to trigger the on-push pipeline, let the build run, and then examine everything Konflux runs.
 
 ### Build pipeline
 
@@ -497,7 +483,7 @@ If you look in your source repository, there will be two different PipelineRuns 
 By default, these are almost identical so the build you see now will largely be the same as the build you saw previously. This means that any build-time checks
 (including clair-scan and sast-shell-check) will still run on every build.
 
-After a successful build, Tekton Chains automatically generates SLSA provenance attestations and signs them. You can inspect these attestations to see detailed information about the build, including all the tasks that ran and their results.
+After a successful build, Tekton Chains generates and signs SLSA provenance attestations. You can inspect these attestations to see the build details, including all tasks that ran and their results.
 
 #### Viewing SLSA Provenance
 
@@ -556,7 +542,7 @@ The SBOM is in SPDX 2.3 format and includes:
 
 ### Integration tests
 
-After Tekton Chains generates provenance, integration tests run based on the build context.
+After Tekton Chains generates provenance, the build context determines which integration tests run.
 
 The helm chart creates two IntegrationTestScenario resources:
 
@@ -593,18 +579,11 @@ To trigger the full flow including auto-release, merge your pull request:
 gh pr merge <PR_NUMBER> --squash
 ```
 
-When you merge to the main branch:
-
-1. **Push event triggers**: A new PipelineRun executes for the push to main
-2. **Build completes**: Image is built and signed by Chains
-3. **Snapshot created**: Represents the built artifacts
-4. **Integration test runs**: The `policy` scenario validates the snapshot
-5. **Auto-release triggers**: A Release resource is created automatically
-6. **Release pipeline executes**: In the managed namespace (`managed-tenant`)
+When you merge to the main branch, a push event triggers a new PipelineRun. The build completes and Chains signs the image. The system creates a Snapshot representing the built artifacts, then runs the `policy` integration test to validate it. If the test passes, a Release resource is created, triggering the release pipeline in the managed namespace (`managed-tenant`).
 
 ### Pushing images elsewhere
 
-Even if some developers want access to all credentials, to properly isolate privileged environments, we release artifacts via pipelines in separate managed namespaces.
+Release pipelines run in managed namespaces to isolate privileged credentials from tenant developers.
 The Release that was auto-created references a ReleasePlan in the tenant namespace which is mapped to a ReleasePlanAdmission in a specific managed namespace. When the Release
 is created, a new Tekton pipeline will be created as specified in that ReleasePlanAdmission.
 
@@ -654,8 +633,7 @@ This is useful for:
 
 #### What's in a policy?
 
-As we mentioned at the beginning, we are balancing flexibility with security. We use [Conforma](https://conforma.dev) as a policy engine to ensure that specific requirements
-(policy rules) are met before images are released.
+Signing alone is insufficient. Tekton Chains signs whatever tasks claim to produce, including artifacts from compromised tasks (see [Trusting Artifacts](TRUSTING_ARTIFACTS.md)). [Conforma](https://conforma.dev) serves as a policy engine to verify the complete build chain before releasing images.
 
 Our helm chart creates an EnterpriseContractPolicy resource that defines what must be validated:
 

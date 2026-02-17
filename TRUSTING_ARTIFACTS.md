@@ -2,74 +2,46 @@
 
 ## The Core Problem: Chains Signs Anything
 
-[Tekton Chains](https://tekton.dev/docs/chains/) automatically observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This powerful observer pattern ensures signing keys remain separate from build execution.
+[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys separate from build execution.
 
-This architecture, however, means that Chains will sign whatever artifacts tasks and pipelines claim to have produced, without verifying:
-- Whether the task itself is trustworthy
-- Whether the artifacts were actually built in this pipeline
-- Whether a malicious task substituted pre-built artifacts
+The tradeoff is that Chains signs whatever artifacts tasks claim to produce. It does not verify whether the task is trustworthy, whether the artifact was actually built in this pipeline, or whether a malicious task swapped in a pre-built image.
 
-For example, a malicious task could:
-1. Claim to build a container image from source
-2. Actually pull a pre-compromised image from an attacker's registry
-3. Use Tekton [type hinting](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting) to report this as a "built" artifact
-4. Chains observes the completed task and generates signed SLSA provenance
-5. **Result**: Signed provenance for a malicious artifact that was never actually built
+Consider what happens when a malicious task enters the pipeline. It claims to build a container image from source, but instead pulls a pre-compromised image from an attacker's registry. It uses Tekton [type hinting](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting) to report this as a "built" artifact. Chains sees a completed task, generates signed SLSA provenance, and now you have cryptographically valid provenance for an artifact that was never actually built from the claimed source.
 
-The provenance would be cryptographically valid and claim the artifact was built from trusted source code, when in reality it was substituted.
+Signing alone does not solve supply chain security. We need to verify what was signed.
 
 ## The Solution: Verify Tasks AND Artifacts
 
-To trust the provenance, we must trust the entire build chain:
+Trusting provenance requires trusting the entire build chain. All tasks must come from known, approved sources, and artifacts must remain immutable between tasks.
 
-1. **Verify Tasks Are Trusted**: Ensure all tasks come from known, approved sources
-2. **Prevent Artifact Tampering**: Ensure artifacts can't be modified between tasks
-3. **Generate Provenance**: Tekton Chains creates signed attestations of what was built
-4. **Policy Evaluation**: Verify the complete build chain before release
+Konflux enforces both properties at different stages. During the build, Tekton Chains creates signed attestations recording what happened. At release time, the `verify-conforma` task in the managed namespace checks the attestations against policy: Were the tasks trusted? Are the artifacts intact? Only after validation passes does the release pipeline promote images.
 
-## Task Trust: Why It Matters
+## Task Trust
 
-Konflux leverages [Conforma](https://conforma.dev) to establish a process for verifying trust in tasks.
+Konflux uses [Conforma](https://conforma.dev) to verify that every task in a build came from an approved source.
 
-- Tasks must reference digest-pinned task bundles (not mutable tags)
-- Task bundles must be in an approved trusted task list
-- If any tasks are required in a policy, those MUST also be trusted
+Conforma's [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package enforces three requirements:
 
-Conforma has a [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package which includes all relevant policy rules for establishing this trust.
+- Tasks must reference digest-pinned bundles, not mutable tags
+- Those bundles must appear in an approved trusted task list
+- Any task that a policy declares as required must itself be trusted
 
-## Artifact Trust: Preventing Tampering
+## Artifact Trust: Why PVCs Are Not Enough
 
-While the orchestrated containers are isolated from each other, any shared volume used to transfer data between tasks is a cache which needs to be appropriately protected as well. This means that any untrusted task could compromise the entire build process.
+Containers in a pipeline are isolated from each other, but shared volumes tell a different story. When tasks pass data through PVCs, any task with access to the volume can read or modify artifacts left by previous tasks. A single malicious task can tamper with everything. This forces an all-or-nothing trust model: either every task in the pipeline is trusted, or none of the output can be trusted.
 
-When a pipeline is using shared storage (PVCs) between tasks:
-- **ALL tasks must be trusted** because any task can modify shared artifacts
-- A single malicious task can tamper with artifacts from previous tasks
-- No cryptographic verification prevents this tampering
-- Trust boundaries cannot be scoped to individual tasks
+That model works, but it has a real cost. Centralized pipeline ownership means every change, even adding a linter, must go through a trust review process. This tension between security and developer autonomy is why Konflux uses [Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html) instead of PVCs.
 
-While this works, it hampers user experience as it reduces the ability to have a decentralized pipeline ownership. Any change, no matter how specific, would need to go through a centralized process to become trusted. In Konflux, however, we leverage [Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html) by default for transferring data between tasks instead of PVCs.
+Trusted Artifacts store intermediate data as immutable OCI images, addressed by content digest. Rather than writing to a shared filesystem, each task's output becomes the next task's input through explicit parameter chaining.
 
-This prevents tampering by:
-- Eliminating shared mutable storage between tasks
-- Storing artifacts as immutable OCI images (content-addressable by digest) and loading that content in future tasks
-- Explicitly chaining dependencies using results of one task and params of another
-- Enabling selective trust based on artifact dependencies
-
-**Key advantage**: With immutable artifact storage, we enable users to customize their pipeline without affecting our trust in the resulting artifacts.
+This design makes tampering detectable: any modification changes the digest. It also scopes trust more narrowly. Because there is no shared volume, untrusted tasks cannot modify artifacts they never receive. Users can add custom tasks to their pipeline without undermining trust in the build output.
 
 ## References
 
-### Tekton and Chains
 - [Tekton Chains Documentation](https://tekton.dev/docs/chains/)
 - [Type Hinting for SLSA Provenance](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting)
-
-### Conforma (Enterprise Contract)
 - [Conforma Project](https://conforma.dev)
-- [EC Policies Repository](https://github.com/conforma/policy)
-
-### SLSA
+- [Conforma Policy Rules](https://github.com/conforma/policy)
 - [SLSA Specification](https://slsa.dev/spec/)
 - [Verification Summary Attestation (VSA)](https://slsa.dev/verification_summary)
-
-### Konflux
-- [Build Definitions Repository](https://github.com/konflux-ci/build-definitions)
+- [Konflux Build Definitions](https://github.com/konflux-ci/build-definitions)

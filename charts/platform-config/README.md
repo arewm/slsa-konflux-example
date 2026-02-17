@@ -1,18 +1,16 @@
 # Platform Config Helm Chart
 
-Platform configuration for Konflux - install once per cluster to set up policies, signing keys, and permissions.
+Install once per cluster to configure policies, signing keys, and permissions for SLSA-compliant releases.
 
 ## Overview
 
-This chart creates the shared infrastructure resources that components will use:
-- **EnterpriseContractPolicy**: SLSA3 policy for integration tests and releases
-- **ServiceAccounts**: For release pipeline execution in both tenant and managed namespaces
-- **RoleBindings**: Admin access for users, release pipeline permissions
-- **ClusterRoleBindings**: Self-access permissions for authenticated users
-- **Signing Keys**: Cosign key-pair for release attestation signing (VSAs, SBOMs)
-- **Trusted Artifacts Secret**: OCI registry credentials for intermediate artifacts
-
-Install this chart **once per cluster** before onboarding any components.
+This chart creates shared infrastructure that all onboarded components use:
+- **EnterpriseContractPolicy** defining SLSA3 validation rules for integration tests and releases
+- **ServiceAccounts** for release pipeline execution in tenant and managed namespaces
+- **RoleBindings** granting admin access to users and release pipeline permissions
+- **ClusterRoleBindings** enabling self-access review for authenticated users
+- **Signing Keys** (cosign key-pair) for signing release attestations
+- **Trusted Artifacts Secret** storing OCI registry credentials for intermediate artifacts
 
 ## Prerequisites
 
@@ -22,8 +20,6 @@ Install this chart **once per cluster** before onboarding any components.
 - Managed namespace created (e.g., `managed-tenant` by setup-prerequisites.sh)
 
 ## Installation
-
-Basic installation with defaults:
 
 ```bash
 helm install platform ./charts/platform-config
@@ -39,7 +35,7 @@ helm install platform ./charts/platform-config \
 
 ## Important Values
 
-These values **must match** between platform-config and component-onboarding charts:
+These values **must match** between platform-config and component-onboarding charts. Mismatched values cause component releases to reference non-existent policies or service accounts.
 
 | Value | Default | Description |
 |-------|---------|-------------|
@@ -66,7 +62,7 @@ release:
   policy:
     policyBundle: "quay.io/conforma/release-policy:konflux"
     acceptableBundles: "oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest"
-    slsaSourceMinLevel: ""  # Leave empty to use policy data default (2)
+    slsaSourceMinLevel: ""  # Empty uses policy data default (currently 2)
 ```
 
 ### Signing Keys
@@ -105,13 +101,11 @@ kubectl get secret release-signing-key -n managed-tenant
 
 ## Upgrading
 
-To upgrade the platform configuration:
-
 ```bash
 helm upgrade platform ./charts/platform-config
 ```
 
-**Note**: By default, signing keys are preserved across upgrades (`regenerateKeys: false`). Change this only if you need new keys and understand the consequences.
+Signing keys are preserved across upgrades (`regenerateKeys: false`). Setting `regenerateKeys: true` invalidates all previous signatures.
 
 ## Uninstalling
 
@@ -119,4 +113,4 @@ helm upgrade platform ./charts/platform-config
 helm uninstall platform
 ```
 
-**WARNING**: This removes the EnterpriseContractPolicy and signing keys. Ensure no components are still using these resources before uninstalling.
+**WARNING**: This removes the EnterpriseContractPolicy and signing keys. Verify no components depend on these resources before uninstalling.
