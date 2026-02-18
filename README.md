@@ -101,6 +101,13 @@ podman pull localhost:5001/repository/image:tag
 kind export kubeconfig -n konflux
 ```
 
+**Freeing cluster resources:** Kind clusters have limited resources. Completed and failed PipelineRuns retain pods and volume claims that consume memory. If tasks fail with `ExceededNodeResources`, clean up old runs:
+```bash
+# Delete completed/failed PipelineRuns in both namespaces
+kubectl delete pipelineruns -n default-tenant --field-selector=status.conditions[0].reason!=Running
+kubectl delete pipelineruns -n managed-tenant --field-selector=status.conditions[0].reason!=Running
+```
+
 For more troubleshooting, see [Troubleshooting Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/troubleshooting.md).
 
 ## Workflow Overview
