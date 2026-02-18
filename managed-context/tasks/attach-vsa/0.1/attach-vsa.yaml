@@ -104,10 +104,133 @@ spec:
       computeResources: {}
       image: quay.io/redhat-appstudio/build-trusted-artifacts:e02102ede09aa07187cba066ad547a54724e5cf4
 
-    - name: attach-vsa-attestations
-      image: gcr.io/projectsigstore/cosign:v2.4.1
+    - name: generate-slsa-vsa
+      image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
       script: |
-        #!/busybox/sh
+        #!/bin/bash
+        set -euo pipefail
+
+        if [[ "$(params.VSA_GENERATED)" != "true" ]]; then
+          echo "VSA was not generated, skipping SLSA VSA generation"
+          exit 0
+        fi
+
+        VSA_DIR="$(params.TRUSTED_ARTIFACTS_EXTRACT_DIR)/vsa"
+        REPORT="$VSA_DIR/report-json.json"
+
+        if [[ ! -f "$REPORT" ]]; then
+          echo "WARNING: Conforma JSON report not found at $REPORT, skipping SLSA VSA generation"
+          exit 0
+        fi
+
+        echo "Generating standard SLSA VSA from conforma report..."
+
+        # Extract metadata from the report
+        EC_VERSION=$(jq -r '."ec-version" // "unknown"' "$REPORT")
+        EFFECTIVE_TIME=$(jq -r '."effective-time" // now' "$REPORT")
+        POLICY_DESCRIPTOR=$(jq '{
+          uri: (.policy.sources[0].policy[0] // "unknown"),
+          digest: {}
+        }' "$REPORT")
+
+        # Generate one SLSA VSA per component with per-component verified levels.
+        # If we reached this step, the policy passed for all components.
+        COMPONENT_COUNT=$(jq '.components | length' "$REPORT")
+        for i in $(seq 0 $((COMPONENT_COUNT - 1))); do
+          COMPONENT=$(jq ".components[$i]" "$REPORT")
+          IMAGE_REF=$(echo "$COMPONENT" | jq -r '.containerImage')
+          COMPONENT_NAME=$(echo "$COMPONENT" | jq -r '.name')
+          DIGEST_ALG=$(echo "$IMAGE_REF" | sed -n 's/.*@\(.*\):.*/\1/p')
+          DIGEST_VAL=$(echo "$IMAGE_REF" | sed -n 's/.*@.*://p')
+
+          echo "  Component: $COMPONENT_NAME ($IMAGE_REF)"
+
+          VERIFIED_LEVELS='[]'
+
+          # Build level: check if this component has slsa3 collection successes
+          HAS_SLSA3=$(echo "$COMPONENT" | jq '[(.successes // [])[]
+            | select(.metadata.collections != null)
+            | select([.metadata.collections[] | select(. == "slsa3" or . == "slsa_build_l3")] | length > 0)
+          ] | length')
+
+          if [[ "$HAS_SLSA3" -gt 0 ]]; then
+            VERIFIED_LEVELS=$(echo "$VERIFIED_LEVELS" | jq '. + ["SLSA_BUILD_LEVEL_3"]')
+            echo "    Build track: SLSA_BUILD_LEVEL_3"
+          fi
+
+          # Source level: download provenance for THIS component's image and
+          # extract SLSA_SOURCE_LEVEL_ACHIEVED from verify-source task(s).
+          # Take the minimum level across all verify-source tasks (weakest link).
+          PROVENANCE=$(cosign download attestation --allow-insecure-registry "$IMAGE_REF" 2>/dev/null \
+            | jq -s '[.[] | select(.payloadType == "application/vnd.in-toto+json")
+              | select(.payload | @base64d | fromjson | .predicateType == "https://slsa.dev/provenance/v0.2" or .predicateType == "https://slsa.dev/provenance/v1")]' 2>/dev/null) \
+            || PROVENANCE='[]'
+
+          SOURCE_LEVEL=$(echo "$PROVENANCE" | jq -r '
+            [.[] | .payload | @base64d | fromjson |
+              ((.predicate.buildConfig.tasks // [])[]
+                | select(.name // "" | test("verify-source"))
+                | (.results // [])[]
+                | select(.name == "SLSA_SOURCE_LEVEL_ACHIEVED")
+                | .value | gsub("\\s+"; "")),
+              ((.predicate.buildDefinition.resolvedDependencies // [])[]
+                | select(.name == "pipelineTask")
+                | (.content | @base64d | fromjson) as $task
+                | select(($task.metadata.labels["tekton.dev/pipelineTask"] // "") | test("verify-source"))
+                | ($task.status.results // [])[]
+                | select(.name == "SLSA_SOURCE_LEVEL_ACHIEVED")
+                | .value | gsub("\\s+"; ""))
+            ] | map(ltrimstr("SLSA_SOURCE_LEVEL_") | tonumber) | if length > 0 then min else empty end
+          ' 2>/dev/null)
+
+          if [[ -n "$SOURCE_LEVEL" ]]; then
+            VERIFIED_LEVELS=$(echo "$VERIFIED_LEVELS" | jq --arg lvl "$SOURCE_LEVEL" '. + ["SLSA_SOURCE_LEVEL_" + $lvl]')
+            echo "    Source track: SLSA_SOURCE_LEVEL_$SOURCE_LEVEL"
+          else
+            echo "    Source track: no verify-source result in provenance"
+          fi
+
+          # Generate the SLSA VSA predicate (cosign attest wraps it in
+          # an in-toto statement using --type for predicateType)
+          SLSA_VSA=$(jq -n \
+            --arg ec_version "$EC_VERSION" \
+            --arg time_verified "$EFFECTIVE_TIME" \
+            --arg resource_uri "$IMAGE_REF" \
+            --arg result "PASSED" \
+            --argjson verified_levels "$VERIFIED_LEVELS" \
+            --argjson policy "$POLICY_DESCRIPTOR" \
+            '{
+              "verifier": {
+                "id": "https://conforma.dev/cli",
+                "version": {"ec": $ec_version}
+              },
+              "timeVerified": $time_verified,
+              "resourceUri": $resource_uri,
+              "policy": $policy,
+              "verificationResult": $result,
+              "verifiedLevels": $verified_levels,
+              "slsaVersion": "1.0"
+            }')
+
+          SLSA_VSA_FILE="$VSA_DIR/slsa-vsa-${COMPONENT_NAME}.json"
+          echo "$SLSA_VSA" > "$SLSA_VSA_FILE"
+          echo "    Generated: $SLSA_VSA_FILE"
+        done
+
+        echo "SLSA VSA generation complete"
+      env:
+        - name: SSL_CERT_DIR
+          value: "/tekton-custom-certs:/etc/ssl/certs:/etc/pki/tls/certs:/system/etc/security/cacerts:$(params.SSL_CERT_DIR)"
+      volumeMounts:
+        - name: trusted-ca
+          mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+          subPath: ca-bundle.crt
+          readOnly: true
+
+    - name: attach-vsa-attestations
+      image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
+      script: |
+        #!/bin/bash
         set -euo pipefail
 
         if [[ "$(params.VSA_GENERATED)" != "true" ]]; then
@@ -117,67 +240,89 @@ spec:
 
         echo "Signing and attaching VSA attestations to destination images..."
 
-        # Extract image references from mapped snapshot
+        REPORT="$(params.TRUSTED_ARTIFACTS_EXTRACT_DIR)/vsa/report-json.json"
         SNAPSHOT_FILE="$(params.TRUSTED_ARTIFACTS_EXTRACT_DIR)/$(params.SNAPSHOT_FILENAME)"
+        VSA_DIR="$(params.TRUSTED_ARTIFACTS_EXTRACT_DIR)/vsa"
 
         if [[ ! -f "$SNAPSHOT_FILE" ]]; then
           echo "ERROR: Snapshot file not found: $SNAPSHOT_FILE"
           exit 1
         fi
 
-        # Get all component images from mapped snapshot (these are destination images)
-        IMAGES=$(jq -r '.components[].containerImage' "$SNAPSHOT_FILE")
-
-        if [[ -z "$IMAGES" ]]; then
-          echo "ERROR: No images found in mapped snapshot"
-          exit 1
-        fi
-
-        # VSA predicates should be in /var/workdir/vsa from verify-conforma task
-        VSA_DIR="/var/workdir/vsa"
-
         if [[ ! -d "$VSA_DIR" ]]; then
           echo "ERROR: VSA directory $VSA_DIR not found"
           exit 1
         fi
 
-        # Find VSA predicate files (unsigned JSON)
-        VSA_FILES=$(find "$VSA_DIR" -type f -name "*.json")
+        # Get the destination repo from the snapshot mapping.
+        # The snapshot component has repository (destination) and
+        # containerImage (build ref with digest). The digest is the same
+        # in both locations since push-snapshot copies by digest.
+        DEST_REPO=$(jq -r '.components[0].repository // empty' "$SNAPSHOT_FILE")
+        if [[ -z "$DEST_REPO" ]]; then
+          echo "WARNING: No repository mapping in snapshot, using build image refs"
+        fi
 
-        if [[ -z "$VSA_FILES" ]]; then
-          echo "ERROR: No VSA predicate files found in $VSA_DIR"
+        # Build component name → destination image mapping from the report.
+        # Each conforma component has a unique name and build image digest.
+        # The destination image is the same digest under the mapped repo.
+        declare -A COMP_DEST_MAP
+        while IFS=$'\t' read -r name digest; do
+          if [[ -n "$DEST_REPO" ]]; then
+            COMP_DEST_MAP["$name"]="${DEST_REPO}@${digest}"
+          else
+            COMP_DEST_MAP["$name"]="$name"
+          fi
+        done < <(jq -r '.components[] | [.name, (.containerImage | split("@") | .[1])] | @tsv' "$REPORT")
+
+        echo "Component → destination mapping:"
+        for name in "${!COMP_DEST_MAP[@]}"; do
+          echo "  $name → ${COMP_DEST_MAP[$name]}"
+        done
+        echo ""
+
+        # Attach each VSA to its matching component's destination image.
+        # VSA filenames encode the component name:
+        #   vsa-<component-name>.json → conforma custom VSA
+        #   slsa-vsa-<component-name>.json → standard SLSA VSA
+        ERRORS=0
+        for VSA_FILE in $(find "$VSA_DIR" -type f -name "*.json" ! -name "report-json.json"); do
+          BASENAME=$(basename "$VSA_FILE" .json)
+
+          # Extract component name and predicate type from filename
+          if [[ "$BASENAME" == slsa-vsa-* ]]; then
+            COMP_NAME="${BASENAME#slsa-vsa-}"
+            PRED_TYPE="https://slsa.dev/verification_summary/v1"
+          else
+            COMP_NAME="${BASENAME#vsa-}"
+            PRED_TYPE="https://conforma.dev/verification_summary/v1"
+          fi
+
+          DEST_IMAGE="${COMP_DEST_MAP[$COMP_NAME]:-}"
+          if [[ -z "$DEST_IMAGE" ]]; then
+            echo "ERROR: No destination image for component '$COMP_NAME'"
+            ERRORS=$((ERRORS + 1))
+            continue
+          fi
+
+          echo "Attaching $BASENAME ($PRED_TYPE) → $DEST_IMAGE"
+          if ! cosign attest \
+            --predicate "$VSA_FILE" \
+            --type "$PRED_TYPE" \
+            --key "$(params.VSA_SIGNING_KEY)" \
+            --tlog-upload=false \
+            "$DEST_IMAGE"; then
+            echo "ERROR: Failed to attach $BASENAME to $DEST_IMAGE"
+            ERRORS=$((ERRORS + 1))
+          fi
+        done
+
+        if [[ "$ERRORS" -gt 0 ]]; then
+          echo "ERROR: $ERRORS attestation(s) failed to attach"
           exit 1
         fi
 
-        echo "Found VSA predicate files:"
-        echo "$VSA_FILES"
-        echo ""
-
-        # Sign and attach VSA to each destination image
-        for IMAGE in $IMAGES; do
-          echo "Processing image: $IMAGE"
-
-          # Use first VSA file (ec CLI generates one VSA per validation run)
-          VSA_PREDICATE=$(echo "$VSA_FILES" | head -1)
-
-          echo "Signing VSA predicate: $VSA_PREDICATE"
-          echo "Attaching to image: $IMAGE"
-
-          # Sign the predicate and attach as attestation to the image
-          # This creates the DSSE envelope with signature and attaches it
-          /ko-app/cosign attest \
-            --predicate "$VSA_PREDICATE" \
-            --type "$(params.VSA_TYPE)" \
-            --key "$(params.VSA_SIGNING_KEY)" \
-            "$IMAGE" || {
-              echo "WARNING: Failed to sign and attach VSA to $IMAGE"
-              continue
-            }
-
-          echo "Successfully signed and attached VSA to $IMAGE"
-        done
-
-        echo "VSA signing and attachment complete"
+        echo "VSA attachment complete"
       env:
         - name: SSL_CERT_DIR
           value: "/tekton-custom-certs:/etc/ssl/certs:/etc/pki/tls/certs:/system/etc/security/cacerts:$(params.SSL_CERT_DIR)"

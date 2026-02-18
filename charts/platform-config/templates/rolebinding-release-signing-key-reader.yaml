@@ -1,0 +1,16 @@
+{{- if .Values.signing.enableSigning }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-signing-key-reader
+  namespace: {{ .Values.release.targetNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-signing-key-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.release.serviceAccount }}
+    namespace: {{ .Values.release.targetNamespace }}
+{{- end }}
