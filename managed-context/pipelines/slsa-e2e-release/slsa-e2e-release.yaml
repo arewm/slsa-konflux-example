@@ -470,7 +470,7 @@ spec:
         - name: taskGitRevision
           value: "development"
       runAfter:
-        - collect-data
+        - push-snapshot
     - name: make-repo-public
       retries: 5
       when:
