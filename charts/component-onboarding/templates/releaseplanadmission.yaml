@@ -28,10 +28,46 @@ spec:
       - pipelineTaskName: verify-conforma
         computeResources:
           requests:
-            memory: 512Mi
-            cpu: 250m
+            cpu: 100m
+            memory: 256Mi
           limits:
-            memory: 1Gi
+            memory: 512Mi
+      - pipelineTaskName: verify-access-to-resources
+        computeResources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+      - pipelineTaskName: push-snapshot
+        computeResources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+      - pipelineTaskName: apply-mapping
+        computeResources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+      - pipelineTaskName: collect-data
+        computeResources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+      - pipelineTaskName: reduce-snapshot
+        computeResources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
   data:
     mapping:
       defaults:
