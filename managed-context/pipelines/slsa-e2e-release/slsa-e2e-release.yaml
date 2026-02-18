@@ -45,10 +45,13 @@ spec:
     - name: verify_ec_task_git_url
       type: string
       description: The git url to the repo where the verify-conforma task is stored
-      default: https://github.com/conforma/cli
+      # Currently unused - verify-conforma taskRef is hardcoded. Will be needed after upstream fix lands.
+      # TODO: revert to https://github.com/conforma/cli after upstream fix lands
+      default: https://github.com/arewm/slsa-konflux-example
     - name: verify_ec_task_git_revision
       type: string
       description: The git revision to be used when consuming the verify-conforma task
+      # Currently unused - verify-conforma taskRef is hardcoded. Will be needed after upstream fix lands.
       default: main
     - name: taskGitUrl
       type: string
@@ -82,6 +85,10 @@ spec:
       # to avoid tar extraction errors, we need to specify a subdirectory
       # inside the volume.
       default: "/var/workdir/release"
+    - name: makeRepoPublic
+      description: Whether to collect registry token and make the destination repo public
+      type: string
+      default: "false"
   tasks:
     - name: verify-access-to-resources
       taskRef:
@@ -293,11 +300,16 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.verify_ec_task_git_url)
+            # TODO: revert to $(params.verify_ec_task_git_url) after upstream fix for
+            # sourceDataArtifact param lands in conforma/cli
+            value: https://github.com/arewm/slsa-konflux-example
           - name: revision
-            value: $(params.verify_ec_task_git_revision)
+            # Hardcoded to bypass operator-injected revision from ec-defaults configmap
+            # which pins to a conforma/cli commit SHA not present in this repo.
+            # TODO: revert to $(params.verify_ec_task_git_revision) after upstream fix
+            value: main
           - name: pathInRepo
-            value: "tasks/verify-conforma-konflux-ta/0.1/verify-conforma-konflux-ta.yaml"
+            value: "managed-context/tasks/verify-conforma/0.1/verify-conforma-vsa.yaml"
       params:
         - name: ORAS_OPTIONS
           value: $(params.orasOptions)
@@ -322,6 +334,8 @@ spec:
           value: "$(tasks.apply-mapping.results.sourceDataArtifact)"
         - name: TRUSTED_ARTIFACTS_DEBUG
           value: "$(params.trustedArtifactsDebug)"
+        - name: TRUSTED_ARTIFACTS_EXTRACT_DIR
+          value: "$(params.dataDir)"
         - name: CA_TRUST_CONFIGMAP_NAME
           value: "trusted-ca"
         - name: CA_TRUST_CONFIG_MAP_KEY
@@ -331,13 +345,11 @@ spec:
         - name: ATTESTATION_FORMAT
           value: "predicate"
         - name: VSA_SIGNING_KEY
-          value: "k8s://slsa-e2e-managed-tenant/release-signing-key"
+          value: "k8s://managed-tenant/release-signing-key"
         - name: VSA_UPLOAD
-          value: "local@/var/workdir/vsa"
+          value: "local@$(params.dataDir)/vsa"
         - name: ociStorage
           value: $(params.ociStorage)
-        - name: dataDir
-          value: $(params.dataDir)
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
@@ -372,7 +384,7 @@ spec:
         - name: ociStorage
           value: $(params.ociStorage)
         - name: sourceDataArtifact
-          value: "$(tasks.apply-mapping.results.sourceDataArtifact)"
+          value: "$(tasks.verify-conforma.results.sourceDataArtifact)"
         - name: dataDir
           value: $(params.dataDir)
         - name: trustedArtifactsDebug
@@ -383,6 +395,7 @@ spec:
           value: "development"
       runAfter:
         - verify-conforma
+        - check-data-keys
     - name: attach-vsa
       when:
         - input: "$(tasks.verify-conforma.results.VSA_GENERATED)"
@@ -404,19 +417,19 @@ spec:
         - name: SNAPSHOT_FILENAME
           value: "$(tasks.collect-data.results.snapshotSpec)"
         - name: SOURCE_DATA_ARTIFACT
-          value: "$(tasks.verify-conforma.results.sourceDataArtifact)"
+          value: "$(tasks.push-snapshot.results.sourceDataArtifact)"
         - name: VSA_GENERATED
           value: "$(tasks.verify-conforma.results.VSA_GENERATED)"
         - name: VSA_SIGNING_KEY
-          value: "k8s://slsa-e2e-managed-tenant/release-signing-key"
+          value: "k8s://managed-tenant/release-signing-key"
         - name: ORAS_OPTIONS
           value: $(params.orasOptions)
         - name: TRUSTED_ARTIFACTS_DEBUG
           value: "$(params.trustedArtifactsDebug)"
         - name: TRUSTED_ARTIFACTS_EXTRACT_DIR
-          value: "$(params.dataDir)/attach-vsa"
+          value: "/var/workdir/attach-vsa"
         - name: HOMEDIR
-          value: "$(params.dataDir)"
+          value: "/var/workdir/attach-vsa"
         - name: SSL_CERT_DIR
           value: /var/run/secrets/kubernetes.io/serviceaccount
         - name: CA_TRUST_CONFIGMAP_NAME
@@ -426,6 +439,10 @@ spec:
       runAfter:
         - push-snapshot
     - name: collect-registry-token-secret
+      when:
+        - input: "$(params.makeRepoPublic)"
+          operator: in
+          values: ["true"]
       taskRef:
         resolver: "git"
         params:
@@ -524,4 +541,4 @@ spec:
           - name: pathInRepo
             value: tasks/managed/update-cr-status/update-cr-status.yaml
       runAfter:
-        - push-snapshot
+        - attach-vsa

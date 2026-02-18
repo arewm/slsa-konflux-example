@@ -475,7 +475,7 @@ spec:
         - name: ociStorage
           value: $(params.ociStorage)
         - name: workDir
-          value: /var/workdir
+          value: $(params.TRUSTED_ARTIFACTS_EXTRACT_DIR)
         - name: sourceDataArtifact
           value: $(results.sourceDataArtifact.path)
 
