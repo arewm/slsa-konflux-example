@@ -26,6 +26,7 @@ After you complete the prerequisites, this repository walks you through configur
 - [Integration Tests](#integration-tests)
 - [Releasing Your Component](#releasing-your-component)
 - [Understanding the Policy](#understanding-the-policy)
+  - [Demonstrating Policy Enforcement](#demonstrating-policy-enforcement)
 - [Next Steps](#next-steps)
 
 ## Pre-requisites
@@ -730,6 +731,64 @@ cosign download attestation ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
 ```
 
 The released image includes the same attestations as the build image, ensuring provenance is preserved through the release process.
+
+### Demonstrating Policy Enforcement
+
+The policy evaluation can be demonstrated in two scenarios: a passing release (the default) and a failing release (by tightening the policy). This is useful for understanding how policy enforcement works and for educational demonstrations.
+
+#### Scenario 1: Policy Pass
+
+A normal release with a passing policy produces a full green pipeline. After a successful `helm install` and build, trigger a release as described above. The `verify-conforma` task will pass, `push-snapshot` will publish the image, and `attach-vsa` will sign and attach the Verification Summary Attestations.
+
+#### Scenario 2: Policy Fail
+
+You can tighten the policy on-cluster to force a failure without modifying git. The `ruleData` field in the EnterpriseContractPolicy spec overrides any values fetched from git-based data sources.
+
+For example, the current policy requires source level 2. The `verify-source` task achieves level 3. To demonstrate a failure, require level 4 (which does not exist in the SLSA spec and therefore cannot be achieved):
+
+```bash
+# Override the minimum required source level on-cluster
+kubectl patch enterprisecontractpolicy ec-policy -n managed-tenant \
+  --type=json -p '[
+    {"op": "add", "path": "/spec/sources/0/ruleData",
+     "value": {"slsa_source_min_level": "4"}}
+  ]'
+```
+
+Then trigger a release manually against an existing snapshot:
+
+```bash
+SNAPSHOT=$(kubectl get snapshots -n default-tenant \
+  --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d/ -f2)
+
+kubectl create -f - <<EOF
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  generateName: festoji-policy-fail-demo-
+  namespace: default-tenant
+spec:
+  releasePlan: festoji-release
+  snapshot: ${SNAPSHOT}
+EOF
+```
+
+The `verify-conforma` task will fail with a message indicating the source level achieved versus the level required:
+
+```
+FAILURE: slsa_source_verification.required_level_achieved
+  verify-source task achieved SLSA_SOURCE_LEVEL_3,
+  but minimum required level is 4
+```
+
+The `push-snapshot` task is skipped because it depends on `verify-conforma` succeeding. The artifact is never published.
+
+After capturing the results, revert the policy:
+
+```bash
+kubectl patch enterprisecontractpolicy ec-policy -n managed-tenant \
+  --type=json -p '[{"op": "remove", "path": "/spec/sources/0/ruleData"}]'
+```
 
 ## Next Steps
 
