@@ -1,0 +1,9 @@
+{
+  "image": "ghcr.io/bootc-dev/devenv-debian:latest",
+  "customizations": {
+    "devaipod": {
+      "nestedContainers": true
+    }
+  },
+  "postCreateCommand": "ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && RAW_ARCH=$(uname -m) && mkdir -p ~/.local/bin && curl -Lo /tmp/helm.tar.gz https://get.helm.sh/helm-v4.1.4-linux-${ARCH}.tar.gz && tar -xzf /tmp/helm.tar.gz -C ~/.local/bin --strip-components=1 linux-${ARCH}/helm && rm /tmp/helm.tar.gz && curl -Lo ~/.local/bin/kubectl https://dl.k8s.io/release/v1.36.0/bin/linux/${ARCH}/kubectl && chmod +x ~/.local/bin/kubectl && curl -Lo ~/.local/bin/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-${ARCH} && chmod +x ~/.local/bin/kind && curl -Lo /tmp/tkn.tar.gz https://github.com/tektoncd/cli/releases/download/v0.44.1/tkn_0.44.1_Linux_${RAW_ARCH}.tar.gz && tar -xzf /tmp/tkn.tar.gz -C ~/.local/bin tkn && rm /tmp/tkn.tar.gz && curl -Lo ~/.local/bin/cosign https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-${ARCH} && chmod +x ~/.local/bin/cosign"
+}
