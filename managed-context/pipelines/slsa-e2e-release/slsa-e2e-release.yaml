@@ -97,7 +97,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/verify-access-to-resources/verify-access-to-resources.yaml
       params:
@@ -122,7 +122,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/collect-data/collect-data.yaml
       params:
@@ -147,7 +147,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
         - name: orasOptions
           value: $(params.orasOptions)
       runAfter:
@@ -159,7 +159,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/collect-task-params/collect-task-params.yaml
       params:
@@ -176,7 +176,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
         - name: ociStorage
           value: $(params.ociStorage)
         - name: sourceDataArtifact
@@ -194,7 +194,7 @@ spec:
         - name: dataPath
           value: "$(tasks.collect-data.results.data)"
         - name: schema
-          value: https://github.com/konflux-ci/release-service-catalog/raw/development/schema/dataKeys.json
+          value: https://github.com/konflux-ci/release-service-catalog/raw/37605e1fe41aae2794cd853e05f65dd52f3b4307/schema/dataKeys.json
         - name: systems
           value: |
             [
@@ -211,13 +211,13 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       taskRef:
         params:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/check-data-keys/check-data-keys.yaml
         resolver: git
@@ -230,7 +230,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/reduce-snapshot/reduce-snapshot.yaml
       params:
@@ -257,7 +257,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       runAfter:
         - collect-data
     - name: apply-mapping
@@ -291,7 +291,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       runAfter:
         - reduce-snapshot
     - name: verify-conforma
@@ -300,14 +300,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            # TODO: revert to $(params.verify_ec_task_git_url) after upstream fix for
-            # sourceDataArtifact param lands in conforma/cli
-            value: https://github.com/arewm/slsa-konflux-example
+            value: $(params.demoTasksGitUrl)
           - name: revision
-            # Hardcoded to bypass operator-injected revision from ec-defaults configmap
-            # which pins to a conforma/cli commit SHA not present in this repo.
-            # TODO: revert to $(params.verify_ec_task_git_revision) after upstream fix
-            value: main
+            value: $(params.demoTasksGitRevision)
           - name: pathInRepo
             value: "managed-context/tasks/verify-conforma/0.1/verify-conforma-vsa.yaml"
       params:
@@ -353,7 +348,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       runAfter:
         - apply-mapping
         - collect-task-params
@@ -369,7 +364,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/push-snapshot/push-snapshot.yaml
       params:
@@ -392,7 +387,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       runAfter:
         - verify-conforma
         - check-data-keys
@@ -449,7 +444,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/collect-registry-token-secret/collect-registry-token-secret.yaml
       params:
@@ -468,7 +463,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       runAfter:
         - push-snapshot
     - name: make-repo-public
@@ -483,7 +478,7 @@ spec:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/make-repo-public/make-repo-public.yaml
       params:
@@ -506,7 +501,7 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       runAfter:
         - collect-registry-token-secret
         - push-snapshot
@@ -530,14 +525,14 @@ spec:
         - name: taskGitUrl
           value: "https://github.com/konflux-ci/release-service-catalog"
         - name: taskGitRevision
-          value: "development"
+          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
       taskRef:
         resolver: "git"
         params:
           - name: url
             value: https://github.com/konflux-ci/release-service-catalog
           - name: revision
-            value: development
+            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
           - name: pathInRepo
             value: tasks/managed/update-cr-status/update-cr-status.yaml
       runAfter:
