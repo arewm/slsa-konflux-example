@@ -116,4 +116,5 @@ exec "$CLI" opa test \
     "$POLICY_LIB_PATH/lib" \
     "$POLICY_LIB_PATH/release/lib" \
     policy/custom/slsa_source_verification \
+    policy/custom/sbom_required \
     "$@"
