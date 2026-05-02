@@ -40,7 +40,7 @@ spec:
       description: >-
         Signing key for VSA predicates. Must be a k8s:// or file:// reference.
         Example: k8s://namespace/secret-name
-      default: "k8s://slsa-e2e-managed-tenant/release-signing-key"
+      default: "k8s://managed-tenant/release-signing-key"
 
     - name: VSA_TYPE
       type: string
