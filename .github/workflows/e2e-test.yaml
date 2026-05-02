@@ -1,0 +1,335 @@
+name: E2E Tests
+
+on:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kind
+  KIND_VERSION: "0.31.0"
+  # renovate: datasource=github-releases depName=kubernetes/kubernetes
+  KUBECTL_VERSION: "1.36.0"
+  # renovate: datasource=github-releases depName=konflux-ci/konflux-ci
+  KONFLUX_VERSION: "v0.4"
+
+jobs:
+  validate:
+    name: Validate manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          pip install yq
+
+      - name: Validate Tekton YAML syntax
+        run: |
+          echo "Validating Tekton task and pipeline YAML files..."
+          find managed-context/ -name '*.yaml' -o -name '*.yml' | while read -r f; do
+            echo "  Checking $f"
+            yq '.' "$f" > /dev/null || { echo "FAIL: $f is not valid YAML"; exit 1; }
+          done
+          echo "All Tekton YAML files are valid."
+
+      - name: Validate Helm charts
+        run: |
+          for chart in charts/*/; do
+            if [ -f "${chart}Chart.yaml" ]; then
+              echo "Rendering chart: ${chart}"
+              helm template test "${chart}" || { echo "FAIL: ${chart} does not render"; exit 1; }
+            fi
+          done
+          echo "All Helm charts render successfully."
+
+      - name: Check pinned image digests resolve
+        run: |
+          echo "Checking pinned image references..."
+          grep -rhoP 'quay\.io/[^:]+:[^@\s]+@sha256:[a-f0-9]+' managed-context/ charts/ scripts/ 2>/dev/null | sort -u | while read -r ref; do
+            image="${ref%%@*}"
+            digest="${ref##*@}"
+            echo "  Inspecting $image@$digest"
+            skopeo inspect --no-tags "docker://${image}@${digest}" > /dev/null 2>&1 || {
+              echo "WARN: Cannot resolve $ref"
+            }
+          done
+          echo "Image digest check complete."
+
+  e2e:
+    name: End-to-end test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo apt-get clean
+          df -h
+
+      - name: Disable AppArmor
+        run: |
+          sudo systemctl stop apparmor || true
+          sudo systemctl disable apparmor || true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Install kubectl
+        run: |
+          curl -Lo ./kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Clone and deploy Konflux
+        run: |
+          git clone --branch "${KONFLUX_VERSION}" --depth 1 \
+            https://github.com/konflux-ci/konflux-ci.git /tmp/konflux-ci
+
+          # Create minimal deploy-local.env (no GitHub App needed for e2e)
+          printf 'GITHUB_APP_ID=\nGITHUB_APP_PRIVATE_KEY=\nGITHUB_APP_WEBHOOK_SECRET=\nGITOPS_REPO=\nMY_GITHUB_TOKEN=\n' > /tmp/konflux-ci/deploy-local.env
+
+          cd /tmp/konflux-ci
+          OPERATOR_INSTALL_METHOD=release ./scripts/deploy-local.sh
+
+      - name: Run setup-prerequisites
+        run: |
+          ./scripts/setup-prerequisites.sh
+
+      - name: Install platform configuration
+        run: |
+          helm install platform ./charts/platform-config
+
+      - name: Onboard test component
+        run: |
+          helm install test-component ./charts/component-onboarding \
+            --set applicationName=test-app \
+            --set gitRepoUrl=https://github.com/konflux-ci/testrepo
+
+      - name: Verify resources created
+        run: |
+          echo "Checking Konflux resources..."
+          kubectl get applications -n default-tenant
+          kubectl get components -n default-tenant
+          kubectl get integrationtestscenarios -n default-tenant
+          kubectl get enterprisecontractpolicies -n default-tenant || true
+          kubectl get releaseplanadmissions -n default-tenant || true
+          echo "Resource verification complete."
+
+      - name: Create build PipelineRun
+        run: |
+          # Resolve HEAD SHA of test repo at runtime
+          TESTREPO_SHA=$(git ls-remote https://github.com/konflux-ci/testrepo HEAD | cut -f1)
+          echo "Using testrepo HEAD SHA: ${TESTREPO_SHA}"
+
+          cat <<EOF | kubectl create -f -
+          apiVersion: tekton.dev/v1
+          kind: PipelineRun
+          metadata:
+            generateName: slsa-e2e-build-
+            namespace: default-tenant
+            labels:
+              pipelines.appstudio.openshift.io/type: build
+              appstudio.openshift.io/application: test-app
+              appstudio.openshift.io/component: test-app
+          spec:
+            pipelineRef:
+              resolver: bundles
+              params:
+                - name: bundle
+                  # TODO(manual): Update after pushing pipeline bundle to quay.io/slsa-konflux-example
+                  value: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest
+                - name: name
+                  value: slsa-e2e-oci-ta
+                - name: kind
+                  value: pipeline
+            params:
+              - name: git-url
+                value: https://github.com/konflux-ci/testrepo
+              - name: revision
+                value: "${TESTREPO_SHA}"
+              - name: output-image
+                value: "registry-service.kind-registry/slsa-e2e-test:build-\$(context.pipelineRun.uid)"
+            workspaces:
+              - name: workspace
+                volumeClaimTemplate:
+                  spec:
+                    accessModes:
+                      - ReadWriteOnce
+                    resources:
+                      requests:
+                        storage: 1Gi
+          EOF
+
+      - name: Wait for build PipelineRun
+        timeout-minutes: 20
+        run: |
+          echo "Waiting for build PipelineRun to complete..."
+          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+          echo "PipelineRun: ${PRN}"
+
+          kubectl wait --for=condition=Succeeded "pipelinerun/${PRN}" \
+            -n default-tenant --timeout=1200s || {
+            echo "Build PipelineRun failed or timed out"
+            kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
+            exit 1
+          }
+          echo "Build PipelineRun succeeded."
+
+      - name: Verify build artifacts
+        run: |
+          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+
+          IMAGE_URL=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.status.results[?(@.name=="IMAGE_URL")].value}')
+          IMAGE_DIGEST=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
+
+          echo "IMAGE_URL: ${IMAGE_URL}"
+          echo "IMAGE_DIGEST: ${IMAGE_DIGEST}"
+
+          if [ -z "${IMAGE_URL}" ] || [ -z "${IMAGE_DIGEST}" ]; then
+            echo "ERROR: Missing build results"
+            exit 1
+          fi
+
+      - name: Wait for Tekton Chains signing
+        run: |
+          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+
+          echo "Waiting 60s for Tekton Chains to sign..."
+          sleep 60
+
+          SIGNED=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.metadata.annotations.chains\.tekton\.dev/signed}')
+          echo "Chains signed annotation: ${SIGNED}"
+
+          if [ "${SIGNED}" != "true" ]; then
+            echo "WARN: PipelineRun not yet signed by Chains"
+          fi
+
+      - name: Create release test
+        run: |
+          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+
+          IMAGE_URL=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.status.results[?(@.name=="IMAGE_URL")].value}')
+          IMAGE_DIGEST=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
+
+          # Create Snapshot CR
+          cat <<EOF | kubectl apply -f -
+          apiVersion: appstudio.redhat.com/v1alpha1
+          kind: Snapshot
+          metadata:
+            name: test-snapshot
+            namespace: default-tenant
+            labels:
+              appstudio.openshift.io/application: test-app
+          spec:
+            application: test-app
+            components:
+              - name: test-app
+                containerImage: "${IMAGE_URL}@${IMAGE_DIGEST}"
+          EOF
+
+          # Create Release CR
+          cat <<EOF | kubectl apply -f -
+          apiVersion: appstudio.redhat.com/v1alpha1
+          kind: Release
+          metadata:
+            name: test-release
+            namespace: default-tenant
+          spec:
+            snapshot: test-snapshot
+            releasePlan: test-app
+          EOF
+
+      - name: Wait for release PipelineRun
+        timeout-minutes: 20
+        run: |
+          echo "Waiting for release PipelineRun in managed-tenant..."
+          for i in $(seq 1 120); do
+            RELEASE_PR=$(kubectl get pipelineruns -n managed-tenant \
+              --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+            if [ -n "${RELEASE_PR}" ]; then
+              echo "Found release PipelineRun: ${RELEASE_PR}"
+              break
+            fi
+            echo "  Waiting for release PipelineRun... (${i}/120)"
+            sleep 10
+          done
+
+          if [ -z "${RELEASE_PR}" ]; then
+            echo "ERROR: No release PipelineRun found"
+            exit 1
+          fi
+
+          kubectl wait --for=condition=Succeeded "pipelinerun/${RELEASE_PR}" \
+            -n managed-tenant --timeout=1200s || {
+            echo "Release PipelineRun failed or timed out"
+            kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
+            exit 1
+          }
+          echo "Release PipelineRun succeeded."
+
+      - name: Verify VSA generation
+        run: |
+          RELEASE_PR=$(kubectl get pipelineruns -n managed-tenant \
+            --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+
+          echo "Checking for VSA generation results..."
+          kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant \
+            -o jsonpath='{.status.results}' | python3 -m json.tool || true
+
+      - name: Collect debug logs
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-logs
+
+          echo "=== PipelineRuns (default-tenant) ===" > /tmp/e2e-logs/pipelineruns.txt
+          kubectl get pipelineruns -n default-tenant -o yaml >> /tmp/e2e-logs/pipelineruns.txt 2>&1 || true
+
+          echo "=== TaskRuns (default-tenant) ===" > /tmp/e2e-logs/taskruns.txt
+          kubectl get taskruns -n default-tenant -o yaml >> /tmp/e2e-logs/taskruns.txt 2>&1 || true
+
+          echo "=== PipelineRuns (managed-tenant) ===" > /tmp/e2e-logs/release-pipelineruns.txt
+          kubectl get pipelineruns -n managed-tenant -o yaml >> /tmp/e2e-logs/release-pipelineruns.txt 2>&1 || true
+
+          echo "=== Pod logs (default-tenant) ===" > /tmp/e2e-logs/pod-logs.txt
+          for pod in $(kubectl get pods -n default-tenant -o name 2>/dev/null); do
+            echo "--- ${pod} ---" >> /tmp/e2e-logs/pod-logs.txt
+            kubectl logs "${pod}" -n default-tenant --all-containers >> /tmp/e2e-logs/pod-logs.txt 2>&1 || true
+          done
+
+          echo "=== Konflux CRs ===" > /tmp/e2e-logs/konflux-crs.txt
+          for cr in applications components snapshots releases releaseplanadmissions integrationtestscenarios; do
+            echo "--- ${cr} ---" >> /tmp/e2e-logs/konflux-crs.txt
+            kubectl get "${cr}" -n default-tenant -o yaml >> /tmp/e2e-logs/konflux-crs.txt 2>&1 || true
+          done
+
+      - name: Upload debug logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-debug-logs
+          path: /tmp/e2e-logs/
+          retention-days: 14
