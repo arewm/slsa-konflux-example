@@ -7,6 +7,16 @@ If you are not familiar with Konflux, it is an open source, cloud-native softwar
 
 After you complete the prerequisites, this repository walks you through configuring a Konflux tenant, onboarding a component, and releasing it with full policy compliance. Along the way, we show how Konflux applies guidance from SLSA's tracks.
 
+### SLSA E2E Stage Coverage
+
+| Stage | Coverage | SLSA Level | Key Components |
+|-------|----------|------------|----------------|
+| Source | Covered | L2-L3 (via source-tool) | `verify-source` task, `slsa_source_verification.rego` |
+| Build | Covered | L3 (Tekton Chains) | `slsa-e2e-oci-ta` pipeline, pod isolation, namespace separation |
+| Verification | Covered | Conforma + custom policies | `verify-conforma`, `attach-vsa`, `rule_data.yml` |
+| Publication | Covered | Pipeline-gated | `push-snapshot` gated by `verify-conforma` |
+| Use | Covered | OCI-native VSA distribution | `cosign verify-attestation` |
+
 ## Table of Contents
 
 - [Pre-requisites](#pre-requisites)
@@ -27,6 +37,9 @@ After you complete the prerequisites, this repository walks you through configur
 - [Releasing Your Component](#releasing-your-component)
 - [Understanding the Policy](#understanding-the-policy)
   - [Demonstrating Policy Enforcement](#demonstrating-policy-enforcement)
+- [SLSA Source Track](#slsa-source-track)
+- [Consumer Verification](#consumer-verification)
+- [Optional SLSA Tracks](#optional-slsa-tracks)
 - [Next Steps](#next-steps)
 
 ## Pre-requisites
@@ -36,13 +49,19 @@ All commands in this guide assume you are in the root directory of the slsa-konf
 To explore SLSA with Konflux, you need a running instance. The simplest way is the [konflux-ci](https://github.com/konflux-ci/konflux-ci) deployment script:
 
 ```bash
-# Clone the konflux-ci repository
-git clone https://github.com/konflux-ci/konflux-ci.git
+# Clone the konflux-ci repository (pinned to tested release)
+git clone --branch v0.4 https://github.com/konflux-ci/konflux-ci.git
 cd konflux-ci
 
-# Deploy Konflux operator with default configuration
+# The Konflux operator now requires a configuration file
+cp scripts/deploy-local.env.template scripts/deploy-local.env
+# Edit deploy-local.env with your GitHub App credentials
+
+# Deploy Konflux operator
 ./scripts/deploy-local.sh
 ```
+
+**Tested with:** konflux-ci/konflux-ci v0.4
 
 This script creates a Kind cluster, deploys the Konflux operator, creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev), and configures webhooks for Pipelines as Code.
 
@@ -789,6 +808,95 @@ After capturing the results, revert the policy:
 kubectl patch enterprisecontractpolicy ec-policy -n managed-tenant \
   --type=json -p '[{"op": "remove", "path": "/spec/sources/0/ruleData"}]'
 ```
+
+## SLSA Source Track
+
+The SLSA Source Track is implemented using the [source-tool](https://github.com/slsa-framework/source-tool) from the SLSA Framework, integrated into Konflux via the `verify-source` trusted task.
+
+**How it works:**
+
+1. **Source policy definition** — Repository owners define source policies in [source-policies](https://github.com/slsa-framework/source-policies) specifying the target SLSA Source Level (e.g., L3 for protected branches with code review). See the [source-test-repo policy](https://github.com/arewm/source-policies/commit/3eda298) for an example.
+
+2. **Build-time verification** — The `verify-source` task runs during the build pipeline, invoking source-tool to verify the git repository against its policy. It emits `SLSA_SOURCE_LEVEL_ACHIEVED` (e.g., `SLSA_SOURCE_LEVEL_2`) as a task result.
+
+3. **Provenance embedding** — Tekton Chains captures all task results, including the source level, in the signed SLSA build provenance attestation.
+
+4. **Release-time enforcement** — At release time, the custom `slsa_source_verification.rego` policy verifies:
+   - `verify-source` ran for all git materials in the provenance
+   - The achieved level meets the configured minimum (`slsa_source_min_level`, default `"2"`)
+   - The URL and revision match what `git-clone` actually cloned
+
+5. **VSA inclusion** — The `attach-vsa` task extracts the minimum source level from the build provenance and includes `SLSA_SOURCE_LEVEL_N` in the release VSA's `verifiedLevels` array.
+
+For a walkthrough of the source track in action, see the [1-2-Step presentation](https://slides.arewm.com/presentations/2026-02-19-the-1-2-step/).
+
+## Consumer Verification
+
+Released artifacts include signed Verification Summary Attestations (VSAs) that consumers can use to verify the artifact meets SLSA requirements before use.
+
+**Fetching and verifying VSAs:**
+
+```bash
+# List all attestations attached to a released image
+cosign tree <registry>/<image>:<tag>
+
+# Verify the SLSA VSA with the release signing public key
+cosign verify-attestation \
+  --key <public-key-or-url> \
+  --type https://slsa.dev/verification_summary/v1 \
+  --insecure-ignore-tlog \
+  <registry>/<image>:<tag>
+
+# Download and inspect the VSA predicate
+cosign download attestation <registry>/<image>:<tag> \
+  --predicate-type https://slsa.dev/verification_summary/v1 | jq '.payload | @base64d | fromjson | .predicate'
+```
+
+**Example VSA predicate:**
+
+```json
+{
+  "verifier": { "id": "https://conforma.dev/cli" },
+  "timeVerified": "2026-01-15T10:30:00Z",
+  "resourceUri": "quay.io/example/app@sha256:abc123...",
+  "policy": { "uri": "oci::quay.io/conforma/release-policy:konflux" },
+  "verificationResult": "PASSED",
+  "verifiedLevels": ["SLSA_BUILD_LEVEL_3", "SLSA_SOURCE_LEVEL_2"]
+}
+```
+
+**Fail-safe verification:**
+
+```bash
+cosign verify-attestation \
+  --key <public-key> \
+  --type https://slsa.dev/verification_summary/v1 \
+  --insecure-ignore-tlog \
+  <image> || { echo "VSA verification failed!"; exit 1; }
+```
+
+**VSA distribution:** VSAs are stored as OCI attestations co-located with the artifact image. Consumers retrieve them using `cosign`. Attestations are cryptographically signed with the release signing key. Transparency log (Rekor) integration is not used in this demo but is recommended for production deployments to add public auditability.
+
+For a standalone example of the verification flow, see [mild-to-wild-samples](https://github.com/arewm/mild-to-wild-samples).
+
+### Publication Gate
+
+The release pipeline prevents publication of artifacts that fail policy verification:
+
+1. `verify-conforma` evaluates all policies against the build provenance
+2. If verification fails, the pipeline stops — `push-snapshot` never runs
+3. Only after successful verification are artifacts published to the destination registry
+4. `attach-vsa` then signs and attaches VSAs to the published images
+
+This ordering is enforced by pipeline task dependencies (`runAfter` constraints).
+
+## Optional SLSA Tracks
+
+**Build Environment Track:** The SLSA BuildEnv track is a draft specification. Konflux provides build environment isolation through Kubernetes pod execution, but formal BuildEnv attestations are not currently generated. BuildEnv support can be added incrementally by introducing additional tasks in the build pipeline that generate BuildEnv attestations.
+
+**Dependency Track:** The SLSA Dependency track is a draft specification. The build pipeline prefetches dependencies and generates SBOMs, but does not currently collect or verify per-dependency VSAs. Similar to BuildEnv, dependency-level attestations can be added incrementally through additional build pipeline tasks.
+
+**VEX/Triage:** Vulnerability triage is currently handled via CVE leeway thresholds configured in `rule_data.yml` (critical: 6 days, high: 29 days). Formal VEX attestation generation would be implemented as a separate task (not as part of Conforma policy evaluation), generating VEX documents that are attached to artifacts alongside other attestations.
 
 ## Next Steps
 
