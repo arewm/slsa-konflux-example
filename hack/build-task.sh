@@ -172,6 +172,19 @@ fi
 retry tkn bundle push "${ANNOTATION_FLAGS[@]}" "$task_bundle" -f "${TASK_YAML}" | \
     save_ref "$task_bundle" "$OUTPUT_TASK_BUNDLE_LIST"
 
+# Tag with BUILD_TAG (timestamp) for immutable reference
+build_tag_bundle="${task_bundle%:*}:${BUILD_TAG}"
+echo ""
+echo "Tagging as ${BUILD_TAG}: $build_tag_bundle"
+
+if command -v skopeo >/dev/null 2>&1; then
+    retry skopeo copy "docker://${task_bundle}" "docker://${build_tag_bundle}"
+elif command -v crane >/dev/null 2>&1; then
+    retry crane copy "${task_bundle}" "${build_tag_bundle}"
+else
+    echo "Warning: Neither skopeo nor crane found. Skipping timestamp tag." 1>&2
+fi
+
 echo ""
 echo "Task bundle pushed successfully!"
 echo "Bundle reference saved to: $OUTPUT_TASK_BUNDLE_LIST"
