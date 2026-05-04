@@ -19,7 +19,7 @@ data:
     default-pipeline-name: slsa-e2e-oci-ta
     pipelines:
     - name: slsa-e2e-oci-ta
-      bundle: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest@sha256:ddb04c99c69247fc61709d76759bd16df4d8b227419acbe80cde73ad743e7bb1
+      bundle: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest@sha256:eeabc14dcb31a3c7f7aba773d456dff5fea87c7c219bb20c86abf1ede13f0ffd
       description: "SLSA end-to-end pipeline with configurable security scanners"
       detail: |
         This pipeline demonstrates SLSA compliance with trusted artifacts and configurable security scanning.
