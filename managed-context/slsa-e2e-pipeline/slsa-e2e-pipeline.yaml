@@ -336,7 +336,7 @@ spec:
         - name: name
           value: trivy-sbom-scan
         - name: bundle
-          value: quay.io/slsa-konflux-example/task-trivy-sbom-scan:0.1@sha256:af4cf3e6335b80405e8e6fbcdfa0a4d58f63a788ae7130ed8f69938c8dd3c9bc
+          value: quay.io/slsa-konflux-example/task-trivy-sbom-scan:0.1
         - name: kind
           value: task
     when:
