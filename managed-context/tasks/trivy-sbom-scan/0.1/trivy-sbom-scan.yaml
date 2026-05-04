@@ -116,7 +116,10 @@ spec:
             digest="${imagewithouttag}@${arch_sha}"
 
             echo "Running trivy on $arch image manifest..."
-            trivy image --format json --scanners vuln --quiet "$digest" > "trivy-report-$arch.json" 2>/dev/null || true
+            if ! trivy image --format json --scanners vuln "$digest" > "trivy-report-$arch.json"; then
+              echo "ERROR: trivy scan failed for $arch ($digest)"
+              exit 1
+            fi
 
             if [ -n "$digests_processed" ]; then
               digests_processed="${digests_processed}, \"$arch_sha\""
@@ -139,8 +142,8 @@ spec:
               run_trivy_on_arch "$arch"
               ;;
             *)
-              echo "Error: Unsupported architecture: '$arch'"
-              exit 0
+              echo "ERROR: Unsupported architecture: '$arch'"
+              exit 1
               ;;
           esac
         else
