@@ -21,5 +21,11 @@ spec:
 {{- end }}
       config:
         include:
-          - '@slsa{{ .Values.release.policy.slsaBuildLevel | default "3" }}'
+{{- if .Values.release.policy.policyCollections }}
+{{- range .Values.release.policy.policyCollections }}
+          - '@{{ . }}'
+{{- end }}
+{{- else }}
+          - '@slsa3'
+{{- end }}
           - '@slsa_source'
