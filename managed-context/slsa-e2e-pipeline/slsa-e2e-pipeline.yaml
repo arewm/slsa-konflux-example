@@ -336,7 +336,7 @@ spec:
         - name: name
           value: trivy-sbom-scan
         - name: bundle
-          value: quay.io/slsa-konflux-example/task-trivy-sbom-scan:0.1  # TODO(manual): pin to @sha256:<digest> after pushing to quay.io/slsa-konflux-example
+          value: quay.io/slsa-konflux-example/task-trivy-sbom-scan:0.1@sha256:3c08f9b33465710db34c2e3e23d9b2e7bacac86eb37489837937833812634b22
         - name: kind
           value: task
     when:

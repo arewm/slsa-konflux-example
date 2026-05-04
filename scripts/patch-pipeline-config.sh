@@ -19,7 +19,7 @@ data:
     default-pipeline-name: slsa-e2e-oci-ta
     pipelines:
     - name: slsa-e2e-oci-ta
-      bundle: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest  # TODO(manual): pin to @sha256:<digest> after pushing to quay.io/slsa-konflux-example
+      bundle: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest@sha256:ddb04c99c69247fc61709d76759bd16df4d8b227419acbe80cde73ad743e7bb1
 '
 
 # # Remove owner references to prevent operator reconciliation
