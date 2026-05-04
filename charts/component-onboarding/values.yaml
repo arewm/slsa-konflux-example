@@ -18,6 +18,12 @@ namespace: "default-tenant"
 # Optional: Git revision/branch to track (defaults to main)
 gitRevision: "main"
 
+# Integration test configuration
+integrationTest:
+  # Pinned revision of konflux-ci/build-definitions for the enterprise-contract pipeline
+  # renovate: datasource=git-refs depName=https://github.com/konflux-ci/build-definitions
+  revision: "890952c6ab97e0c3a6bd927909925db542650398"
+
 # Optional: Context directory in the repository
 gitContext: "."
 
