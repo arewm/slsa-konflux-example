@@ -97,6 +97,12 @@ release:
     #   Set to: oci::<registry>/<namespace>/slsa-e2e-data-acceptable-bundles:latest
     acceptableBundles: "oci::quay.io/slsa-konflux-example/slsa-e2e-data-acceptable-bundles:latest@sha256:345fd55acb1b478a693c7271594c3de5816ed16c38c139385a616a1dcc3544ac"
 
+    # SLSA build level for EC policy collection (@slsa1, @slsa2, @slsa3)
+    # Level 1: Basic provenance
+    # Level 2: Hosted build service
+    # Level 3: Hardened builds
+    slsaBuildLevel: "1"
+
     # SLSA source level requirement (1, 2, or 3)
     # Level 1: Version controlled (default if not specified in policy data)
     # Level 2: Version controlled + verified history

@@ -5,7 +5,7 @@ metadata:
   name: {{ .Values.release.policyName }}
   namespace: {{ .Values.release.targetNamespace }}
 spec:
-  description: SLSA3 policy for Konflux builds
+  description: SLSA policy for Konflux builds
   publicKey: 'k8s://tekton-pipelines/public-key'
   sources:
     - name: Release Policies
@@ -21,5 +21,5 @@ spec:
 {{- end }}
       config:
         include:
-          - '@slsa3'
+          - '@slsa{{ .Values.release.policy.slsaBuildLevel | default "3" }}'
           - '@slsa_source'
