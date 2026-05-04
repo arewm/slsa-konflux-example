@@ -10,6 +10,7 @@ package slsa_source_verification
 import rego.v1
 
 import data.lib
+import data.lib.rule_data
 import data.lib.tekton
 
 # METADATA
@@ -182,7 +183,7 @@ deny contains result if {
 # Get the minimum required level from rule data
 # Default to "1" if we don't find it
 _slsa_source_min_level := min_level if {
-  min_level := lib.rule_data("slsa_source_min_level")
+  min_level := rule_data.get("slsa_source_min_level")
   to_number(min_level)
 } else := "1"
 
