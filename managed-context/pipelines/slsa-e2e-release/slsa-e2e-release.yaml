@@ -85,10 +85,10 @@ spec:
       # to avoid tar extraction errors, we need to specify a subdirectory
       # inside the volume.
       default: "/var/workdir/release"
-    - name: makeRepoPublic
-      description: Whether to collect registry token and make the destination repo public
+    - name: baseImageBuilderId
+      description: Expected builder ID in base image provenance for dependency level verification
       type: string
-      default: "false"
+      default: "https://tekton.dev/chains/v2"
   tasks:
     - name: verify-access-to-resources
       taskRef:
@@ -431,79 +431,9 @@ spec:
           value: "trusted-ca"
         - name: CA_TRUST_CONFIG_MAP_KEY
           value: "ca-bundle.crt"
+        - name: BASE_IMAGE_BUILDER_ID
+          value: "$(params.baseImageBuilderId)"
       runAfter:
-        - push-snapshot
-    - name: collect-registry-token-secret
-      when:
-        - input: "$(params.makeRepoPublic)"
-          operator: in
-          values: ["true"]
-      taskRef:
-        resolver: "git"
-        params:
-          - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
-          - name: revision
-            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
-          - name: pathInRepo
-            value: tasks/managed/collect-registry-token-secret/collect-registry-token-secret.yaml
-      params:
-        - name: orasOptions
-          value: $(params.orasOptions)
-        - name: dataPath
-          value: "$(tasks.collect-data.results.data)"
-        - name: ociStorage
-          value: $(params.ociStorage)
-        - name: sourceDataArtifact
-          value: "$(tasks.collect-data.results.sourceDataArtifact)"
-        - name: dataDir
-          value: $(params.dataDir)
-        - name: trustedArtifactsDebug
-          value: "$(params.trustedArtifactsDebug)"
-        - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
-        - name: taskGitRevision
-          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
-      runAfter:
-        - push-snapshot
-    - name: make-repo-public
-      retries: 5
-      when:
-        - input: "$(tasks.collect-registry-token-secret.results.registrySecret)"
-          operator: notin
-          values: [""]
-      taskRef:
-        resolver: "git"
-        params:
-          - name: url
-            value: https://github.com/konflux-ci/release-service-catalog
-          - name: revision
-            value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
-          - name: pathInRepo
-            value: tasks/managed/make-repo-public/make-repo-public.yaml
-      params:
-        - name: orasOptions
-          value: $(params.orasOptions)
-        - name: dataPath
-          value: "$(tasks.collect-data.results.data)"
-        - name: snapshotPath
-          value: "$(tasks.collect-data.results.snapshotSpec)"
-        - name: registrySecret
-          value: $(tasks.collect-registry-token-secret.results.registrySecret)
-        - name: ociStorage
-          value: $(params.ociStorage)
-        - name: sourceDataArtifact
-          value: "$(tasks.push-snapshot.results.sourceDataArtifact)"
-        - name: dataDir
-          value: $(params.dataDir)
-        - name: trustedArtifactsDebug
-          value: "$(params.trustedArtifactsDebug)"
-        - name: taskGitUrl
-          value: "https://github.com/konflux-ci/release-service-catalog"
-        - name: taskGitRevision
-          value: "37605e1fe41aae2794cd853e05f65dd52f3b4307"  # release-service-catalog development branch, pinned
-      runAfter:
-        - collect-registry-token-secret
         - push-snapshot
     - name: update-cr-status
       params:

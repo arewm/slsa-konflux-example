@@ -1,0 +1,12 @@
+{{- if .Values.release.baseImageVerification.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: base-image-verification-keys
+  namespace: {{ .Values.release.targetNamespace }}
+data:
+  release.pub: |
+{{ .Files.Get .Values.release.baseImageVerification.releaseKeyFile | indent 4 }}
+  provenance.pub: |
+{{ .Files.Get .Values.release.baseImageVerification.provenanceKeyFile | indent 4 }}
+{{- end }}
