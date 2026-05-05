@@ -106,10 +106,12 @@ collection (`slsa_source_verification.rego`), which enforces four rules:
 
 For Festoji, we achieve SLSA Source Level 1 (version controlled) because the
 repository has not been enrolled with
-[source-tool](https://github.com/slsa-framework/source-tool). The policy's
-`slsa_source_min_level` is configurable, so raising the bar is a policy change —
-not a pipeline change. In Part 2, we show how enrolling a repository with
-source-tool raises the source level to L3.
+[source-tool](https://github.com/slsa-framework/source-tool). The default
+`slsa_source_min_level` in `rule_data.yml` is `"2"`, but the component-onboarding
+chart defaults to `"1"` (via `slsaSourceMinLevel` in `values.yaml`), which is
+what gets templated into the `EnterpriseContractPolicy` resource. Raising the bar
+is a policy change — not a pipeline change. In Part 2, we show how enrolling a
+repository with source-tool raises the source level to L3.
 
 ## Build Provenance — Automatic With Tekton Chains
 
@@ -141,8 +143,12 @@ drawn from three Conforma collections:
 |---|---|---|
 | `@minimal` | SBOM existence, CVE scanning, base image validation | 23 |
 | `@slsa3` | SLSA Build L3 provenance and builder verification | 8 |
-| `@slsa_source` | Custom source track verification | 14 |
-| *(foundation)* | Attestation format, task validation, config checks | 7 |
+| `@slsa_source` | Custom source track verification | 4 |
+| *(foundation)* | Attestation format, task validation, config checks | 17 |
+
+The 52 rules shown above apply per architecture. Since Festoji builds for two
+architectures (amd64 and arm64), the release pipeline evaluates 52 × 2 = 104
+total rules across both platform-specific manifests.
 
 ### SBOM Validation
 
