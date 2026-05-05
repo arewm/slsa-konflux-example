@@ -71,9 +71,28 @@ release:
   # Default: production
   environment: "production"
 
-  # Enterprise Contract policy name
-  # IMPORTANT: Must match platform-config chart installation
+  # Enterprise Contract policy name (created per-application in this chart)
+  # Defaults to "{applicationName}-ec-policy" when applicationName is set
   policyName: "ec-policy"
+
+  # Enterprise Contract policy configuration
+  policy:
+    # Policy OCI bundle reference
+    policyBundle: "quay.io/conforma/release-policy:konflux@sha256:1b296a925b4021f4b4959ea289596925a8735540e554f3ba7754a651731a216f"
+
+    # Policy data source (defaults to managed-context/policies/ec-policy-data/data in repositoryUrl)
+    policyData: ""
+
+    # Acceptable bundles data source
+    acceptableBundles: "oci::quay.io/slsa-konflux-example/slsa-e2e-data-acceptable-bundles:latest@sha256:345fd55acb1b478a693c7271594c3de5816ed16c38c139385a616a1dcc3544ac"
+
+    # EC policy collections to include
+    policyCollections:
+      - "minimal"
+      - "slsa3"
+
+    # SLSA source level requirement (1, 2, or 3)
+    slsaSourceMinLevel: "1"
 
   # Service account for release pipeline
   # IMPORTANT: Must match platform-config chart installation

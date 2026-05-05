@@ -5,7 +5,7 @@ metadata:
   name: {{ .Values.release.policyName }}
   namespace: {{ .Values.release.targetNamespace }}
 spec:
-  description: SLSA policy for Konflux builds
+  description: SLSA policy for {{ .Values.applicationName }}
   publicKey: 'k8s://tekton-pipelines/public-key'
   sources:
     - name: Release Policies
