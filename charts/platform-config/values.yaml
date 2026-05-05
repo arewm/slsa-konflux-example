@@ -130,3 +130,17 @@ signing:
   # WARNING: Setting to true will regenerate keys, invalidating all previous signatures
   # Default: false (preserve existing keys)
   regenerateKeys: false
+
+# Trusted CA bundle configuration for internal registries with self-signed certificates
+# When enabled, a pre-install Job extracts the registry's CA certificate via openssl
+# and creates config-trusted-cabundle ConfigMaps that Tekton Pipelines automatically
+# mounts into task pods for TLS verification
+trustedCABundle:
+  # Enable auto-detection and creation of CA bundle ConfigMaps
+  # Required when using an internal registry with self-signed TLS certificates (e.g., KinD)
+  # Not needed for production clusters using publicly-trusted CAs
+  enabled: false
+
+  # Registry host:port to connect to for certificate extraction
+  # Defaults to the hostname from release.trustedArtifacts.ociStorage with port 443
+  registryEndpoint: ""

@@ -1,0 +1,36 @@
+{{- if .Values.trustedCABundle.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cabundle-installer
+  namespace: {{ .Values.namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cabundle-installer
+subjects:
+- kind: ServiceAccount
+  name: cabundle-installer
+  namespace: {{ .Values.release.targetNamespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cabundle-installer
+  namespace: {{ .Values.release.targetNamespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cabundle-installer
+subjects:
+- kind: ServiceAccount
+  name: cabundle-installer
+  namespace: {{ .Values.release.targetNamespace }}
+{{- end }}
