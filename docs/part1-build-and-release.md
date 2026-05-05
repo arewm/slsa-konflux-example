@@ -23,6 +23,22 @@ helm install platform ./charts/platform-config
 
 This creates the EnterpriseContractPolicy for SLSA3 validation, RoleBindings for admin access, ServiceAccounts for release pipeline execution, and signing keys for release attestation signing.
 
+The chart auto-generates a cosign key pair for release signing (VSAs, attestations). Base image verification keys are separate — they verify the provenance and release signatures of parent images used in your builds, enabling dependency level tracking in VSAs. To enable base image verification:
+
+```bash
+helm install platform ./charts/platform-config \
+  --set release.baseImageVerification.enabled=true
+```
+
+The default keys in `charts/platform-config/keys/` verify Red Hat UBI base images. If your base images come from a different source, replace the key files before installing:
+
+```bash
+cp /path/to/your-provenance.pub charts/platform-config/keys/base-image-provenance.pub
+cp /path/to/your-release.pub charts/platform-config/keys/base-image-release.pub
+```
+
+The `builderId` value should also match your upstream's builder (default: `https://tekton.dev/chains/v2`).
+
 ### Onboard Festoji
 
 Before onboarding, fork the festoji repository to your GitHub account. Navigate to https://github.com/lcarva/festoji and click Fork. Select your user or organization and create the fork. Note your fork URL for the installation step: `https://github.com/ORGANIZATION/festoji`.
@@ -270,15 +286,20 @@ oras discover ${REPO}@${IMAGE_DIGEST} --insecure
 oras discover ${REPO}@${MANIFEST_DIGEST} --insecure
 ```
 
-Example output showing the artifact tree:
+<details>
+<summary>Example oras discover output showing OCI referrers</summary>
 
 ```
-127.0.0.1:5001/default-tenant/festoji@sha256:fe4b4eb7...
-├── application/vnd.trivy.report+json
-│   └── sha256:614b0d13...
-└── application/vnd.redhat.clair-report+json
-    └── sha256:a3cc9dbd...
+127.0.0.1:5001/konflux-festoji@sha256:db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc
+└── application/sarif+json
+    └── sha256:b585d36a4b4f13f33d4785fe5ee704c0f93df825cfc12115eaac753c3ff7c3f5
+        └── [annotations]
+            └── org.opencontainers.image.created: "2026-05-04T17:18:59Z"
 ```
+
+This shows SARIF security scan results attached using the OCI Referrers API. Vulnerability reports from Trivy and Clair are also attached to platform-specific manifests using this API.
+
+</details>
 
 Pull specific artifacts:
 
@@ -325,17 +346,78 @@ To view the attestations attached to your built image, use `cosign` (requires co
 
 ```bash
 # View the attestation tree (shows provenance, signatures, and SBOM)
-cosign tree localhost:5001/default-tenant/festoji@${IMAGE_DIGEST}
+cosign tree localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+  --allow-insecure-registry
 
 # Download and view the SLSA provenance attestation
 cosign download attestation localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+  --allow-insecure-registry \
   | jq -r '.payload' | base64 -d | jq .
 
 # View key provenance fields
 cosign download attestation localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+  --allow-insecure-registry \
   | jq -r '.payload' | base64 -d \
   | jq '.predicateType, .predicate.buildType, .predicate.builder.id'
 ```
+
+<details>
+<summary>Example cosign tree output showing build artifacts</summary>
+
+```
+📦 Supply Chain Security Related artifacts for an image: localhost:5001/konflux-festoji:on-pr-a2492764734683d70e8c6aee37361d2da0e939e2
+└── 📦 SBOMs for an image tag: localhost:5001/konflux-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.sbom
+   └── 🍒 sha256:585ef32fe083901059e02567ca027d3d18c04ba0639fd23f99cbf7887a049c63
+└── 💾 Attestations for an image tag: localhost:5001/konflux-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.att
+   └── 🍒 sha256:e4e9c7da7486a9b89db1002ca1b3006ca80d91329c820d209f1365f75f3c5301
+└── 🔐 Signatures for an image tag: localhost:5001/konflux-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.sig
+   └── 🍒 sha256:bb1b505be6b7390d2f227b9b0628ed27c030d9be264967fbd9c11576de50b2d7
+└── 🔗 application/sarif+json artifacts via OCI referrer: localhost:5001/konflux-festoji@sha256:b585d36a4b4f13f33d4785fe5ee704c0f93df825cfc12115eaac753c3ff7c3f5
+   └── 🍒 sha256:da808faebf6f41071851c9a8e62a73aa0a0c4b2f733cb9ad9a1ea447d0f9e08b
+```
+
+This shows the complete supply chain artifact tree for the build image, including SBOM, SLSA provenance attestation, cryptographic signature, and SARIF security scan results.
+
+</details>
+
+<details>
+<summary>Example SLSA provenance attestation structure</summary>
+
+```json
+{
+  "_type": "https://in-toto.io/Statement/v0.1",
+  "predicateType": "https://slsa.dev/provenance/v0.2",
+  "subject": [
+    {
+      "name": "registry-service.kind-registry/konflux-festoji",
+      "digest": { "sha256": "1d36eeae5e3a630a6521920b296fb8b8496891d833b0322b155471c3f654b39e" }
+    },
+    {
+      "name": "registry-service.kind-registry/konflux-festoji",
+      "digest": { "sha256": "db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc" }
+    }
+  ],
+  "predicate": {
+    "builder": { "id": "https://tekton.dev/chains/v2" },
+    "buildType": "tekton.dev/v1/PipelineRun",
+    "metadata": {
+      "buildFinishedOn": "2026-05-04T17:19:07Z",
+      "buildStartedOn": "2026-05-04T17:17:34Z",
+      "completeness": { "environment": false, "materials": false, "parameters": false },
+      "reproducible": false
+    }
+  }
+}
+```
+
+Key fields in the provenance:
+- **predicateType**: SLSA provenance v0.2 specification
+- **subject**: Multi-platform artifacts (image index and platform-specific manifest)
+- **builder.id**: Tekton Chains v2 generated this provenance
+- **buildType**: Tekton PipelineRun produced the artifacts
+- **metadata**: Build timing and completeness information
+
+</details>
 
 The provenance attestation includes the predicate type (`https://slsa.dev/provenance/v0.2`), build type (`tekton.dev/v1/PipelineRun`), builder ID (the Tekton Chains instance that generated the provenance), build configuration (all tasks executed, their parameters, and results), and materials (source code commit, base images, and other inputs).
 
@@ -345,7 +427,8 @@ The buildah task automatically generates an SBOM during the container build proc
 
 ```bash
 # Download the SBOM (generated by buildah during build)
-cosign download sbom localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} > sbom.json
+cosign download sbom localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+  --allow-insecure-registry > sbom.json
 
 # View SBOM metadata
 jq '.SPDXID, .spdxVersion, .creationInfo' sbom.json
@@ -353,6 +436,24 @@ jq '.SPDXID, .spdxVersion, .creationInfo' sbom.json
 # View packages included in the image
 jq '.packages[] | {name: .name, version: .versionInfo}' sbom.json
 ```
+
+<details>
+<summary>Example SBOM structure (SPDX 2.3)</summary>
+
+```json
+{
+  "spdxVersion": "SPDX-2.3",
+  "name": "registry-service.kind-registry/konflux-festoji@sha256:db12fe...",
+  "dataLicense": "CC0-1.0",
+  "packages": [
+    { "name": "konflux-festoji", "SPDXID": "SPDXRef-image-index", "versionInfo": "on-pr-a249..." },
+    { "name": "konflux-festoji_arm64", "SPDXID": "SPDXRef-image-konflux-festoji-6a84...", "versionInfo": "on-pr-a249..." }
+  ],
+  "total_packages": 2
+}
+```
+
+</details>
 
 The SBOM is in SPDX 2.3 format and includes all packages and dependencies in the container image, SHA256 checksums for verification, license information, and package relationships.
 
@@ -388,6 +489,41 @@ kubectl get pipelineruns -n default-tenant -l test.appstudio.openshift.io/scenar
 kubectl get pipelineruns -n default-tenant -l test.appstudio.openshift.io/scenario=policy-push
 ```
 
+<details>
+<summary>Example snapshot integration test results</summary>
+
+```json
+{
+  "conditions": [
+    {
+      "lastTransitionTime": "2026-05-04T19:14:21Z",
+      "message": "Snapshot integration status condition is finished since all testing pipelines completed",
+      "reason": "Finished",
+      "status": "True",
+      "type": "AppStudioIntegrationStatus"
+    },
+    {
+      "lastTransitionTime": "2026-05-04T19:14:21Z",
+      "message": "All Integration Pipeline tests passed",
+      "reason": "Passed",
+      "status": "True",
+      "type": "AppStudioTestSucceeded"
+    },
+    {
+      "lastTransitionTime": "2026-05-04T19:14:22Z",
+      "message": "The Snapshot was auto-released",
+      "reason": "AutoReleased",
+      "status": "True",
+      "type": "AutoReleased"
+    }
+  ]
+}
+```
+
+When all integration tests pass, the snapshot transitions to `AppStudioTestSucceeded`, and the `AutoReleased` condition indicates the system created a Release resource to trigger the release pipeline.
+
+</details>
+
 Source verification at level 2+ only applies to push builds and releases. source-tool only generates provenance for pushes to protected branches, not PRs.
 
 ## Release Pipeline
@@ -412,6 +548,23 @@ kubectl get releases -n default-tenant
 kubectl get pipelineruns -n managed-tenant -l release.appstudio.openshift.io/name=<RELEASE_NAME>
 ```
 
+<details>
+<summary>Example release status</summary>
+
+```
+$ kubectl get releases -n default-tenant
+NAME                                        STATUS      COMPLETED
+festoji-dep-level-test-6kncj                Succeeded   2026-05-05T14:20:08Z
+festoji-retest-cqjj8-tnfjc                  Succeeded   2026-05-04T19:16:50Z
+source-test-repo-cve-exception-test-wnh84   Succeeded   2026-05-05T16:44:22Z
+source-test-repo-cve-leeway-test-tjdj6      Succeeded   2026-05-05T15:45:16Z
+source-test-repo-release-cjdp5              Succeeded   2026-05-05T15:25:34Z
+```
+
+The `Succeeded` status indicates the release pipeline completed successfully, including policy verification, image publishing, and VSA attachment.
+
+</details>
+
 The release pipeline executes several tasks in the managed namespace:
 
 1. **verify-conforma**: Re-evaluates all policies against the build provenance using Conforma
@@ -423,20 +576,44 @@ The `verify-conforma` task validates that all SLSA Build L3 requirements are met
 
 After policy verification succeeds, the `push-snapshot` task publishes the built image to the destination registry specified in the mapping. The `attach-vsa` task then generates VSAs containing the verification results and signs them with the release signing key.
 
-Example VSA predicate:
+<details>
+<summary>Example VSA for festoji (SLSA_BUILD_LEVEL_3, SLSA_SOURCE_LEVEL_1)</summary>
 
 ```json
 {
-  "verifier": { "id": "https://conforma.dev/cli" },
-  "timeVerified": "2026-01-15T10:30:00Z",
-  "resourceUri": "localhost:5001/default-tenant/festoji@sha256:abc123...",
-  "policy": { "uri": "oci::quay.io/enterprise-contract/ec-release-policy:konflux" },
-  "verificationResult": "PASSED",
-  "verifiedLevels": ["SLSA_BUILD_LEVEL_3", "SLSA_SOURCE_LEVEL_1"]
+  "_type": "https://in-toto.io/Statement/v0.1",
+  "predicateType": "https://slsa.dev/verification_summary/v1",
+  "subject": [
+    {
+      "name": "registry-service.kind-registry/released-festoji",
+      "digest": { "sha256": "db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc" }
+    }
+  ],
+  "predicate": {
+    "dependencyLevels": null,
+    "policy": {
+      "digest": {},
+      "uri": "oci::quay.io/conforma/release-policy:konflux@sha256:1b296a925b4021f4b4959ea289596925a8735540e554f3ba7754a651731a216f"
+    },
+    "resourceUri": "registry-service.kind-registry/konflux-festoji@sha256:db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc",
+    "slsaVersion": "1.0",
+    "timeVerified": "2026-05-05T14:19:42.51639462Z",
+    "verificationResult": "PASSED",
+    "verifiedLevels": [
+      "SLSA_BUILD_LEVEL_3",
+      "SLSA_SOURCE_LEVEL_1"
+    ],
+    "verifier": {
+      "id": "https://conforma.dev/cli",
+      "version": { "ec": "v0.9.25" }
+    }
+  }
 }
 ```
 
 For Festoji, the VSA includes `SLSA_BUILD_LEVEL_3` because Konflux achieves Build L3 by default, and `SLSA_SOURCE_LEVEL_1` because Festoji is not enrolled with source-tool and relies only on version control.
+
+</details>
 
 Get the released image URL from the Release status:
 
@@ -465,14 +642,51 @@ View released images and their attestations:
 
 ```bash
 # Check released image artifacts
-cosign tree ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}
+cosign tree ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+  --allow-insecure-registry
 
-# Download attestation from released image
+# Download attestations from released image
 cosign download attestation ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+  --allow-insecure-registry \
   | jq -r '.payload' | base64 -d | jq .
 ```
 
-The released image includes the same attestations as the build image, ensuring provenance is preserved through the release process.
+<details>
+<summary>Comparing build and released image artifacts</summary>
+
+**Build image** (before release):
+```
+📦 Supply Chain Security Related artifacts for an image: localhost:5001/konflux-festoji:on-pr-a2492764734683d70e8c6aee37361d2da0e939e2
+└── 📦 SBOMs for an image tag: localhost:5001/konflux-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.sbom
+   └── 🍒 sha256:585ef32fe083901059e02567ca027d3d18c04ba0639fd23f99cbf7887a049c63
+└── 💾 Attestations for an image tag: localhost:5001/konflux-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.att
+   └── 🍒 sha256:e4e9c7da7486a9b89db1002ca1b3006ca80d91329c820d209f1365f75f3c5301
+└── 🔐 Signatures for an image tag: localhost:5001/konflux-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.sig
+   └── 🍒 sha256:bb1b505be6b7390d2f227b9b0628ed27c030d9be264967fbd9c11576de50b2d7
+└── 🔗 application/sarif+json artifacts via OCI referrer: localhost:5001/konflux-festoji@sha256:b585d36a4b4f13f33d4785fe5ee704c0f93df825cfc12115eaac753c3ff7c3f5
+   └── 🍒 sha256:da808faebf6f41071851c9a8e62a73aa0a0c4b2f733cb9ad9a1ea447d0f9e08b
+```
+
+**Released image** (after release pipeline):
+```
+📦 Supply Chain Security Related artifacts for an image: localhost:5001/released-festoji:a2492764734683d70e8c6aee37361d2da0e939e2
+└── 💾 Attestations for an image tag: localhost:5001/released-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.att
+   ├── 🍒 sha256:e4e9c7da7486a9b89db1002ca1b3006ca80d91329c820d209f1365f75f3c5301
+   ├── 🍒 sha256:d0012b6ddc586b6202d7a844a4548f41e3d9a63bf441cc42016c5d1ef79e7aa0
+   ├── 🍒 sha256:83a29c3a4d3a3a6e44e388fdc0f749b6d42f1f2b418da41bc72a2474d10ed708
+   ├── 🍒 sha256:de5d8419a799dccc67ec385b2606153d8a02043f76f8358c68d0ac5ccc88834c
+   └── 🍒 sha256:4590097676a3464c3ccf67a2dbdcdf975e6cf812eb79f44547393358eee4d4b7
+└── 🔐 Signatures for an image tag: localhost:5001/released-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.sig
+   └── 🍒 sha256:bb1b505be6b7390d2f227b9b0628ed27c030d9be264967fbd9c11576de50b2d7
+└── 📦 SBOMs for an image tag: localhost:5001/released-festoji:sha256-db12fe166b18e3d881ebbef06569d0bce385541dac3a177379bf5c7b58f9c3bc.sbom
+   └── 🍒 sha256:585ef32fe083901059e02567ca027d3d18c04ba0639fd23f99cbf7887a049c63
+```
+
+The released image has **multiple attestations** (5 vs 1) because the release pipeline adds Verification Summary Attestations (VSAs) generated by the `attach-vsa` task. The SBOM and signatures are preserved from the build. If an image is released multiple times, each release adds an additional VSA attestation.
+
+</details>
+
+The released image includes the same SBOM and signatures as the build image, ensuring provenance is preserved through the release process. Additionally, the release pipeline adds Verification Summary Attestations (VSAs) that certify the image passed policy validation.
 
 You can manually create a Release to re-release an existing Snapshot without rebuilding. This is useful for testing the release pipeline without rebuilding, re-releasing after fixing release pipeline configuration, or releasing an older snapshot:
 
@@ -497,7 +711,7 @@ Released artifacts include signed Verification Summary Attestations (VSAs) that 
 List all attestations attached to a released image:
 
 ```bash
-cosign tree <registry>/<image>:<tag>
+cosign tree <registry>/<image>:<tag> --allow-insecure-registry
 ```
 
 Verify the SLSA VSA with the release signing public key:
@@ -507,6 +721,7 @@ cosign verify-attestation \
   --key <public-key-or-url> \
   --type https://slsa.dev/verification_summary/v1 \
   --insecure-ignore-tlog \
+  --allow-insecure-registry \
   <registry>/<image>:<tag>
 ```
 
@@ -514,8 +729,12 @@ Download and inspect the VSA predicate:
 
 ```bash
 cosign download attestation <registry>/<image>:<tag> \
-  --predicate-type https://slsa.dev/verification_summary/v1 | jq '.payload | @base64d | fromjson | .predicate'
+  --predicate-type https://slsa.dev/verification_summary/v1 \
+  --allow-insecure-registry \
+  | jq '.payload | @base64d | fromjson | .predicate'
 ```
+
+Note: If an image has been released multiple times, `cosign download attestation` will return multiple VSA attestations (one per release). Use `--predicate-type` to filter for VSAs, and use `jq` to select a specific VSA if needed. The most recent VSA reflects the latest policy evaluation.
 
 For fail-safe verification:
 
@@ -548,7 +767,7 @@ The policy contains three key components.
 
 **Policy Rules** (`spec.sources.policy`):
 
-- **Base policy**: `oci::quay.io/enterprise-contract/ec-release-policy:konflux`
+- **Base policy**: `oci::quay.io/conforma/release-policy:konflux`
 - Includes the `@slsa3` policy collection which validates SLSA Build Level 3 requirements, trusted task verification (all tasks from approved bundles), signature validation, and build isolation and provenance completeness
 
 **Policy Data** (`spec.sources.data`):
