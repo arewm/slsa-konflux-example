@@ -151,6 +151,27 @@ The task queries the source-tool attestation service for provenance matching the
 
 The task sets a result `SLSA_SOURCE_LEVEL_ACHIEVED` with a value like `SLSA_SOURCE_LEVEL_3`.
 
+<details>
+<summary>verify-source task results from source-test-repo build</summary>
+
+```
+SLSA_SOURCE_LEVEL_ACHIEVED: SLSA_SOURCE_LEVEL_3
+TEST_OUTPUT: {
+  "result": "PASSED",
+  "timestamp": "2026-05-05T15:12:25Z",
+  "namespace": "slsa-source-verification",
+  "successes": 2,
+  "failures": 0,
+  "warnings": 0,
+  "tests": [
+    {"name": "vsa-fetch", "result": "PASSED"},
+    {"name": "slsa-level-determination", "result": "PASSED"}
+  ]
+}
+```
+
+</details>
+
 ### Policy Enforcement
 
 At release time, the `verify-conforma` task in the managed namespace checks the source verification results against the policy. The custom policy `managed-context/policies/ec-policy-data/policy/custom/slsa_source_verification/slsa_source_verification.rego` in the `@slsa_source` collection enforces four rules:
@@ -241,30 +262,46 @@ deny contains result if {
 
 After successful verification, the `attach-vsa` task generates a Verification Summary Attestation (VSA) that includes the source verification results. For source-test-repo, this shows `SLSA_SOURCE_LEVEL_3`:
 
+<details>
+<summary>Source-test-repo VSA (SLSA_BUILD_LEVEL_3, SLSA_SOURCE_LEVEL_3)</summary>
+
 ```json
 {
+  "_type": "https://in-toto.io/Statement/v0.1",
   "predicateType": "https://slsa.dev/verification_summary/v1",
-  "subject": [...],
+  "subject": [
+    {
+      "name": "registry-service.kind-registry/released-source-test-repo",
+      "digest": { "sha256": "b48e59ec0dc3281a33f0305a7b7fe0eb86f4c14f5597970c4a607cf811898e34" }
+    }
+  ],
   "predicate": {
-    "verifier": {
-      "id": "https://github.com/arewm/slsa-konflux-example"
-    },
-    "timeVerified": "2026-05-05T12:34:56Z",
+    "dependencyLevels": null,
     "policy": {
-      "uri": "quay.io/conforma/release-policy:konflux@sha256:...",
-      "digest": {"sha256": "..."}
+      "digest": {},
+      "uri": "oci::quay.io/conforma/release-policy:konflux@sha256:1b296a925b4021f4b4959ea289596925a8735540e554f3ba7754a651731a216f"
     },
-    "verificationResult": "PASSED",
+    "resourceUri": "registry-service.kind-registry/konflux-source-test-repo@sha256:b48e59ec0dc3281a33f0305a7b7fe0eb86f4c14f5597970c4a607cf811898e34",
     "slsaVersion": "1.0",
-    "resourceUri": "registry-service.kind-registry/released-source-test-repo@sha256:...",
-    "metadata": {
-      "source_level": "SLSA_SOURCE_LEVEL_3"
+    "timeVerified": "2026-05-05T16:43:56.520817389Z",
+    "verificationResult": "PASSED",
+    "verifiedLevels": [
+      "SLSA_BUILD_LEVEL_3",
+      "SLSA_SOURCE_LEVEL_3"
+    ],
+    "verifier": {
+      "id": "https://conforma.dev/cli",
+      "version": { "ec": "v0.9.25" }
     }
   }
 }
 ```
 
+</details>
+
 Compare this to Festoji, which shows `SLSA_SOURCE_LEVEL_1` because it is not enrolled with source-tool and relies only on version control.
+
+**Note**: Images released multiple times will have multiple VSAs attached (one per release). The most recent VSA reflects the latest policy evaluation.
 
 **Note on PR builds**: Pull request builds always achieve Level 1, regardless of enrollment, because PR branches are not protected. Only builds from protected branches (typically main) can achieve Levels 2 or 3.
 
@@ -318,14 +355,38 @@ Sometimes a CVE requires an exception. Perhaps the affected code path is not rea
 
 The syntax uses a term-specific identifier: `cve.cve_blockers:CVE-ID`. Conforma's rule scoring system gives this a score of 100 (exact match), which overrides the `@minimal` collection's inclusion of `cve.cve_blockers` (score 10).
 
-Add the exception by patching the ECP on-cluster:
+Add the exception using `helm upgrade` with the `release.policy.excludeRules` value:
 
 ```bash
-kubectl patch enterprisecontractpolicy source-test-repo-ec-policy -n managed-tenant \
-  --type=json -p '[
-    {"op": "add", "path": "/spec/sources/0/config/exclude",
-     "value": ["cve.cve_blockers:CVE-2026-4878"]}
-  ]'
+helm upgrade source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  --set release.policy.excludeRules[0]="cve.cve_blockers:CVE-2026-4878"
+```
+
+For multiple CVE exceptions:
+
+```bash
+helm upgrade source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  --set release.policy.excludeRules[0]="cve.cve_blockers:CVE-2026-4878" \
+  --set release.policy.excludeRules[1]="cve.cve_blockers:CVE-2026-5432"
+```
+
+Alternatively, use a values file:
+
+```yaml
+# source-test-repo-cve-exceptions.yaml
+release:
+  policy:
+    excludeRules:
+      - "cve.cve_blockers:CVE-2026-4878"
+      - "cve.cve_blockers:CVE-2026-5432"
+```
+
+```bash
+helm upgrade source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  -f source-test-repo-cve-exceptions.yaml
 ```
 
 The resulting ECP includes the exclusion:
@@ -349,7 +410,40 @@ This completely disables the CVE blocker for CVE-2026-4878. Releases will procee
 
 Permanent exceptions are often the wrong tool. CVE fixes may be delayed but not indefinitely unavailable. Volatile configuration provides time-bounded, auditable exceptions that expire automatically.
 
-The ECP supports a `volatileConfig` section that mirrors the regular `config` structure but adds `effectiveUntil` and `reference` fields:
+The ECP supports a `volatileConfig` section that mirrors the regular `config` structure but adds `effectiveUntil` and `reference` fields.
+
+Add a time-bounded exception using `helm upgrade` with the `release.policy.volatileExcludes` value:
+
+```bash
+helm upgrade source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  --set 'release.policy.volatileExcludes[0].value=cve.cve_blockers:CVE-2026-4878' \
+  --set 'release.policy.volatileExcludes[0].effectiveUntil=2026-06-01T00:00:00Z' \
+  --set 'release.policy.volatileExcludes[0].reference=https://issues.example.com/VULN-1234'
+```
+
+For multiple volatile exceptions, use a values file:
+
+```yaml
+# source-test-repo-volatile-cves.yaml
+release:
+  policy:
+    volatileExcludes:
+      - value: "cve.cve_blockers:CVE-2026-4878"
+        effectiveUntil: "2026-06-01T00:00:00Z"
+        reference: "https://issues.example.com/VULN-1234"
+      - value: "cve.cve_blockers:CVE-2026-5432"
+        effectiveUntil: "2026-07-15T00:00:00Z"
+        reference: "https://issues.example.com/VULN-5678"
+```
+
+```bash
+helm upgrade source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  -f source-test-repo-volatile-cves.yaml
+```
+
+The resulting ECP includes the volatile exclusion:
 
 ```yaml
 spec:
@@ -473,15 +567,17 @@ spec:
       value: "true"
 ```
 
-**2. Component annotation** (per-application):
+**2. Component annotation** (per-application, recommended):
 
-```yaml
-apiVersion: appstudio.redhat.com/v1alpha1
-kind: Component
-metadata:
-  annotations:
-    build.appstudio.openshift.io/hermetic: "true"
+Use `helm install` or `helm upgrade` with the `hermetic` value:
+
+```bash
+helm upgrade source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  --set hermetic=true
 ```
+
+This sets the `build.appstudio.openshift.io/hermetic` annotation on the Component resource.
 
 **3. Pipeline default** (cluster-wide):
 
@@ -546,7 +642,7 @@ helm install source-test-repo ./charts/component-onboarding \
   --set applicationName=source-test-repo \
   --set gitRepoUrl=https://github.com/spork-madness/source-test-repo \
   --set release.policy.slsaSourceMinLevel="3" \
-  --set-string 'component.annotations.build\.appstudio\.openshift\.io/hermetic=true'
+  --set hermetic=true
 ```
 
 **3. Monitor the build**:
@@ -596,11 +692,14 @@ After the release completes, the VSA is attached to the released image:
 
 ```bash
 cosign download attestation \
-  registry-service.kind-registry/released-source-test-repo@sha256:... \
+  --allow-insecure-registry \
+  localhost:5001/released-source-test-repo@sha256:b48e59ec0dc3281a33f0305a7b7fe0eb86f4c14f5597970c4a607cf811898e34 \
   | jq '.payload | @base64d | fromjson | select(.predicateType == "https://slsa.dev/verification_summary/v1")'
 ```
 
-The VSA includes source level verification, CVE scan results, and hermetic build confirmation.
+The VSA includes source level verification (`SLSA_SOURCE_LEVEL_3`), CVE scan results, and hermetic build confirmation (`SLSA_BUILD_LEVEL_3`).
+
+**Note**: The image digest will differ for your build. Use `kubectl get release <release-name> -n default-tenant -o jsonpath='{.status.artifacts[0].target}'` to find the released image reference.
 
 ## What's Next
 
