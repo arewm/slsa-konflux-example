@@ -11,6 +11,10 @@ applicationName: ""
 # Git repository URL for the component
 gitRepoUrl: ""
 
+# Optional: Enable hermetic builds (network isolation after dependency prefetch)
+# When true, adds the build.appstudio.openshift.io/hermetic annotation to the Component
+hermetic: false
+
 # Namespace configuration
 # IMPORTANT: These values must match the platform-config chart installation
 namespace: "default-tenant"
@@ -101,6 +105,18 @@ release:
 
     # SLSA source level requirement (1, 2, or 3)
     slsaSourceMinLevel: "1"
+
+    # Policy rules to exclude (e.g., per-CVE exceptions)
+    # Example: ["cve.cve_blockers:CVE-2026-4878"]
+    excludeRules: []
+
+    # Volatile (time-bounded) rule exclusions
+    # Example:
+    #   volatileExcludes:
+    #     - value: "cve.cve_blockers:CVE-2026-4878"
+    #       effectiveUntil: "2026-06-01T00:00:00Z"
+    #       reference: "https://issues.example.com/VULN-1234"
+    volatileExcludes: []
 
   # Service account for release pipeline
   # IMPORTANT: Must match platform-config chart installation

@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Values.namespace }}
   annotations:
     build.appstudio.openshift.io/request: "configure-pac"
+{{- if .Values.hermetic }}
+    build.appstudio.openshift.io/hermetic: "true"
+{{- end }}
 {{- if .Values.buildPipeline }}
     build.appstudio.openshift.io/pipeline: {{ .Values.buildPipeline | toJson | quote }}
 {{- end }}

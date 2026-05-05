@@ -29,3 +29,25 @@ spec:
           - '@slsa3'
 {{- end }}
           - '@slsa_source'
+{{- if .Values.release.policy.excludeRules }}
+        exclude:
+{{- range .Values.release.policy.excludeRules }}
+          - '{{ . }}'
+{{- end }}
+{{- end }}
+{{- if .Values.release.policy.volatileExcludes }}
+      volatileConfig:
+        exclude:
+{{- range .Values.release.policy.volatileExcludes }}
+          - value: '{{ .value }}'
+{{- if .effectiveOn }}
+            effectiveOn: '{{ .effectiveOn }}'
+{{- end }}
+{{- if .effectiveUntil }}
+            effectiveUntil: '{{ .effectiveUntil }}'
+{{- end }}
+{{- if .reference }}
+            reference: '{{ .reference }}'
+{{- end }}
+{{- end }}
+{{- end }}
