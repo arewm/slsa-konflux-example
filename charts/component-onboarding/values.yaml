@@ -11,10 +11,6 @@ applicationName: ""
 # Git repository URL for the component
 gitRepoUrl: ""
 
-# Optional: Enable hermetic builds (network isolation after dependency prefetch)
-# When true, adds the build.appstudio.openshift.io/hermetic annotation to the Component
-hermetic: false
-
 # Namespace configuration
 # IMPORTANT: These values must match the platform-config chart installation
 namespace: "default-tenant"

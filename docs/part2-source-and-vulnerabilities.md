@@ -554,46 +554,27 @@ npm ci --offline
 
 ### Configuration
 
-You can enable hermetic builds in three ways:
+Enable hermetic builds by changing the pipeline parameter defaults in your component's `.tekton/` PipelineRun definitions. The `hermetic` parameter enables network isolation, and `prefetch-input` tells the prefetch-dependencies task which package manager to use (e.g., `gomod` for Go, `pip` for Python).
 
-**1. PipelineRun parameter** (per-build):
-
-```yaml
-apiVersion: tekton.dev/v1
-kind: PipelineRun
-spec:
-  params:
-    - name: hermetic
-      value: "true"
-```
-
-**2. Component annotation** (per-application, recommended):
-
-Use `helm install` or `helm upgrade` with the `hermetic` value:
+Use `yq` to update the defaults in all `.tekton/` files:
 
 ```bash
-helm upgrade source-test-repo ./charts/component-onboarding \
-  --reuse-values \
-  --set hermetic=true
+for f in .tekton/*.yaml; do
+  yq -i '(.spec.pipelineSpec.params[] | select(.name == "hermetic")).default = "true"' "$f"
+  yq -i '(.spec.pipelineSpec.params[] | select(.name == "prefetch-input")).default = "gomod"' "$f"
+done
 ```
 
-This sets the `build.appstudio.openshift.io/hermetic` annotation on the Component resource.
+`yq` reformats the YAML, so the diff will show whitespace and line-wrapping changes beyond the two parameter values. Verify that only the intended defaults changed:
 
-**3. Pipeline default** (cluster-wide):
-
-Modify the pipeline definition to default `hermetic` to `"true"`:
-
-```yaml
-apiVersion: tekton.dev/v1
-kind: Pipeline
-spec:
-  params:
-    - name: hermetic
-      type: string
-      default: "true"
+```bash
+diff <(git show HEAD:.tekton/festoji-push.yaml | yq -o json) \
+     <(yq -o json .tekton/festoji-push.yaml)
 ```
 
-The Component annotation is the recommended approach for production. It documents the build requirements as part of the application metadata.
+Commit and push the change. PAC picks up the new defaults on the next build.
+
+On macOS, install `yq` with `brew install yq`.
 
 ### Policy Enforcement
 
@@ -635,23 +616,32 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-**2. Onboard to Konflux with Source Level 3 and hermetic builds**:
+**2. Onboard to Konflux with Source Level 3**:
 
 ```bash
 helm install source-test-repo ./charts/component-onboarding \
   --set applicationName=source-test-repo \
   --set gitRepoUrl=https://github.com/spork-madness/source-test-repo \
-  --set release.policy.slsaSourceMinLevel="3" \
-  --set hermetic=true
+  --set release.policy.slsaSourceMinLevel="3"
 ```
 
-**3. Monitor the build**:
+**3. Enable hermetic builds** (in your component's source repository):
+
+```bash
+for f in .tekton/*.yaml; do
+  yq -i '(.spec.pipelineSpec.params[] | select(.name == "hermetic")).default = "true"' "$f"
+  yq -i '(.spec.pipelineSpec.params[] | select(.name == "prefetch-input")).default = "gomod"' "$f"
+done
+git add .tekton/ && git commit -m "build: Enable hermetic builds" && git push
+```
+
+**4. Monitor the build**:
 
 ```bash
 kubectl get pipelineruns -n default-tenant -w
 ```
 
-**4. Check for CVEs and source verification**:
+**5. Check for CVEs and source verification**:
 
 After the build completes, inspect the attestations:
 
@@ -671,7 +661,7 @@ kubectl logs -n default-tenant \
   -l tekton.dev/pipelineTask=trivy-sbom-scan
 ```
 
-**5. Trigger a release**:
+**6. Trigger a release**:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -686,7 +676,7 @@ spec:
 EOF
 ```
 
-**6. Verify the VSA**:
+**7. Verify the VSA**:
 
 After the release completes, the VSA is attached to the released image:
 
