@@ -36,6 +36,22 @@ Trusted Artifacts store intermediate data as immutable OCI images, addressed by 
 
 This design makes tampering detectable: any modification changes the digest. It also scopes trust more narrowly. Because there is no shared volume, untrusted tasks cannot modify artifacts they never receive. Users can add custom tasks to their pipeline without undermining trust in the build output.
 
+## How This Achieves SLSA Build L3
+
+The properties above — task trust verification, artifact immutability, and signing key isolation — are the building blocks of [SLSA Build Level 3](https://slsa.dev/spec/v1.1/requirements). Specifically:
+
+**Hardened builds.** Each build runs in an isolated Kubernetes pod. Pods are ephemeral and do not share state with other builds. The build environment is defined by the pipeline and task definitions, not by ad-hoc commands.
+
+**Isolated signing.** Tekton Chains signs provenance in an observer namespace. The signing key is never accessible to the build pipeline. A compromised build cannot forge provenance for a different artifact.
+
+**Trusted task verification.** At release time, Conforma verifies that every task in the build came from an approved, digest-pinned bundle. This prevents a compromised pipeline from injecting unauthorized tasks that could exfiltrate secrets or swap artifacts.
+
+**Tamper-resistant artifacts.** Trusted Artifacts use content-addressable OCI storage between tasks. Any modification to intermediate artifacts changes the digest, breaking the chain and causing verification to fail.
+
+Together, these properties mean that an attacker who compromises a single build cannot affect other builds, cannot sign arbitrary artifacts, and cannot inject untrusted tasks without detection. This is the core guarantee of SLSA Build L3.
+
+For a walkthrough of these properties in practice, see [Part 1: Build and Release](part1-build-and-release.md).
+
 ## References
 
 - [Tekton Chains Documentation](https://tekton.dev/docs/chains/)
