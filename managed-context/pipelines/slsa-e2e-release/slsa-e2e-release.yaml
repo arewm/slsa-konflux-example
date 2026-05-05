@@ -57,13 +57,11 @@ spec:
       type: string
       description: The url to the git repo where the release-service-catalog tasks to be used are stored
       default: https://github.com/konflux-ci/release-service-catalog.git
-    - name: demoTasksGitUrl
+    - name: taskGitRevision
       type: string
-      description: The url to the git repo where custom demo release tasks are stored
-      default: https://github.com/arewm/slsa-konflux-example
-    - name: demoTasksGitRevision
-      type: string
-      description: The git revision to use for custom demo release tasks
+      description: >-
+        The git revision for tasks from the pipeline's own repo.
+        Injected by the release service from the pipeline's pipelineRef resolver params.
       default: main
     # The release service does not allow ociStorage to be set from the RPA, so customize this value in our local fork when running the e2e demo.
     # The serviceAccount running the release pipelineRun will need to have access to push to this registry.
@@ -266,9 +264,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.demoTasksGitUrl)
+            value: $(params.taskGitUrl)
           - name: revision
-            value: $(params.demoTasksGitRevision)
+            value: $(params.taskGitRevision)
           - name: pathInRepo
             value: managed-context/tasks/apply-mapping/apply-mapping.yaml
       params:
@@ -300,9 +298,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.demoTasksGitUrl)
+            value: $(params.taskGitUrl)
           - name: revision
-            value: $(params.demoTasksGitRevision)
+            value: $(params.taskGitRevision)
           - name: pathInRepo
             value: "managed-context/tasks/verify-conforma/0.1/verify-conforma-vsa.yaml"
       params:
@@ -403,9 +401,9 @@ spec:
         resolver: "git"
         params:
           - name: url
-            value: $(params.demoTasksGitUrl)
+            value: $(params.taskGitUrl)
           - name: revision
-            value: $(params.demoTasksGitRevision)
+            value: $(params.taskGitRevision)
           - name: pathInRepo
             value: "managed-context/tasks/attach-vsa/0.1/attach-vsa.yaml"
       params:
