@@ -35,6 +35,13 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 - [x] Remove custom `sbom_required.rego` (redundant with upstream `sbom.found` in `@minimal`)
 - [x] Migrate image references from `quay.io/arewm` to `quay.io/slsa-konflux-example`
 - [x] Set `slsaSourceMinLevel: "1"` override in EC policy ruleData
+- [x] Multi-component support (component-onboarding chart supports per-app EC policies)
+- [x] Source Track L3 demo (source-test-repo with source-tool enrollment)
+- [x] CVE management demo (leeway mechanism, per-CVE exceptions, volatile config)
+- [x] Per-application Enterprise Contract policies (different source levels per component)
+- [x] Restructure docs into Part 1 (Build L3, Festoji) and Part 2 (Source L3, CVE, hermetic)
+- [x] Move TRUSTING_ARTIFACTS.md to docs/ with Build L3 connection
+- [x] Blog post Part 2 content (source track, CVE management, hermetic builds)
 
 ---
 
@@ -42,7 +49,7 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 
 ### Open PR and Run CI
 
-- [ ] Open PR from `deploy-validation` branch
+- [ ] Open PR from current branch
 - [ ] Verify the `validate` job passes (YAML lint, Helm rendering, digest checks)
 - [ ] Trigger `e2e` workflow via `workflow_dispatch`
 - [ ] Fix any CI failures
@@ -59,58 +66,45 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 - [ ] Investigate proper mechanism for custom pipeline configuration (currently using scale-down workaround for `build-pipeline-config`)
 - [ ] Consider pinning Konflux operator to a specific commit SHA in CI
 
-### Fix README Table of Contents
-
-- [ ] Align ToC entries with actual section headers (`#slsa-source-track`, `#consumer-verification`, `#optional-slsa-tracks`)
-
 ---
 
 ## MEDIUM PRIORITY
 
-### Source Track (SLSA Source Level 2+)
+### Hermetic Build Documentation
 
-- [ ] **source-tool integration** — Use [source-tool](https://github.com/slsa-framework/source-tool) for source provenance verification (as demonstrated in the 1-2-step presentation)
-- [ ] **Raise `slsaSourceMinLevel` to 2** once verify-source task supports verified history
+- [ ] Document hermetic build configuration with prefetch-dependencies
+- [ ] Add hermetic build example to component-onboarding chart (annotation support)
+- [ ] Validate hermetic build end-to-end on Kind cluster
+
+### Chart Improvements
+
+- [ ] Add `excludeRules` support to component-onboarding chart template
+- [ ] Add `volatileConfig` support to component-onboarding chart template
+- [ ] Add hermetic build annotation support to Component template
 
 ### Build Track Documentation
 
-- [ ] Document hermetic build configuration and network isolation
 - [ ] Document vulnerability report retrieval (trivy and clair)
 - [ ] Document builder image verification and builder identity in provenance
-
-### Verification Track
-
-- [ ] **Policy: Build Requirements** — verify SLSA Build L3 provenance, hermetic flag, builder identity
-- [ ] **Policy: Security Scans** — vulnerability scan completion, severity thresholds
-- [ ] **Policy: Dependency Verification** — dependency attestations, approved sources
-- [ ] **Policy Exceptions** — volatileConfig examples, approval workflow, audit trail
-
-### Demonstration Scenarios
-
-- [ ] **CVE Scan Failure** — Use an image with known vulnerabilities to demonstrate trivy + EC blocking
-- [ ] **Policy Exception (volatileConfig)** — Demonstrate build fails without exception, passes with
-- [ ] **verify-source Enforcement** — Trigger build without verify-source, show policy failure
 
 ---
 
 ## LOW PRIORITY / FUTURE
 
-### Additional SLSA Tracks
+These are described in the blog post's "Future Directions" section as possibilities, not planned implementation work for this repository.
 
 - [ ] BuildEnv attestation tasks (builder images, OS, toolchain)
-- [ ] Dependency attestation tasks (resolved dependencies with provenance)
-- [ ] VEX generation task
+- [ ] Dependency levels in VSA (base image provenance verification — release signature works, provenance needs investigation)
+- [ ] VEX integration (requires upstream changes to preserve excluded CVE results in EC report)
 - [ ] Rekor transparency log integration (needs OIDC provider)
-- [ ] gittuf integration for SLSA Source L3 (tamper resistance, retention)
 
 ### Documentation
 
 - [ ] Create `docs/building-tasks-pipelines.md` (bundle versioning, pinning, hack/ scripts)
-- [ ] Add expected outputs for all README commands
-- [ ] Add troubleshooting sections for common errors
+- [ ] Add expected outputs for all doc commands
 - [ ] Document version compatibility matrix
 
 ### Blog Post
 
-- [ ] Draft SLSA E2E blog post for Konflux (modeled after Ampel post)
-- [ ] Review with SLSA community
+- [ ] Review blog draft with SLSA community
+- [ ] Finalize and submit
