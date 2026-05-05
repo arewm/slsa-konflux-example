@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Values.namespace }}
   annotations:
     build.appstudio.openshift.io/request: "configure-pac"
+{{- if .Values.buildPipeline }}
+    build.appstudio.openshift.io/pipeline: {{ .Values.buildPipeline | toJson | quote }}
+{{- end }}
 {{- if .Values.image.generateRepository }}
     image.redhat.com/generate: '{"visibility": "public"}'
 {{- end }}
