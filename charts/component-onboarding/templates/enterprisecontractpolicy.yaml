@@ -1,0 +1,53 @@
+{{- $policyData := .Values.release.policy.policyData | default (printf "%s//managed-context/policies/ec-policy-data/data" (.Values.repositoryUrl | replace "https://github.com/" "github.com/")) }}
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: EnterpriseContractPolicy
+metadata:
+  name: {{ .Values.release.policyName }}
+  namespace: {{ .Values.release.targetNamespace }}
+spec:
+  description: SLSA policy for {{ .Values.applicationName }}
+  publicKey: 'k8s://tekton-pipelines/public-key'
+  sources:
+    - name: Release Policies
+      policy:
+        - oci::{{ .Values.release.policy.policyBundle }}
+        - {{ .Values.repositoryUrl | replace "https://github.com/" "github.com/" }}//managed-context/policies/ec-policy-data/policy/custom/slsa_source_verification?ref={{ .Values.release.pipeline.revision | default "main" }}
+      data:
+        - {{ $policyData }}
+        - {{ .Values.release.policy.acceptableBundles }}
+{{- if .Values.release.policy.slsaSourceMinLevel }}
+      ruleData:
+        slsa_source_min_level: {{ .Values.release.policy.slsaSourceMinLevel | quote }}
+{{- end }}
+      config:
+        include:
+{{- if .Values.release.policy.policyCollections }}
+{{- range .Values.release.policy.policyCollections }}
+          - '@{{ . }}'
+{{- end }}
+{{- else }}
+          - '@slsa3'
+{{- end }}
+          - '@slsa_source'
+{{- if .Values.release.policy.excludeRules }}
+        exclude:
+{{- range .Values.release.policy.excludeRules }}
+          - '{{ . }}'
+{{- end }}
+{{- end }}
+{{- if .Values.release.policy.volatileExcludes }}
+      volatileConfig:
+        exclude:
+{{- range .Values.release.policy.volatileExcludes }}
+          - value: '{{ .value }}'
+{{- if .effectiveOn }}
+            effectiveOn: '{{ .effectiveOn }}'
+{{- end }}
+{{- if .effectiveUntil }}
+            effectiveUntil: '{{ .effectiveUntil }}'
+{{- end }}
+{{- if .reference }}
+            reference: '{{ .reference }}'
+{{- end }}
+{{- end }}
+{{- end }}

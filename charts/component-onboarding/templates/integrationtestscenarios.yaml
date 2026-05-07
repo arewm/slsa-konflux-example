@@ -2,7 +2,7 @@
 apiVersion: appstudio.redhat.com/v1beta2
 kind: IntegrationTestScenario
 metadata:
-  name: policy-pr
+  name: {{ .Values.applicationName }}-policy-pr
   namespace: {{ .Values.namespace }}
 spec:
   application: {{ .Values.applicationName }}
@@ -15,7 +15,7 @@ spec:
       - name: url
         value: https://github.com/konflux-ci/build-definitions
       - name: revision
-        value: renovate/ec
+        value: {{ .Values.integrationTest.revision }}
       - name: pathInRepo
         value: pipelines/enterprise-contract.yaml
   params:
@@ -26,12 +26,12 @@ spec:
     - name: STRICT
       value: "true"
     - name: EXTRA_RULE_DATA
-      value: "slsa_source_min_level=1"
+      value: "slsa_source_min_level={{ .Values.integrationTest.prSourceMinLevel | default "1" }}"
 ---
 apiVersion: appstudio.redhat.com/v1beta2
 kind: IntegrationTestScenario
 metadata:
-  name: policy-push
+  name: {{ .Values.applicationName }}-policy-push
   namespace: {{ .Values.namespace }}
 spec:
   application: {{ .Values.applicationName }}
@@ -44,7 +44,7 @@ spec:
       - name: url
         value: https://github.com/konflux-ci/build-definitions
       - name: revision
-        value: renovate/ec
+        value: {{ .Values.integrationTest.revision }}
       - name: pathInRepo
         value: pipelines/enterprise-contract.yaml
   params:

@@ -8,6 +8,6 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
-  resourceNames: ["release-signing-key"]
+  resourceNames: ["{{ .Values.signing.signingSecretName }}"]
   verbs: ["get"]
 {{- end }}

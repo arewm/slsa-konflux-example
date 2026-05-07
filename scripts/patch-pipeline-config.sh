@@ -1,14 +1,20 @@
 #!/bin/bash
 set -e
 
-echo "==> Patching build-pipeline-config to use only custom SLSA pipeline"
+echo "==> Patching build-pipeline-config to use custom SLSA pipeline"
 
-# Patch the ConfigMap data to replace all pipelines with just slsa-e2e-oci-ta
-# Using --field-manager to take ownership away from the operator
-kubectl patch configmap build-pipeline-config -n build-service \
-  --type=merge \
-  --field-manager=slsa-example-manager \
-  --patch '
+# The operator reconciles the ConfigMap faster than we can patch it, so we
+# scale down the operator, replace the ConfigMap, then scale back up.
+# Workaround for https://github.com/konflux-ci/konflux-ci/issues/6673
+
+echo "Scaling down Konflux operator..."
+kubectl scale deployment konflux-operator-controller-manager -n konflux-operator --replicas=0
+kubectl wait --for=jsonpath='{.status.availableReplicas}'=0 \
+  deployment/konflux-operator-controller-manager -n konflux-operator --timeout=30s 2>/dev/null || sleep 3
+
+echo "Replacing build-pipeline-config..."
+kubectl delete configmap build-pipeline-config -n build-service --ignore-not-found
+kubectl create -f - <<'MANIFEST'
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,19 +25,11 @@ data:
     default-pipeline-name: slsa-e2e-oci-ta
     pipelines:
     - name: slsa-e2e-oci-ta
-      bundle: quay.io/arewm/pipeline-slsa-e2e-oci-ta:latest
-'
+      bundle: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest@sha256:5b4594d16eb6242f1f22845753d7c7285a6b100296f0a1d971c9a5e87c9c9948
+MANIFEST
 
-# # Remove owner references to prevent operator reconciliation
-# echo "Removing owner references..."
-# kubectl patch configmap build-pipeline-config -n build-service \
-#   --type=json \
-#   -p='[{"op": "remove", "path": "/metadata/ownerReferences"}]' 2>/dev/null || echo "No owner references to remove"
-
-# # Remove the konflux owner label that triggers reconciliation
-# echo "Removing owner label..."
-# kubectl label configmap build-pipeline-config -n build-service \
-#   konflux.konflux-ci.dev/owner- 2>/dev/null || echo "No owner label to remove"
+echo "Scaling operator back up..."
+kubectl scale deployment konflux-operator-controller-manager -n konflux-operator --replicas=1
 
 echo ""
 echo "==> Successfully patched build-pipeline-config"

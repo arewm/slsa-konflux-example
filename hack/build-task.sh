@@ -108,9 +108,12 @@ task_version=$(yq e '.metadata.labels."app.kubernetes.io/version"' "$TASK_YAML")
 task_description=$(yq e '.spec.description' "$TASK_YAML" | head -n 1)
 
 repository=${TEST_REPO_NAME:-task-${task_name}}
-# Per ADR/0054: Use version as the tag (floating tag pattern)
-tag=${TEST_REPO_NAME:+${task_name}-}${task_version}
+# Primary tag: version-timestamp for immutable reference
+tag=${TEST_REPO_NAME:+${task_name}-}${task_version}-${BUILD_TAG}
 task_bundle=${REGISTRY}/${REGISTRY_NAMESPACE}/${repository}:${tag}
+# Floating tag: version only, updated on each push
+floating_tag=${TEST_REPO_NAME:+${task_name}-}${task_version}
+floating_bundle=${REGISTRY}/${REGISTRY_NAMESPACE}/${repository}:${floating_tag}
 
 # Build annotations for the bundle
 ANNOTATIONS=()
@@ -122,7 +125,7 @@ if [[ "${task_description}" != "null" ]]; then
     ANNOTATIONS+=("org.opencontainers.image.description=${task_description}")
 fi
 
-# Check if tag already exists (unless FORCE_PUSH=true)
+# Check if the immutable tag already exists (unless FORCE_PUSH=true)
 if [ "$FORCE_PUSH" != "true" ]; then
     echo "Checking if bundle tag already exists: $task_bundle"
     if command -v skopeo >/dev/null 2>&1; then
@@ -130,15 +133,7 @@ if [ "$FORCE_PUSH" != "true" ]; then
             echo ""
             echo "ERROR: Bundle tag already exists: $task_bundle"
             echo ""
-            echo "Per ADR/0054, version tags should not be overwritten unless necessary."
-            echo "This tag already exists in the registry."
-            echo ""
-            echo "If you need to:"
-            echo "  - Fix a bug in this version: Update the task and increment patch version (e.g., 0.1 → 0.1.1)"
-            echo "  - Make breaking changes: Increment minor version (e.g., 0.1 → 0.2)"
-            echo "  - Bootstrap/force overwrite: Set FORCE_PUSH=true"
-            echo ""
-            echo "Example: FORCE_PUSH=true ./hack/build-task.sh $TASK_NAME $TASK_VERSION"
+            echo "The version-timestamp tag is immutable. To force overwrite: FORCE_PUSH=true"
             exit 1
         fi
     elif command -v crane >/dev/null 2>&1; then
@@ -146,8 +141,7 @@ if [ "$FORCE_PUSH" != "true" ]; then
             echo ""
             echo "ERROR: Bundle tag already exists: $task_bundle"
             echo ""
-            echo "Per ADR/0054, version tags should not be overwritten unless necessary."
-            echo "See above for resolution options."
+            echo "The version-timestamp tag is immutable. To force overwrite: FORCE_PUSH=true"
             exit 1
         fi
     else
@@ -172,8 +166,22 @@ fi
 retry tkn bundle push "${ANNOTATION_FLAGS[@]}" "$task_bundle" -f "${TASK_YAML}" | \
     save_ref "$task_bundle" "$OUTPUT_TASK_BUNDLE_LIST"
 
+# Update the floating version tag to point to the same image
+echo ""
+echo "Updating floating tag: $floating_bundle"
+
+if command -v skopeo >/dev/null 2>&1; then
+    retry skopeo copy "docker://${task_bundle}" "docker://${floating_bundle}"
+elif command -v crane >/dev/null 2>&1; then
+    retry crane copy "${task_bundle}" "${floating_bundle}"
+else
+    echo "Warning: Neither skopeo nor crane found. Skipping floating tag." 1>&2
+fi
+
 echo ""
 echo "Task bundle pushed successfully!"
+echo "  Immutable: $task_bundle"
+echo "  Floating:  $floating_bundle"
 echo "Bundle reference saved to: $OUTPUT_TASK_BUNDLE_LIST"
 cat "$OUTPUT_TASK_BUNDLE_LIST"
 

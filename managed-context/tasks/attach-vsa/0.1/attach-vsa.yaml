@@ -40,7 +40,7 @@ spec:
       description: >-
         Signing key for VSA predicates. Must be a k8s:// or file:// reference.
         Example: k8s://namespace/secret-name
-      default: "k8s://slsa-e2e-managed-tenant/release-signing-key"
+      default: "k8s://managed-tenant/release-signing-key"
 
     - name: VSA_TYPE
       type: string
@@ -81,6 +81,14 @@ spec:
       type: string
       description: The name of the key in the ConfigMap that contains the CA bundle data
       default: ca-bundle.crt
+
+    - name: BASE_IMAGE_BUILDER_ID
+      type: string
+      description: >-
+        Expected builder ID in base image provenance. If the base image
+        provenance contains this builder ID, the dependency is recorded as
+        SLSA Build Level 2. Example: https://tekton.dev/chains/v2
+      default: ""
 
   stepTemplate:
     volumeMounts:
@@ -190,6 +198,82 @@ spec:
             echo "    Source track: no verify-source result in provenance"
           fi
 
+          # Dependency levels: verify base image signature and provenance
+          DEPENDENCY_LEVELS='{}'
+
+          # Get manifest annotations to find the base image.
+          # For image indexes, resolve the first platform manifest.
+          MANIFEST=$(skopeo inspect --raw --tls-verify=false "docker://${IMAGE_REF}" 2>/dev/null) || MANIFEST='{}'
+          MEDIA_TYPE=$(echo "$MANIFEST" | jq -r '.mediaType // ""')
+
+          if [[ "$MEDIA_TYPE" == *"index"* ]]; then
+            PLATFORM_DIGEST=$(echo "$MANIFEST" | jq -r '.manifests[0].digest // empty')
+            if [[ -n "$PLATFORM_DIGEST" ]]; then
+              IMAGE_REPO="${IMAGE_REF%%@*}"
+              MANIFEST=$(skopeo inspect --raw --tls-verify=false "docker://${IMAGE_REPO}@${PLATFORM_DIGEST}" 2>/dev/null) || MANIFEST='{}'
+            fi
+          fi
+
+          BASE_NAME=$(echo "$MANIFEST" | jq -r '.annotations["org.opencontainers.image.base.name"] // empty')
+          BASE_DIGEST=$(echo "$MANIFEST" | jq -r '.annotations["org.opencontainers.image.base.digest"] // empty')
+
+          if [[ -n "$BASE_NAME" && -n "$BASE_DIGEST" ]]; then
+            BASE_REF="${BASE_NAME%%:*}@${BASE_DIGEST}"
+            echo "    Base image: $BASE_REF"
+            DEP_LEVEL=""
+
+            # Verify base image release signature
+            if [[ -f /etc/base-image-keys/release.pub ]]; then
+              if cosign verify --key /etc/base-image-keys/release.pub \
+                  --insecure-ignore-tlog --allow-insecure-registry \
+                  "$BASE_REF" >/dev/null 2>&1; then
+                echo "    Base image release signature: verified"
+              else
+                echo "    WARNING: Base image release signature verification failed"
+              fi
+            fi
+
+            # Verify base image provenance and determine dependency level
+            if [[ -f /etc/base-image-keys/provenance.pub ]]; then
+              BASE_ATTESTATION=$(cosign verify-attestation \
+                --key /etc/base-image-keys/provenance.pub \
+                --type https://slsa.dev/provenance \
+                --insecure-ignore-tlog --allow-insecure-registry \
+                "$BASE_REF" 2>/dev/null) || BASE_ATTESTATION=""
+
+              if [[ -n "$BASE_ATTESTATION" ]]; then
+                DEP_LEVEL="SLSA_BUILD_LEVEL_1"
+                echo "    Base image provenance: verified (L1)"
+
+                # Check builder ID for L2
+                if [[ -n "$(params.BASE_IMAGE_BUILDER_ID)" ]]; then
+                  BASE_BUILDER_ID=$(echo "$BASE_ATTESTATION" | head -1 | jq -r '
+                    .payload | @base64d | fromjson |
+                    .predicate.builder.id //
+                    .predicate.runDetails.builder.id //
+                    empty
+                  ' 2>/dev/null) || BASE_BUILDER_ID=""
+
+                  if [[ "$BASE_BUILDER_ID" == "$(params.BASE_IMAGE_BUILDER_ID)" ]]; then
+                    DEP_LEVEL="SLSA_BUILD_LEVEL_2"
+                    echo "    Base image builder ID matches: $BASE_BUILDER_ID (L2)"
+                  else
+                    echo "    Base image builder ID: ${BASE_BUILDER_ID:-not found} (expected $(params.BASE_IMAGE_BUILDER_ID))"
+                  fi
+                fi
+              else
+                echo "    Base image provenance: not found or verification failed"
+              fi
+            fi
+
+            if [[ -n "$DEP_LEVEL" ]]; then
+              DEPENDENCY_LEVELS=$(jq -n --arg level "$DEP_LEVEL" '{($level): 1}')
+              echo "    Dependency level: $DEP_LEVEL"
+            fi
+          else
+            echo "    Base image: none (scratch or not annotated)"
+          fi
+
           # Generate the SLSA VSA predicate (cosign attest wraps it in
           # an in-toto statement using --type for predicateType)
           SLSA_VSA=$(jq -n \
@@ -198,6 +282,7 @@ spec:
             --arg resource_uri "$IMAGE_REF" \
             --arg result "PASSED" \
             --argjson verified_levels "$VERIFIED_LEVELS" \
+            --argjson dependency_levels "$DEPENDENCY_LEVELS" \
             --argjson policy "$POLICY_DESCRIPTOR" \
             '{
               "verifier": {
@@ -209,6 +294,7 @@ spec:
               "policy": $policy,
               "verificationResult": $result,
               "verifiedLevels": $verified_levels,
+              "dependencyLevels": (if ($dependency_levels | keys | length) > 0 then $dependency_levels else null end),
               "slsaVersion": "1.0"
             }')
 
@@ -225,6 +311,9 @@ spec:
         - name: trusted-ca
           mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
           subPath: ca-bundle.crt
+          readOnly: true
+        - name: base-image-keys
+          mountPath: /etc/base-image-keys
           readOnly: true
 
     - name: attach-vsa-attestations
@@ -339,6 +428,10 @@ spec:
         items:
           - key: $(params.CA_TRUST_CONFIG_MAP_KEY)
             path: ca-bundle.crt
+        optional: true
+    - name: base-image-keys
+      configMap:
+        name: base-image-verification-keys
         optional: true
     - name: workdir
       emptyDir: {}

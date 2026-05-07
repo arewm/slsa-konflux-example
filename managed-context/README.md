@@ -133,9 +133,7 @@ Complete release pipeline for promoting Snapshots to external registries with po
 7. **verify-conforma**: Policy evaluation with VSA generation
 8. **push-snapshot**: Promote images to destination registry
 9. **attach-vsa**: Sign and attach VSA attestations to promoted images
-10. **collect-registry-token-secret**: Get registry credentials
-11. **make-repo-public**: Set repository visibility
-12. **update-cr-status**: Update Release resource status
+10. **update-cr-status**: Update Release resource status
 
 **Key Integration Points**:
 - Uses `verify-conforma` from Conforma CLI repository
