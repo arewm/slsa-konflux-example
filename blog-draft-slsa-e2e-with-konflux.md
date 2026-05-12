@@ -200,7 +200,7 @@ both of which pass.
 ### Integration Testing as a Gate
 
 Konflux runs the Conforma policy evaluation as an
-[IntegrationTestScenario](https://konflux-ci.dev/docs/how-tos/testing/integration/)
+[IntegrationTestScenario](https://konflux-ci.dev/docs/testing/)
 (ITS) — a Kubernetes resource that defines what tests to run and when. Two
 scenarios are configured:
 

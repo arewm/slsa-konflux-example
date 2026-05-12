@@ -39,8 +39,8 @@ cd konflux-ci
 # The Konflux operator now requires a configuration file
 cp scripts/deploy-local.env.template scripts/deploy-local.env
 # Edit deploy-local.env with your GitHub App credentials
-# See: https://konflux-ci.dev/docs/installing/github-app/ for GitHub App setup, or
-# https://pipelinesascode.com/docs/install/github_apps/ for Pipelines as Code documentation
+# See: https://konflux-ci.dev/konflux-ci/docs/guides/github-secrets/ for GitHub App setup, or
+# https://pipelinesascode.com/docs/providers/github-app/ for Pipelines as Code documentation
 
 # Deploy Konflux operator
 ./scripts/deploy-local.sh
@@ -61,7 +61,7 @@ The prerequisites script creates the `managed-tenant` namespace for privileged r
 
 **Note**: The pre-built pipeline bundle and task bundles in `quay.io/slsa-konflux-example` are public and require no authentication. The `hack/build-pipeline.sh` script is for advanced users who want to customize and push to their own registry.
 
-For detailed deployment options, see the [Operator Deployment Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/operator-deployment.md).
+For detailed deployment options, see the [Local Installation Guide](https://konflux-ci.dev/konflux-ci/docs/installation/install-local/).
 
 ### Required Tools
 
@@ -76,7 +76,7 @@ The Konflux operator automatically configures demo users:
 - **user1@konflux.dev** / `password` - Admin access to `default-tenant`
 - **user2@konflux.dev** / `password` - Admin access to `managed-tenant`
 
-**WARNING:** These are insecure demo credentials for testing only. For production deployments, configure proper authentication using the [Demo Users Configuration Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/demo-users.md).
+**WARNING:** These are insecure demo credentials for testing only. For production deployments, configure proper authentication using the [Local Installation Guide](https://konflux-ci.dev/konflux-ci/docs/installation/install-local/).
 
 ### Accessing the Konflux UI
 
@@ -84,7 +84,7 @@ After you deploy Konflux, view pipeline runs and builds in the Konflux web UI at
 
 ### Accessing the Kind Cluster Registry
 
-This demo uses the internal Kind registry by default. For complete registry configuration options (including external registries like Quay.io), see [Registry Configuration](https://github.com/konflux-ci/konflux-ci/blob/main/docs/registry-configuration.md).
+This demo uses the internal Kind registry by default. For complete registry configuration options (including external registries like Quay.io), see [Registry Configuration](https://konflux-ci.dev/konflux-ci/docs/guides/registry-configuration/).
 
 The internal registry is accessible at:
 - From host: `localhost:5001`
@@ -140,7 +140,7 @@ kubectl delete pipelineruns -n default-tenant --field-selector=status.conditions
 kubectl delete pipelineruns -n managed-tenant --field-selector=status.conditions[0].reason!=Running
 ```
 
-For more troubleshooting, see [Troubleshooting Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/troubleshooting.md).
+For more troubleshooting, see [Troubleshooting Guide](https://konflux-ci.dev/konflux-ci/docs/troubleshooting/).
 
 ## Additional Resources
 
