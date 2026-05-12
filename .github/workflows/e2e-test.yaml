@@ -15,7 +15,7 @@ env:
   # renovate: datasource=github-releases depName=kubernetes/kubernetes
   KUBECTL_VERSION: "1.36.0"
   # renovate: datasource=github-releases depName=konflux-ci/konflux-ci
-  KONFLUX_VERSION: "v0.4"
+  KONFLUX_VERSION: "v0.2.1-rc.1"
 
 jobs:
   validate:

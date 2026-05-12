@@ -42,6 +42,12 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 - [x] Restructure docs into Part 1 (Build L3, Festoji) and Part 2 (Source L3, CVE, hermetic)
 - [x] Move TRUSTING_ARTIFACTS.md to docs/ with Build L3 connection
 - [x] Blog post Part 2 content (source track, CVE management, hermetic builds)
+- [x] Document hermetic build configuration with prefetch-dependencies
+- [x] Validate hermetic build end-to-end on Kind cluster (SLSA_BUILD_LEVEL_3 confirmed)
+- [x] Add `excludeRules` support to component-onboarding chart template
+- [x] Add `volatileConfig` support to component-onboarding chart template
+- [x] Add hermetic build annotation support to Component template (`buildPipeline` field)
+- [x] Investigate proper mechanism for custom pipeline configuration (issue #6673, PR #6678 adds operator-level `pipelineConfig`)
 
 ---
 
@@ -62,25 +68,12 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 
 ### Operator Compatibility
 
-- [ ] Document which Konflux versions have been tested (currently tested: operator from main)
-- [ ] Investigate proper mechanism for custom pipeline configuration (currently using scale-down workaround for `build-pipeline-config`)
-- [ ] Consider pinning Konflux operator to a specific commit SHA in CI
+- [ ] Document which Konflux versions have been tested (currently tested: v0.2.1-rc.1)
+- [ ] Test PR #6678 for operator-level pipeline customization (replaces `buildPipeline` annotation workaround)
 
 ---
 
 ## MEDIUM PRIORITY
-
-### Hermetic Build Documentation
-
-- [ ] Document hermetic build configuration with prefetch-dependencies
-- [ ] Add hermetic build example to component-onboarding chart (annotation support)
-- [ ] Validate hermetic build end-to-end on Kind cluster
-
-### Chart Improvements
-
-- [ ] Add `excludeRules` support to component-onboarding chart template
-- [ ] Add `volatileConfig` support to component-onboarding chart template
-- [ ] Add hermetic build annotation support to Component template
 
 ### Build Track Documentation
 

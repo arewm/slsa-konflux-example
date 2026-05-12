@@ -33,7 +33,7 @@ To explore SLSA with Konflux, you need a running instance. The simplest way is t
 
 ```bash
 # Clone the konflux-ci repository (pinned to tested release)
-git clone --branch v0.4 https://github.com/konflux-ci/konflux-ci.git
+git clone --branch v0.2.1-rc.1 https://github.com/konflux-ci/konflux-ci.git
 cd konflux-ci
 
 # The Konflux operator now requires a configuration file
@@ -44,7 +44,7 @@ cp scripts/deploy-local.env.template scripts/deploy-local.env
 ./scripts/deploy-local.sh
 ```
 
-**Tested with:** konflux-ci/konflux-ci v0.4
+**Tested with:** konflux-ci/konflux-ci v0.2.1-rc.1
 
 This script creates a Kind cluster, deploys the Konflux operator, creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev), and configures webhooks for Pipelines as Code.
 

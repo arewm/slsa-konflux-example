@@ -592,6 +592,48 @@ rule_data:
 
 If the build used `buildah-oci-ta` but did not set `hermetic=true`, the release is blocked with a violation.
 
+### Verifying the Hermetic Build
+
+After the build and release complete, inspect the provenance to confirm hermetic mode was active. The build attestation records the pipeline parameters:
+
+```bash
+cosign download attestation --allow-insecure-registry \
+  localhost:5001/konflux-festoji@sha256:6173535e... \
+  | jq -r '.payload | @base64d | fromjson
+    | select(.predicateType == "https://slsa.dev/provenance/v0.2")
+    | .predicate.invocation.parameters
+    | {hermetic, "prefetch-input"}'
+```
+
+```json
+{
+  "hermetic": "true",
+  "prefetch-input": "gomod"
+}
+```
+
+The released image's VSA reflects the higher build level:
+
+```bash
+cosign download attestation --allow-insecure-registry \
+  localhost:5001/released-festoji@sha256:6173535e... \
+  | jq -r '.payload | @base64d | fromjson
+    | select(.predicateType == "https://slsa.dev/verification_summary/v1")
+    | .predicate | {verificationResult, verifiedLevels}'
+```
+
+```json
+{
+  "verificationResult": "PASSED",
+  "verifiedLevels": [
+    "SLSA_BUILD_LEVEL_3",
+    "SLSA_SOURCE_LEVEL_1"
+  ]
+}
+```
+
+`SLSA_BUILD_LEVEL_3` confirms that the build ran on a hosted builder with hermetic isolation. Compare this with a non-hermetic build, which would show `SLSA_BUILD_LEVEL_2`.
+
 ## Putting It All Together
 
 Let's walk through onboarding source-test-repo with all features enabled:
