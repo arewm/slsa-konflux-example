@@ -55,7 +55,7 @@ cd /path/to/slsa-konflux-example
 ./scripts/setup-prerequisites.sh
 ```
 
-The prerequisites script creates the `managed-tenant` namespace for privileged release operations and applies custom SLSA pipeline configuration to the build service.
+The prerequisites script creates the `managed-tenant` namespace for privileged release operations and configures the Konflux operator to use the custom SLSA pipeline via the `Konflux` CR's `pipelineConfig` field.
 
 For detailed deployment options, see the [Operator Deployment Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/operator-deployment.md).
 

@@ -232,6 +232,12 @@ echo "Pipeline bundle pushed successfully!"
 echo "Bundle reference saved to: $OUTPUT_PIPELINE_BUNDLE_LIST"
 cat "$OUTPUT_PIPELINE_BUNDLE_LIST"
 
+# Update the tracked bundle-ref file used by setup-prerequisites.sh
+BUNDLE_REF_FILE="${SCRIPTDIR}/../managed-context/slsa-e2e-pipeline/bundle-ref"
+latest_digest=$(grep -o 'sha256:[a-f0-9]*' "$OUTPUT_PIPELINE_BUNDLE_LIST" | head -1)
+echo "${latest_bundle}@${latest_digest}" > "$BUNDLE_REF_FILE"
+echo "Updated bundle-ref: ${BUNDLE_REF_FILE}"
+
 # Build acceptable bundles data bundle
 echo ""
 echo "Building acceptable bundles data bundle..."
