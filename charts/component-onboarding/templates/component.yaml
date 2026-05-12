@@ -1,7 +1,9 @@
+{{- $componentName := .Values.componentName }}
+{{- $applicationName := .Values.applicationName | default $componentName }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: Component
 metadata:
-  name: {{ .Values.applicationName }}
+  name: {{ $componentName }}
   namespace: {{ .Values.namespace }}
   annotations:
     build.appstudio.openshift.io/request: "configure-pac"
@@ -12,13 +14,14 @@ metadata:
     image.redhat.com/generate: '{"visibility": "public"}'
 {{- end }}
 spec:
-  componentName: {{ .Values.applicationName }}
-  application: {{ .Values.applicationName }}
+  componentName: {{ $componentName }}
+  application: {{ $applicationName }}
 {{- if not .Values.image.generateRepository }}
-  containerImage: {{ .Values.customContainerImage | default .Values.containerImage }}
+{{- $containerImage := .Values.customContainerImage | default (.Values.containerImage | default (printf "registry-service.kind-registry/konflux-%s:latest" $componentName)) }}
+  containerImage: {{ $containerImage }}
 {{- end }}
 {{- if .Values.customContainerImage }}
-  secret: {{ .Values.applicationName }}-pull-secret
+  secret: {{ $componentName }}-pull-secret
 {{- end }}
   source:
     git:

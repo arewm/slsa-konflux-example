@@ -1,17 +1,19 @@
-{{- $destination := .Values.release.destination | default (printf "registry-service.kind-registry/released-%s" .Values.applicationName) }}
+{{- $componentName := .Values.componentName }}
+{{- $applicationName := .Values.applicationName | default $componentName }}
+{{- $destination := .Values.release.destination | default (printf "registry-service.kind-registry/released-%s" $componentName) }}
 {{- $pipelineUrl := .Values.release.pipeline.url | default .Values.repositoryUrl }}
 {{- $ociStorage := .Values.release.trustedArtifacts.ociStorage }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: ReleasePlanAdmission
 metadata:
-  name: {{ .Values.applicationName }}-release-admission
+  name: {{ $applicationName }}-release-plan-admission
   namespace: {{ .Values.release.targetNamespace }}
 spec:
   applications:
-    - {{ .Values.applicationName }}
+    - {{ $applicationName }}
   origin: {{ .Values.namespace }}
   environment: {{ .Values.release.environment }}
-  policy: {{ .Values.release.policyName }}
+  policy: {{ $applicationName }}-{{ .Values.release.policyName }}
   pipeline:
     serviceAccountName: {{ .Values.release.serviceAccount }}
     pipelineRef:
@@ -73,7 +75,7 @@ spec:
       defaults:
         pushSourceContainer: false
       components:
-        - name: {{ .Values.applicationName }}
+        - name: {{ $componentName }}
           repository: {{ $destination }}
           tags:
             - latest

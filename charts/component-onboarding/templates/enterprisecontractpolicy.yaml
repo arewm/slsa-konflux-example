@@ -1,11 +1,12 @@
+{{- $applicationName := .Values.applicationName | default .Values.componentName }}
 {{- $policyData := .Values.release.policy.policyData | default (printf "%s//managed-context/policies/ec-policy-data/data" (.Values.repositoryUrl | replace "https://github.com/" "github.com/")) }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: EnterpriseContractPolicy
 metadata:
-  name: {{ .Values.release.policyName }}
+  name: {{ $applicationName }}-{{ .Values.release.policyName }}
   namespace: {{ .Values.release.targetNamespace }}
 spec:
-  description: SLSA policy for {{ .Values.applicationName }}
+  description: SLSA policy for {{ $applicationName }}
   publicKey: 'k8s://tekton-pipelines/public-key'
   sources:
     - name: Release Policies

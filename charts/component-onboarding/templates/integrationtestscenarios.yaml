@@ -1,11 +1,12 @@
+{{- $applicationName := .Values.applicationName | default .Values.componentName }}
 ---
 apiVersion: appstudio.redhat.com/v1beta2
 kind: IntegrationTestScenario
 metadata:
-  name: {{ .Values.applicationName }}-policy-pr
+  name: {{ $applicationName }}-policy-pr
   namespace: {{ .Values.namespace }}
 spec:
-  application: {{ .Values.applicationName }}
+  application: {{ $applicationName }}
   contexts:
     - name: pull_request
       description: "PR source branches are not protected"
@@ -20,7 +21,7 @@ spec:
         value: pipelines/enterprise-contract.yaml
   params:
     - name: POLICY_CONFIGURATION
-      value: {{ .Values.release.targetNamespace }}/{{ .Values.release.policyName }}
+      value: {{ .Values.release.targetNamespace }}/{{ $applicationName }}-{{ .Values.release.policyName }}
     - name: PUBLIC_KEY
       value: k8s://tekton-pipelines/public-key
     - name: STRICT
@@ -31,10 +32,10 @@ spec:
 apiVersion: appstudio.redhat.com/v1beta2
 kind: IntegrationTestScenario
 metadata:
-  name: {{ .Values.applicationName }}-policy-push
+  name: {{ $applicationName }}-policy-push
   namespace: {{ .Values.namespace }}
 spec:
-  application: {{ .Values.applicationName }}
+  application: {{ $applicationName }}
   contexts:
     - name: push
       description: "Validate push builds with strict policy (matches release requirements)"
@@ -49,7 +50,7 @@ spec:
         value: pipelines/enterprise-contract.yaml
   params:
     - name: POLICY_CONFIGURATION
-      value: {{ .Values.release.targetNamespace }}/{{ .Values.release.policyName }}
+      value: {{ .Values.release.targetNamespace }}/{{ $applicationName }}-{{ .Values.release.policyName }}
     - name: PUBLIC_KEY
       value: k8s://tekton-pipelines/public-key
     - name: STRICT

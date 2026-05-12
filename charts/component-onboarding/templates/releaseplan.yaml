@@ -1,11 +1,12 @@
+{{- $applicationName := .Values.applicationName | default .Values.componentName }}
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: ReleasePlan
 metadata:
-  name: {{ .Values.applicationName }}-release
+  name: {{ $applicationName }}-release-plan
   namespace: {{ .Values.namespace }}
   labels:
     release.appstudio.openshift.io/auto-release: "true"
     release.appstudio.openshift.io/standing-attribution: "true"
 spec:
-  application: {{ .Values.applicationName }}
+  application: {{ $applicationName }}
   target: {{ .Values.release.targetNamespace }}
