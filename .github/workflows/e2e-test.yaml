@@ -15,7 +15,7 @@ env:
   # renovate: datasource=github-releases depName=kubernetes/kubernetes
   KUBECTL_VERSION: "1.36.0"
   # renovate: datasource=github-releases depName=konflux-ci/konflux-ci
-  KONFLUX_VERSION: "v0.2.1-rc.1"
+  KONFLUX_VERSION: "v0.2.1"
 
 jobs:
   validate:
@@ -104,7 +104,8 @@ jobs:
           printf 'GITHUB_APP_ID=\nGITHUB_APP_PRIVATE_KEY=\nGITHUB_APP_WEBHOOK_SECRET=\nGITOPS_REPO=\nMY_GITHUB_TOKEN=\n' > /tmp/konflux-ci/deploy-local.env
 
           cd /tmp/konflux-ci
-          OPERATOR_INSTALL_METHOD=release ./scripts/deploy-local.sh
+          RELEASE_URL="https://github.com/konflux-ci/konflux-ci/releases/download/${KONFLUX_VERSION}/install.yaml" \
+            ./scripts/deploy-local.sh
 
       - name: Run setup-prerequisites
         run: |

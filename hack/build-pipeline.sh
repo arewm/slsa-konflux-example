@@ -310,4 +310,14 @@ fi
 echo "Acceptable bundles data bundle: ${DATA_BUNDLE_REPO}:${DATA_BUNDLE_TAG}"
 echo "Acceptable bundles data bundle: ${DATA_BUNDLE_REPO}:latest"
 
+# Update the acceptable bundles reference in the component-onboarding chart
+ACCEPTABLE_BUNDLES_DIGEST=$(fetch_task_digest "${DATA_BUNDLE_REPO}:latest")
+ACCEPTABLE_BUNDLES_REF="oci::${DATA_BUNDLE_REPO}:latest@${ACCEPTABLE_BUNDLES_DIGEST}"
+VALUES_FILE="${SCRIPTDIR}/../charts/component-onboarding/values.yaml"
+if [ -f "$VALUES_FILE" ]; then
+    sed -i.bak "s|acceptableBundles:.*|acceptableBundles: \"${ACCEPTABLE_BUNDLES_REF}\"|" "$VALUES_FILE"
+    rm -f "${VALUES_FILE}.bak"
+    echo "Updated acceptable bundles in values.yaml: ${ACCEPTABLE_BUNDLES_REF}"
+fi
+
 # vim: set et sw=4 ts=4:

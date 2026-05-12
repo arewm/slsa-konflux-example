@@ -96,7 +96,7 @@ release:
     policyData: ""
 
     # Acceptable bundles data source
-    acceptableBundles: "oci::quay.io/slsa-konflux-example/slsa-e2e-data-acceptable-bundles:latest@sha256:bbe31d9acdedc2cc9964b2f53367a05e50a37390129bdd8b1e3d6f1bfb9031de"
+    acceptableBundles: "oci::quay.io/slsa-konflux-example/slsa-e2e-data-acceptable-bundles:latest@sha256:0a9969f7d2b5e1b85b9152c92fe44ed8b442196802b1fa09fe5dead3557bc28b"
 
     # EC policy collections to include
     policyCollections:

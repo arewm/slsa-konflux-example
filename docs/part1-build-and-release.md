@@ -20,7 +20,7 @@ Now install the component-onboarding chart for festoji:
 
 ```bash
 export FORK_ORG="ORGANIZATION"
-helm install festoji ./charts/component-onboarding \
+helm upgrade --install festoji ./charts/component-onboarding \
   --set componentName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
 ```
@@ -795,7 +795,7 @@ The policy evaluation can be demonstrated in two scenarios: a passing release (t
 
 **Scenario 1: Policy Pass**
 
-A normal release with a passing policy produces a full green pipeline. After a successful `helm install` and build, trigger a release as described above. The `verify-conforma` task will pass, `push-snapshot` will publish the image, and `attach-vsa` will sign and attach the Verification Summary Attestations.
+A normal release with a passing policy produces a full green pipeline. After a successful install and build, trigger a release as described above. The `verify-conforma` task will pass, `push-snapshot` will publish the image, and `attach-vsa` will sign and attach the Verification Summary Attestations.
 
 **Scenario 2: Policy Fail**
 

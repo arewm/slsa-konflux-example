@@ -34,7 +34,7 @@ The component-onboarding Helm chart creates an EnterpriseContractPolicy resource
 Here's how source-test-repo is onboarded with SLSA Source Level 3:
 
 ```bash
-helm install source-test-repo ./charts/component-onboarding \
+helm upgrade --install source-test-repo ./charts/component-onboarding \
   --set componentName=source-test-repo \
   --set gitRepoUrl=https://github.com/spork-madness/source-test-repo \
   --set release.policy.slsaSourceMinLevel="3"
@@ -43,7 +43,7 @@ helm install source-test-repo ./charts/component-onboarding \
 Compare this to Festoji, which uses the default Level 1:
 
 ```bash
-helm install festoji ./charts/component-onboarding \
+helm upgrade --install festoji ./charts/component-onboarding \
   --set componentName=festoji \
   --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
   # slsaSourceMinLevel defaults to "1"
@@ -570,6 +570,14 @@ npm ci --offline
 
 Enable hermetic builds by changing the pipeline parameter defaults in your component's `.tekton/` PipelineRun definitions. The `hermetic` parameter enables network isolation, and `prefetch-input` tells the prefetch-dependencies task which package manager to use (e.g., `gomod` for Go, `pip` for Python).
 
+These changes are made in your component's source repository. You can use either your festoji fork or source-test-repo fork — the `.tekton/` pipeline definitions have the same structure. If you don't already have a local clone, create one:
+
+```bash
+# Use whichever component you want to enable hermetic builds for
+git clone https://github.com/${FORK_ORG}/<component>.git
+cd <component>
+```
+
 Use `yq` to update the defaults in all `.tekton/` files:
 
 ```bash
@@ -678,7 +686,7 @@ jobs:
 **2. Onboard to Konflux with Source Level 3**:
 
 ```bash
-helm install source-test-repo ./charts/component-onboarding \
+helm upgrade --install source-test-repo ./charts/component-onboarding \
   --set componentName=source-test-repo \
   --set gitRepoUrl=https://github.com/spork-madness/source-test-repo \
   --set release.policy.slsaSourceMinLevel="3"
@@ -710,9 +718,11 @@ PIPELINERUN=$(kubectl get pipelineruns -n default-tenant \
   --sort-by=.metadata.creationTimestamp \
   -o jsonpath='{.items[-1].metadata.name}')
 
-# Check verify-source result
-kubectl get pipelinerun $PIPELINERUN -n default-tenant \
-  -o jsonpath='{.status.results[?(@.name=="SLSA_SOURCE_LEVEL_ACHIEVED")].value}'
+# Check verify-source result (this is a task result, not a pipeline result)
+kubectl get taskrun -n default-tenant \
+  -l tekton.dev/pipelineRun=$PIPELINERUN \
+  -l tekton.dev/pipelineTask=verify-source \
+  -o jsonpath='{.items[0].status.results[?(@.name=="SLSA_SOURCE_LEVEL_ACHIEVED")].value}'
 
 # Check for CVE warnings
 kubectl logs -n default-tenant \

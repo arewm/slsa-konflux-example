@@ -68,7 +68,7 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 
 ### Operator Compatibility
 
-- [ ] Document which Konflux versions have been tested (currently tested: v0.2.1-rc.1)
+- [ ] Document which Konflux versions have been tested (currently tested: v0.2.1)
 - [ ] Test PR #6678 for operator-level pipeline customization (replaces `buildPipeline` annotation workaround)
 
 ---

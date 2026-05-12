@@ -33,7 +33,8 @@ To explore SLSA with Konflux, you need a running instance. The simplest way is t
 
 ```bash
 # Clone the konflux-ci repository (pinned to tested release)
-git clone --branch v0.2.1-rc.1 https://github.com/konflux-ci/konflux-ci.git
+export KONFLUX_VERSION=v0.2.1
+git clone --branch "${KONFLUX_VERSION}" https://github.com/konflux-ci/konflux-ci.git
 cd konflux-ci
 
 # The Konflux operator now requires a configuration file
@@ -42,11 +43,12 @@ cp scripts/deploy-local.env.template scripts/deploy-local.env
 # See: https://konflux-ci.dev/konflux-ci/docs/guides/github-secrets/ for GitHub App setup, or
 # https://pipelinesascode.com/docs/providers/github-app/ for Pipelines as Code documentation
 
-# Deploy Konflux operator
-./scripts/deploy-local.sh
+# Deploy Konflux operator (pinned to the same release)
+RELEASE_URL="https://github.com/konflux-ci/konflux-ci/releases/download/${KONFLUX_VERSION}/install.yaml" \
+  ./scripts/deploy-local.sh
 ```
 
-**Tested with:** konflux-ci/konflux-ci v0.2.1-rc.1
+**Tested with:** konflux-ci/konflux-ci v0.2.1
 
 This script creates a Kind cluster, deploys the Konflux operator, creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev), and configures webhooks for Pipelines as Code.
 
@@ -57,7 +59,12 @@ cd /path/to/slsa-konflux-example
 ./scripts/setup-prerequisites.sh
 ```
 
-The prerequisites script creates the `managed-tenant` namespace for privileged release operations and configures the Konflux operator to use the custom SLSA pipeline via the `Konflux` CR's `pipelineConfig` field.
+The prerequisites script prepares the cluster for the SLSA walkthrough:
+
+- Creates the `managed-tenant` namespace for privileged release operations
+- Configures the Konflux operator to use the custom SLSA pipeline via the `Konflux` CR's `pipelineConfig` field
+- Labels the internal registry credential (`regcred-internal-registry`) so build-service auto-links it to every component's build pipeline ServiceAccount
+- Copies registry credentials to `managed-tenant` and links them to the integration and release pipeline ServiceAccounts
 
 **Note**: The pre-built pipeline bundle and task bundles in `quay.io/slsa-konflux-example` are public and require no authentication. The `hack/build-pipeline.sh` script is for advanced users who want to customize and push to their own registry.
 
@@ -103,14 +110,14 @@ This repository provides two helm charts:
 **platform-config** installs once per cluster to establish trust boundaries, signing keys, and policies. It creates the EnterpriseContractPolicy for SLSA3 validation, RoleBindings for admin access, ServiceAccounts for release pipeline execution, and signing keys for release attestation signing.
 
 ```bash
-helm install platform ./charts/platform-config
+helm upgrade --install platform ./charts/platform-config
 ```
 
 **component-onboarding** installs once per component to create the application, integration tests, and release plan.
 
 ```bash
 export FORK_ORG="ORGANIZATION"
-helm install festoji ./charts/component-onboarding \
+helm upgrade --install festoji ./charts/component-onboarding \
   --set componentName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
 ```
