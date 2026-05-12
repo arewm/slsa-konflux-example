@@ -15,11 +15,13 @@ Festoji was intentionally simple. It uses a scratch-based container (no real bas
 
 source-test-repo (https://github.com/spork-madness/source-test-repo) is configured to exercise these scenarios. It uses `registry.access.redhat.com/ubi8/ubi:latest` as a base image, is enrolled with source-tool via GitHub Actions, and can be configured for hermetic builds.
 
-**Important**: source-test-repo is used as an EXAMPLE. The repository contains source-tool enrollment configuration and Tekton pipeline definitions specific to our setup. If you want to replicate this for your own application, do not fork source-test-repo. Instead:
+**Important**: source-test-repo is used as an EXAMPLE of what a source-tool-enrolled repository looks like. The repository contains setup-specific configuration (source-tool enrollment, Tekton pipeline definitions). If you want to exercise source track features for your own application:
 
 1. Start with your own repository
-2. Enroll it with source-tool following the source-tool documentation
+2. Enroll it with source-tool following the source-tool documentation (https://github.com/slsa-framework/source-tool)
 3. Onboard it to Konflux using the component-onboarding chart
+
+The onboarding commands shown in this guide use source-test-repo for illustration, but you can substitute your own repository URL. If you want to use source-test-repo directly for hands-on testing, you need to be a collaborator on the spork-madness organization (or fork it, understanding that you'll need to update the workflow configurations for your environment).
 
 This exercises Source Track Level 3, CVE scanning on real packages, and base image verification.
 
@@ -33,7 +35,7 @@ Here's how source-test-repo is onboarded with SLSA Source Level 3:
 
 ```bash
 helm install source-test-repo ./charts/component-onboarding \
-  --set applicationName=source-test-repo \
+  --set componentName=source-test-repo \
   --set gitRepoUrl=https://github.com/spork-madness/source-test-repo \
   --set release.policy.slsaSourceMinLevel="3"
 ```
@@ -42,7 +44,7 @@ Compare this to Festoji, which uses the default Level 1:
 
 ```bash
 helm install festoji ./charts/component-onboarding \
-  --set applicationName=festoji \
+  --set componentName=festoji \
   --set gitRepoUrl=https://github.com/YOUR_ORG/festoji
   # slsaSourceMinLevel defaults to "1"
 ```
@@ -114,7 +116,10 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Compute source provenance
-        uses: source-tool/action@v1
+        # NOTE: Replace with actual source-tool action reference
+        # See: https://github.com/slsa-framework/source-tool
+        # and https://github.com/slsa-framework/source-actions
+        uses: slsa-framework/source-tool@<version>
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -313,7 +318,7 @@ Konflux integrates vulnerability scanning into the release process through the E
 
 ### Scanning and Detection
 
-During the build pipeline, the `trivy-sbom-scan` task generates an SBOM (Software Bill of Materials) and scans it for vulnerabilities using Trivy:
+During the build pipeline, buildah generates an SBOM (Software Bill of Materials) during the build, and the `trivy-sbom-scan` task scans it for vulnerabilities using Trivy:
 
 ```bash
 # Simplified version of what trivy-sbom-scan does
@@ -348,6 +353,13 @@ For example, if CVE-2026-1234 with critical severity is issued on May 1st:
 - May 8+: Violation (blocks release)
 
 The leeway window gives teams time to evaluate patches, test fixes, and coordinate deployments without rushing or bypassing security controls.
+
+To find actual blocking CVEs from a failed release, inspect the verify-conforma task output:
+
+```bash
+# Find blocking CVEs from a failed release
+kubectl logs -n managed-tenant -l tekton.dev/pipelineTask=verify-conforma --tail=100 | grep -i "cve"
+```
 
 ### Per-CVE Exceptions
 
@@ -492,6 +504,8 @@ Now unpatched critical and high severity CVEs become violations instead of warni
 Network access during builds introduces non-determinism. A build that succeeds today might fail tomorrow if an upstream repository goes offline, a package is deleted, or a compromised registry serves malicious content. Hermetic builds eliminate this risk by removing network access after dependency prefetch.
 
 Konflux supports hermetic builds through the `hermetic` pipeline parameter. When set to `true`, the build container loses network access after the `prefetch-dependencies` task completes.
+
+**Note**: The hermetic build configuration applies to any component. The examples in this section demonstrate with Festoji from Part 1, but the same approach works for source-test-repo or any other component.
 
 ### How It Works
 
@@ -653,7 +667,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: source-tool/action@v1
+      # NOTE: Replace with actual source-tool action reference
+      # See: https://github.com/slsa-framework/source-tool
+      # and https://github.com/slsa-framework/source-actions
+      - uses: slsa-framework/source-tool@<version>
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -662,7 +679,7 @@ jobs:
 
 ```bash
 helm install source-test-repo ./charts/component-onboarding \
-  --set applicationName=source-test-repo \
+  --set componentName=source-test-repo \
   --set gitRepoUrl=https://github.com/spork-madness/source-test-repo \
   --set release.policy.slsaSourceMinLevel="3"
 ```
@@ -706,6 +723,11 @@ kubectl logs -n default-tenant \
 **6. Trigger a release**:
 
 ```bash
+# Discover the latest snapshot for source-test-repo
+SNAPSHOT=$(kubectl get snapshots -n default-tenant \
+  -l appstudio.openshift.io/application=source-test-repo \
+  --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d/ -f2)
+
 kubectl apply -f - <<EOF
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: Release
@@ -714,7 +736,7 @@ metadata:
   namespace: default-tenant
 spec:
   releasePlan: source-test-repo-release-plan
-  snapshot: source-test-repo-snapshot
+  snapshot: ${SNAPSHOT}
 EOF
 ```
 

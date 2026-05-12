@@ -117,7 +117,7 @@ jobs:
       - name: Onboard test component
         run: |
           helm install test-component ./charts/component-onboarding \
-            --set applicationName=test-app \
+            --set componentName=test-app \
             --set gitRepoUrl=https://github.com/konflux-ci/testrepo
 
       - name: Verify resources created

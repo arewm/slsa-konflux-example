@@ -39,6 +39,8 @@ cd konflux-ci
 # The Konflux operator now requires a configuration file
 cp scripts/deploy-local.env.template scripts/deploy-local.env
 # Edit deploy-local.env with your GitHub App credentials
+# See: https://konflux-ci.dev/docs/installing/github-app/ for GitHub App setup, or
+# https://pipelinesascode.com/docs/install/github_apps/ for Pipelines as Code documentation
 
 # Deploy Konflux operator
 ./scripts/deploy-local.sh
@@ -57,11 +59,13 @@ cd /path/to/slsa-konflux-example
 
 The prerequisites script creates the `managed-tenant` namespace for privileged release operations and configures the Konflux operator to use the custom SLSA pipeline via the `Konflux` CR's `pipelineConfig` field.
 
+**Note**: The pre-built pipeline bundle and task bundles in `quay.io/slsa-konflux-example` are public and require no authentication. The `hack/build-pipeline.sh` script is for advanced users who want to customize and push to their own registry.
+
 For detailed deployment options, see the [Operator Deployment Guide](https://github.com/konflux-ci/konflux-ci/blob/main/docs/operator-deployment.md).
 
 ### Required Tools
 
-Install these CLI tools for the demo: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for cluster interaction, [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation) for inspecting OCI artifact attestations, [helm](https://github.com/helm/helm?tab=readme-ov-file#install) for deploying resources to the Kind cluster, [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) for viewing Tekton pipelines, and optionally [gh](https://cli.github.com/) for GitHub CLI operations.
+Install these CLI tools for the demo: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for cluster interaction, [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation) for inspecting OCI artifact attestations, [helm](https://github.com/helm/helm?tab=readme-ov-file#install) for deploying resources to the Kind cluster, [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) for viewing Tekton pipelines, [jq](https://jqlang.github.io/jq/download/) for parsing JSON, and optionally [gh](https://cli.github.com/) for GitHub CLI operations, [yq](https://github.com/mikefarah/yq) for YAML manipulation (needed for Part 2 hermetic builds), [skopeo](https://github.com/containers/skopeo/blob/main/install.md) for inspecting manifests, [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md), [oras](https://oras.land/docs/installation), and [podman](https://podman.io/getting-started/installation) as alternatives for container operations.
 
 **NOTE:** Save your Pipelines as Code GitHub App URL after creating it. You need it to configure your repository.
 
@@ -107,7 +111,7 @@ helm install platform ./charts/platform-config
 ```bash
 export FORK_ORG="ORGANIZATION"
 helm install festoji ./charts/component-onboarding \
-  --set applicationName=festoji \
+  --set componentName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
 ```
 

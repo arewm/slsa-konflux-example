@@ -5,14 +5,14 @@ Onboard a component/repository to Konflux - install once per component.
 ## Overview
 
 This chart creates the resources needed for a single component:
-- **Application**: Top-level Konflux application resource
+- **Application**: Top-level Konflux application resource (defaults to component name)
 - **Component**: Links to a Git repository for building
 - **IntegrationTestScenarios**: Two scenarios for policy-driven development
   - `policy-pr`: Validates PR builds at source level 1
   - `policy-push`: Validates push builds with strict policy (matches release)
 - **ReleasePlan**: Defines release workflow
 - **ReleasePlanAdmission**: Configures release pipeline in managed namespace
-- **RoleBinding**: Policy reader permissions for integration service
+- **EnterpriseContractPolicy**: Per-component SLSA policy
 - **Secret**: (conditional) Pull secret for custom container images
 
 ## Prerequisites
@@ -27,7 +27,7 @@ Basic installation:
 
 ```bash
 helm install myapp ./charts/component-onboarding \
-  --set applicationName=myapp \
+  --set componentName=myapp \
   --set gitRepoUrl=https://github.com/myorg/myrepo
 ```
 
@@ -35,7 +35,7 @@ With custom namespaces (must match platform-config):
 
 ```bash
 helm install myapp ./charts/component-onboarding \
-  --set applicationName=myapp \
+  --set componentName=myapp \
   --set gitRepoUrl=https://github.com/myorg/myrepo \
   --set namespace=my-tenant \
   --set release.targetNamespace=my-managed-tenant
@@ -45,7 +45,7 @@ helm install myapp ./charts/component-onboarding \
 
 | Value | Description |
 |-------|-------------|
-| `applicationName` | Name of the application and component |
+| `componentName` | Name of the component to onboard |
 | `gitRepoUrl` | Git repository URL (e.g., https://github.com/myorg/myrepo) |
 
 ## Important Values (Must Match platform-config)
@@ -54,20 +54,30 @@ helm install myapp ./charts/component-onboarding \
 |-------|---------|-------------|
 | `namespace` | `default-tenant` | Tenant namespace (must match platform-config) |
 | `release.targetNamespace` | `managed-tenant` | Managed namespace (must match platform-config) |
-| `release.policyName` | `ec-policy` | Policy name (must match platform-config) |
 | `release.serviceAccount` | `release-service-account` | ServiceAccount name (must match platform-config) |
 
 ## Optional Configuration
+
+### Application Name
+
+By default, the Konflux Application is named after the component. Override to group multiple components under one application:
+
+```yaml
+componentName: "frontend"
+applicationName: "myapp"
+```
 
 ### Git Configuration
 
 ```yaml
 gitRevision: "main"       # Branch to track
 gitContext: "."           # Context directory
-displayName: "My App"     # Display name (defaults to applicationName)
+displayName: "My App"     # Display name (defaults to component name)
 ```
 
 ### Container Image
+
+The default container image is `registry-service.kind-registry/konflux-{componentName}:latest`. Override for custom registries:
 
 ```yaml
 containerImage: "registry-service.kind-registry/myapp:latest"
@@ -85,7 +95,7 @@ dockerconfigjson: "eyJhdXRocyI6..."  # Base64-encoded .dockerconfigjson
 ```yaml
 release:
   author: "user1"
-  destination: "quay.io/myorg/myapp"  # Defaults to registry-service.kind-registry/released-{applicationName}
+  destination: "quay.io/myorg/myapp"  # Defaults to registry-service.kind-registry/released-{componentName}
   environment: "production"
 ```
 
@@ -117,8 +127,8 @@ kubectl get snapshots -n default-tenant
 
 **policy-push** (push context):
 - Runs on push-to-main builds
-- Validates with strict policy (source level 2+)
-- Same policy as release pipeline
+- Validates with the same policy as release
+- Default source level is 1; override with `release.policy.slsaSourceMinLevel`
 
 ## Installing Multiple Components
 
@@ -126,21 +136,21 @@ Each component gets its own installation:
 
 ```bash
 helm install app1 ./charts/component-onboarding \
-  --set applicationName=app1 \
+  --set componentName=app1 \
   --set gitRepoUrl=https://github.com/myorg/app1
 
 helm install app2 ./charts/component-onboarding \
-  --set applicationName=app2 \
+  --set componentName=app2 \
   --set gitRepoUrl=https://github.com/myorg/app2
 ```
 
-All components share the platform resources (policy, signing keys, service accounts).
+All components share the platform resources (signing keys, service accounts) from platform-config. Each gets its own EnterpriseContractPolicy, IntegrationTestScenarios, and ReleasePlan.
 
 ## Upgrading
 
 ```bash
 helm upgrade myapp ./charts/component-onboarding \
-  --set applicationName=myapp \
+  --set componentName=myapp \
   --set gitRepoUrl=https://github.com/myorg/myrepo
 ```
 

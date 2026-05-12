@@ -2,11 +2,10 @@
 
 This directory contains automation scripts for SLSA-Konflux installation, configuration, and testing.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Install Konflux Operator
 ```bash
-# Clone and deploy Konflux operator
 git clone https://github.com/konflux-ci/konflux-ci.git
 cd konflux-ci
 ./scripts/deploy-local.sh
@@ -14,44 +13,27 @@ cd konflux-ci
 
 ### Setup Prerequisites
 ```bash
-# Return to slsa-konflux-example repository
 cd /path/to/slsa-konflux-example
-
-# Setup prerequisites (creates managed-tenant namespace and custom pipeline config)
 ./scripts/setup-prerequisites.sh
 ```
 
-### Onboard Your Application
+### Onboard Your Component
 ```bash
-# Onboard application using helm chart
-helm install festoji ./resources \
-  --set applicationName=festoji \
+helm install festoji ./charts/component-onboarding \
+  --set componentName=festoji \
   --set gitRepoUrl=https://github.com/FORK_ORG/festoji
 
-# Verify onboarding
 kubectl get application,component -n default-tenant
 ```
 
-## 📄 Available Scripts
+## Available Scripts
 
-### ✅ **setup-prerequisites.sh**
-**Purpose**: Complete prerequisites setup after Konflux operator deployment
+### setup-prerequisites.sh
+Complete prerequisites setup after Konflux operator deployment. Creates the managed-tenant namespace for privileged release operations and configures the Konflux operator to use the custom SLSA pipeline via the Konflux CR's pipelineConfig field. Idempotent (safe to run multiple times).
 
-**Features**:
-- Creates managed-tenant namespace for privileged release operations
-- Applies custom SLSA pipeline configuration (slsa-e2e-oci-ta) to build service
-- Idempotent (safe to run multiple times)
+### generate-release-signing-keys.sh
+Generate cosign signing keys for managed namespace VSA signing.
 
-### ✅ **generate-release-signing-keys.sh**
-**Purpose**: Generate cosign signing keys for managed namespace VSA signing
-
-**Features**:
-- Generates cosign key-pair for release attestation signing
-- Creates Kubernetes secret in managed namespace
-- Supports password-protected keys (via COSIGN_PASSWORD env var)
-- Provides instructions for key usage
-
-**Usage**:
 ```bash
 # Generate keys in default managed-tenant namespace
 ./scripts/generate-release-signing-keys.sh
@@ -63,15 +45,14 @@ kubectl get application,component -n default-tenant
 COSIGN_PASSWORD="secure-password" ./scripts/generate-release-signing-keys.sh
 ```
 
-## 📋 Prerequisites
+## Prerequisites
 
 These scripts require:
 - Konflux operator deployed (via konflux-ci/scripts/deploy-local.sh)
 - kubectl configured for your cluster
 - Helm for chart installation
-- Git for source code management
 
-## 🔧 Complete Workflow
+## Complete Workflow
 
 ```bash
 # 1. Deploy Konflux operator
@@ -83,16 +64,15 @@ cd konflux-ci
 cd /path/to/slsa-konflux-example
 ./scripts/setup-prerequisites.sh
 
-# 3. Onboard your application
-helm install festoji ./resources \
-  --set applicationName=festoji \
+# 3. Install platform config
+helm install platform ./charts/platform-config
+
+# 4. Onboard your component
+helm install festoji ./charts/component-onboarding \
+  --set componentName=festoji \
   --set gitRepoUrl=https://github.com/FORK_ORG/festoji
 
-# 4. Monitor builds and releases
+# 5. Monitor builds and releases
 kubectl get pipelineruns -n default-tenant -w
 kubectl get releases -n default-tenant
 ```
-
-## 📖 Development
-
-Scripts follow patterns from the Konflux project and maintain compatibility with the operator-based deployment model. The operator handles cluster-level resources while these scripts manage tenant-specific customizations.

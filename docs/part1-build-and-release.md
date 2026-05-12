@@ -6,38 +6,7 @@ For cluster setup and prerequisites, see the [main README](../README.md#pre-requ
 
 ## Onboard Your Component
 
-Konflux separates infrastructure configuration from component onboarding through two helm charts. The platform configuration installs once per cluster to establish the trust boundaries, signing keys, and policies. Component onboarding creates the application, integration tests, and release plan for each component you build.
-
-Both charts operate across two namespaces:
-
-- `default-tenant`: The unprivileged tenant namespace where builds occur (created by the Konflux operator)
-- `managed-tenant`: The privileged managed namespace where releases are validated and signed (created by the prerequisites script)
-
-### Install Platform Configuration
-
-Install the platform configuration once per cluster:
-
-```bash
-helm install platform ./charts/platform-config
-```
-
-This creates the EnterpriseContractPolicy for SLSA3 validation, RoleBindings for admin access, ServiceAccounts for release pipeline execution, and signing keys for release attestation signing.
-
-The chart auto-generates a cosign key pair for release signing (VSAs, attestations). Base image verification keys are separate — they verify the provenance and release signatures of parent images used in your builds, enabling dependency level tracking in VSAs. To enable base image verification:
-
-```bash
-helm install platform ./charts/platform-config \
-  --set release.baseImageVerification.enabled=true
-```
-
-The default keys in `charts/platform-config/keys/` verify Red Hat UBI base images. If your base images come from a different source, replace the key files before installing:
-
-```bash
-cp /path/to/your-provenance.pub charts/platform-config/keys/base-image-provenance.pub
-cp /path/to/your-release.pub charts/platform-config/keys/base-image-release.pub
-```
-
-The `builderId` value should also match your upstream's builder (default: `https://tekton.dev/chains/v2`).
+Before running this walkthrough, complete the cluster setup and prerequisites as described in the [main README](../README.md#pre-requisites). This includes deploying Konflux, installing the platform configuration chart, and setting up the managed-tenant namespace.
 
 ### Onboard Festoji
 
@@ -52,7 +21,7 @@ Now install the component-onboarding chart for festoji:
 ```bash
 export FORK_ORG="ORGANIZATION"
 helm install festoji ./charts/component-onboarding \
-  --set applicationName=festoji \
+  --set componentName=festoji \
   --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
 ```
 
@@ -87,13 +56,13 @@ After you merge the build-service PR, you can trigger builds by opening pull req
 When you open a pull request, Pipelines as Code receives a webhook notification from GitHub and creates a PipelineRun in the tenant namespace. The build pipeline runs the following tasks in order:
 
 1. **init**: Initialize workspace and set up build parameters
-2. **git-clone**: Clone the source repository at the specific commit SHA
-3. **verify-source**: Validate the source repository against its SLSA source policy
-4. **prefetch-dependencies**: Download dependencies for hermetic builds
-5. **build-container**: Build the container image using buildah
+2. **clone-repository**: Clone the source repository at the specific commit SHA
+3. **prefetch-dependencies**: Download dependencies for hermetic builds
+4. **build-container**: Build the container image using buildah
+5. **verify-source**: Validate the source repository against its SLSA source policy
 6. **build-image-index**: Create multi-platform image manifest
-7. **clair-scan**: Scan the image for vulnerabilities using Clair
-8. **trivy-sbom-scan**: Scan the SBOM for vulnerabilities using Trivy
+7. **trivy-sbom-scan**: Scan the SBOM for vulnerabilities using Trivy (enabled by default)
+8. **clair-scan**: Scan the image for vulnerabilities using Clair (disabled by default, set `enable-clair-scan` to `"true"` to enable)
 9. **sast-shell-check**: Run static analysis on shell scripts
 10. **apply-tags**: Apply git-based tags to the built image
 
@@ -346,16 +315,16 @@ To view the attestations attached to your built image, use `cosign` (requires co
 
 ```bash
 # View the attestation tree (shows provenance, signatures, and SBOM)
-cosign tree localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+cosign tree ${IMAGE_URL_EXTERNAL}@${IMAGE_DIGEST} \
   --allow-insecure-registry
 
 # Download and view the SLSA provenance attestation
-cosign download attestation localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+cosign download attestation ${IMAGE_URL_EXTERNAL}@${IMAGE_DIGEST} \
   --allow-insecure-registry \
   | jq -r '.payload' | base64 -d | jq .
 
 # View key provenance fields
-cosign download attestation localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+cosign download attestation ${IMAGE_URL_EXTERNAL}@${IMAGE_DIGEST} \
   --allow-insecure-registry \
   | jq -r '.payload' | base64 -d \
   | jq '.predicateType, .predicate.buildType, .predicate.builder.id'
@@ -427,7 +396,8 @@ The buildah task automatically generates an SBOM during the container build proc
 
 ```bash
 # Download the SBOM (generated by buildah during build)
-cosign download sbom localhost:5001/default-tenant/festoji@${IMAGE_DIGEST} \
+# Note: cosign automatically resolves the index digest to the platform-specific manifest
+cosign download sbom ${IMAGE_URL_EXTERNAL}@${IMAGE_DIGEST} \
   --allow-insecure-registry > sbom.json
 
 # View SBOM metadata
@@ -469,7 +439,7 @@ The helm chart creates two IntegrationTestScenario resources:
 
 **policy-pr** (pull_request context): Validates PR builds at source level 1. PR source branches are not protected, so they cannot achieve higher source levels. This validates whether the resulting push will succeed.
 
-**policy-push** (push context): Validates push builds with the same strict policy used during release. Requires source level 2+ with source-tool provenance.
+**policy-push** (push context): Validates push builds with the same policy configuration used during release. By default, requires source level 1 (version control only).
 
 Check integration test results:
 
@@ -480,8 +450,12 @@ kubectl get integrationtestscenario -n default-tenant
 # Find snapshots for your builds
 kubectl get snapshots -n default-tenant --sort-by=.metadata.creationTimestamp
 
+# Get the snapshot name for detailed inspection
+SNAPSHOT_NAME=$(kubectl get snapshots -n default-tenant \
+  --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d'/' -f2)
+
 # Check test results on a snapshot
-kubectl get snapshot <SNAPSHOT_NAME> -n default-tenant \
+kubectl get snapshot ${SNAPSHOT_NAME} -n default-tenant \
   -o jsonpath='{.metadata.annotations.test\.appstudio\.openshift\.io/status}' | jq .
 
 # View PipelineRuns for specific test scenarios
@@ -536,16 +510,20 @@ View your release configuration:
 
 ```bash
 # View the ReleasePlan in the tenant namespace
-kubectl get releaseplan festoji-release -n default-tenant -o yaml
+kubectl get releaseplan festoji-release-plan -n default-tenant -o yaml
 
 # View the ReleasePlanAdmission in the managed namespace
-kubectl get releaseplanadmission festoji-release-admission -n managed-tenant -o yaml
+kubectl get releaseplanadmission festoji-release-plan-admission -n managed-tenant -o yaml
 
 # View releases
 kubectl get releases -n default-tenant
 
+# Get the release name for detailed inspection
+RELEASE_NAME=$(kubectl get releases -n default-tenant \
+  --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d'/' -f2)
+
 # Check release pipeline runs
-kubectl get pipelineruns -n managed-tenant -l release.appstudio.openshift.io/name=<RELEASE_NAME>
+kubectl get pipelineruns -n managed-tenant -l release.appstudio.openshift.io/name=${RELEASE_NAME}
 ```
 
 <details>
@@ -565,16 +543,13 @@ The `Succeeded` status indicates the release pipeline completed successfully, in
 
 </details>
 
-The release pipeline executes several tasks in the managed namespace:
+The release pipeline executes several tasks in the managed namespace. The key flow is policy verification gates image publication:
 
-1. **verify-conforma**: Re-evaluates all policies against the build provenance using Conforma
-2. **apply-mapping**: Maps artifacts to destination registries based on the release plan
-3. **push-snapshot**: Publishes the image to the release registry
-4. **attach-vsa**: Generates and signs Verification Summary Attestations (VSAs)
+1. **verify-conforma**: Validates all policies against the build provenance using Conforma
+2. **push-snapshot**: Publishes the image to the release registry (only runs after successful policy verification)
+3. **attach-vsa**: Attaches signed Verification Summary Attestations (VSAs) to the published image
 
-The `verify-conforma` task validates that all SLSA Build L3 requirements are met, all build tasks came from trusted bundles, attestations are properly signed, and no policy violations exist. When the policy check passes, the release pipeline continues to push the image. When the policy check fails, the release pipeline halts before pushing images, the Release is marked as failed, and policy violation details are available in task logs.
-
-After policy verification succeeds, the `push-snapshot` task publishes the built image to the destination registry specified in the mapping. The `attach-vsa` task then generates VSAs containing the verification results and signs them with the release signing key.
+The `verify-conforma` task validates that all SLSA Build L3 requirements are met, all build tasks came from trusted bundles, attestations are properly signed, and no policy violations exist. If verification fails, the pipeline stops and the artifact is never published. Only after successful verification does `push-snapshot` publish the built image to the destination registry specified in the mapping. Then `attach-vsa` signs and attaches VSAs containing the verification results to the published images.
 
 <details>
 <summary>Example VSA for festoji (SLSA_BUILD_LEVEL_3, SLSA_SOURCE_LEVEL_1)</summary>
@@ -618,9 +593,6 @@ For Festoji, the VSA includes `SLSA_BUILD_LEVEL_3` because Konflux achieves Buil
 Get the released image URL from the Release status:
 
 ```bash
-# Get the release name from your earlier command
-RELEASE_NAME=$(kubectl get releases -n default-tenant --sort-by=.metadata.creationTimestamp -o name | tail -1 | cut -d'/' -f2)
-
 # Extract the released image URL
 RELEASE_IMAGE_URL=$(kubectl get release ${RELEASE_NAME} -n default-tenant \
   -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].repository}')
@@ -699,8 +671,8 @@ metadata:
   generateName: festoji-manual-
   namespace: default-tenant
 spec:
-  releasePlan: festoji-release
-  snapshot: <SNAPSHOT_NAME>
+  releasePlan: festoji-release-plan
+  snapshot: ${SNAPSHOT_NAME}
 EOF
 ```
 
@@ -708,27 +680,35 @@ EOF
 
 Released artifacts include signed Verification Summary Attestations (VSAs) that consumers can use to verify the artifact meets SLSA requirements before use.
 
+First, extract the release signing public key from the cluster:
+
+```bash
+kubectl get secret release-signing-key -n managed-tenant \
+  -o jsonpath='{.data.cosign\.pub}' | base64 -d > cosign-release.pub
+```
+
 List all attestations attached to a released image:
 
 ```bash
-cosign tree <registry>/<image>:<tag> --allow-insecure-registry
+cosign tree ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+  --allow-insecure-registry
 ```
 
 Verify the SLSA VSA with the release signing public key:
 
 ```bash
 cosign verify-attestation \
-  --key <public-key-or-url> \
+  --key cosign-release.pub \
   --type https://slsa.dev/verification_summary/v1 \
   --insecure-ignore-tlog \
   --allow-insecure-registry \
-  <registry>/<image>:<tag>
+  ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}
 ```
 
 Download and inspect the VSA predicate:
 
 ```bash
-cosign download attestation <registry>/<image>:<tag> \
+cosign download attestation ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
   --predicate-type https://slsa.dev/verification_summary/v1 \
   --allow-insecure-registry \
   | jq '.payload | @base64d | fromjson | .predicate'
@@ -740,10 +720,11 @@ For fail-safe verification:
 
 ```bash
 cosign verify-attestation \
-  --key <public-key> \
+  --key cosign-release.pub \
   --type https://slsa.dev/verification_summary/v1 \
   --insecure-ignore-tlog \
-  <image> || { echo "VSA verification failed!"; exit 1; }
+  --allow-insecure-registry \
+  ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} || { echo "VSA verification failed!"; exit 1; }
 ```
 
 VSAs are stored as OCI attestations co-located with the artifact image. Consumers retrieve them using `cosign`. Attestations are cryptographically signed with the release signing key.
@@ -760,7 +741,7 @@ The helm chart creates an EnterpriseContractPolicy resource that defines what mu
 
 ```bash
 # View the policy configuration
-kubectl get enterprisecontractpolicy ec-policy -n managed-tenant -o yaml
+kubectl get enterprisecontractpolicy festoji-ec-policy -n managed-tenant -o yaml
 ```
 
 The policy contains three key components.
@@ -777,7 +758,7 @@ The policy contains three key components.
   - CVE remediation timeframes (critical: 6 days, high: 29 days)
   - Release schedule restrictions (no releases on Fridays/weekends/holidays)
   - See `managed-context/policies/ec-policy-data/data/rule_data.yml` for full configuration
-- **Acceptable bundles**: `oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest`
+- **Acceptable bundles**: `oci::quay.io/slsa-konflux-example/slsa-e2e-data-acceptable-bundles:latest`
   - List of trusted Tekton task bundles allowed in builds
   - Updated automatically when new task versions are published
 
@@ -820,14 +801,14 @@ A normal release with a passing policy produces a full green pipeline. After a s
 
 You can tighten the policy on-cluster to force a failure without modifying git. The `ruleData` field in the EnterpriseContractPolicy spec overrides any values fetched from git-based data sources.
 
-For example, the current policy requires source level 2. The `verify-source` task achieves level 3. To demonstrate a failure, require level 4 (which does not exist in the SLSA spec and therefore cannot be achieved):
+For example, the current policy requires source level 1 and festoji achieves level 1 (version control only, since festoji is not enrolled with source-tool). To demonstrate a failure, require level 2:
 
 ```bash
 # Override the minimum required source level on-cluster
-kubectl patch enterprisecontractpolicy ec-policy -n managed-tenant \
+kubectl patch enterprisecontractpolicy festoji-ec-policy -n managed-tenant \
   --type=json -p '[
     {"op": "add", "path": "/spec/sources/0/ruleData",
-     "value": {"slsa_source_min_level": "4"}}
+     "value": {"slsa_source_min_level": "2"}}
   ]'
 ```
 
@@ -844,7 +825,7 @@ metadata:
   generateName: festoji-policy-fail-demo-
   namespace: default-tenant
 spec:
-  releasePlan: festoji-release
+  releasePlan: festoji-release-plan
   snapshot: ${SNAPSHOT}
 EOF
 ```
@@ -853,8 +834,8 @@ The `verify-conforma` task will fail with a message indicating the source level 
 
 ```
 FAILURE: slsa_source_verification.required_level_achieved
-  verify-source task achieved SLSA_SOURCE_LEVEL_3,
-  but minimum required level is 4
+  verify-source task achieved SLSA_SOURCE_LEVEL_1,
+  but minimum required level is 2
 ```
 
 The `push-snapshot` task is skipped because it depends on `verify-conforma` succeeding. The artifact is never published.
@@ -862,7 +843,7 @@ The `push-snapshot` task is skipped because it depends on `verify-conforma` succ
 After capturing the results, revert the policy:
 
 ```bash
-kubectl patch enterprisecontractpolicy ec-policy -n managed-tenant \
+kubectl patch enterprisecontractpolicy festoji-ec-policy -n managed-tenant \
   --type=json -p '[{"op": "remove", "path": "/spec/sources/0/ruleData"}]'
 ```
 
