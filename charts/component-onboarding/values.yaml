@@ -106,6 +106,12 @@ release:
     # SLSA source level requirement (1, 2, or 3)
     slsaSourceMinLevel: "1"
 
+    # Block releases on unpatched CVEs at these severity levels
+    # By default, unpatched CVEs (no known fix) are warnings only.
+    # Set to ["critical", "high"] to block releases on unpatched high/critical CVEs.
+    # Example: ["critical", "high"]
+    restrictUnpatchedCveLevels: []
+
     # Policy rules to exclude (e.g., per-CVE exceptions)
     # Example: ["cve.cve_blockers:CVE-2026-4878"]
     excludeRules: []

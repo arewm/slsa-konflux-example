@@ -16,9 +16,17 @@ spec:
       data:
         - {{ $policyData }}
         - {{ .Values.release.policy.acceptableBundles }}
-{{- if .Values.release.policy.slsaSourceMinLevel }}
+{{- if or .Values.release.policy.slsaSourceMinLevel .Values.release.policy.restrictUnpatchedCveLevels }}
       ruleData:
+{{- if .Values.release.policy.slsaSourceMinLevel }}
         slsa_source_min_level: {{ .Values.release.policy.slsaSourceMinLevel | quote }}
+{{- end }}
+{{- if .Values.release.policy.restrictUnpatchedCveLevels }}
+        restrict_unpatched_cve_security_levels:
+{{- range .Values.release.policy.restrictUnpatchedCveLevels }}
+          - {{ . | quote }}
+{{- end }}
+{{- end }}
 {{- end }}
       config:
         include:

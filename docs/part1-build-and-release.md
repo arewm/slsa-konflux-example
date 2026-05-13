@@ -118,7 +118,17 @@ echo "Image Manifest Digest: ${MANIFEST_DIGEST}"
 
 Konflux attaches different artifacts at different levels. SARIF scan results attach to the image index, while Trivy and Clair vulnerability reports, SBOMs, and signatures attach to the platform-specific image manifest.
 
-The local registry uses a self-signed certificate. For the commands below, we skip TLS verification using tool-specific flags.
+The local registry uses a self-signed certificate and requires authentication. For the commands below, we skip TLS verification using tool-specific flags. To authenticate CLI tools with the internal registry:
+
+```bash
+# Extract registry credentials and login
+REGCRED=$(kubectl get secret regcred-internal-registry -n default-tenant \
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d)
+REG_USER=$(echo "$REGCRED" | jq -r '.auths["registry-service.kind-registry"].auth' | base64 -d | cut -d: -f1)
+REG_PASS=$(echo "$REGCRED" | jq -r '.auths["registry-service.kind-registry"].auth' | base64 -d | cut -d: -f2)
+
+cosign login localhost:5001 -u "$REG_USER" -p "$REG_PASS"
+```
 
 ### Inspecting with Different Tools
 
@@ -593,13 +603,16 @@ For Festoji, the VSA includes `SLSA_BUILD_LEVEL_3` because Konflux achieves Buil
 Get the released image URL from the Release status:
 
 ```bash
-# Extract the released image URL
+# Extract the released image URL and digest
 RELEASE_IMAGE_URL=$(kubectl get release ${RELEASE_NAME} -n default-tenant \
-  -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].repository}')
+  -o jsonpath='{.status.artifacts.images[0].urls[0]}')
 RELEASE_IMAGE_DIGEST=$(kubectl get release ${RELEASE_NAME} -n default-tenant \
-  -o jsonpath='{.status.processing.releasePlanAdmission.applications[0].digest}')
+  -o jsonpath='{.status.artifacts.images[0].shasum}')
 
-echo "Released Image: ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}"
+# Convert internal registry service name to external localhost address
+RELEASE_IMAGE_URL_EXTERNAL=$(echo ${RELEASE_IMAGE_URL} | sed 's/registry-service.kind-registry/localhost:5001/')
+
+echo "Released Image: ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST}"
 ```
 
 Verify the release completed successfully:
@@ -614,11 +627,11 @@ View released images and their attestations:
 
 ```bash
 # Check released image artifacts
-cosign tree ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+cosign tree ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST} \
   --allow-insecure-registry
 
 # Download attestations from released image
-cosign download attestation ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+cosign download attestation ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST} \
   --allow-insecure-registry \
   | jq -r '.payload' | base64 -d | jq .
 ```
@@ -690,7 +703,7 @@ kubectl get secret release-signing-key -n managed-tenant \
 List all attestations attached to a released image:
 
 ```bash
-cosign tree ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+cosign tree ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST} \
   --allow-insecure-registry
 ```
 
@@ -702,13 +715,13 @@ cosign verify-attestation \
   --type https://slsa.dev/verification_summary/v1 \
   --insecure-ignore-tlog \
   --allow-insecure-registry \
-  ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST}
+  ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST}
 ```
 
 Download and inspect the VSA predicate:
 
 ```bash
-cosign download attestation ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} \
+cosign download attestation ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST} \
   --predicate-type https://slsa.dev/verification_summary/v1 \
   --allow-insecure-registry \
   | jq '.payload | @base64d | fromjson | .predicate'
@@ -724,7 +737,7 @@ cosign verify-attestation \
   --type https://slsa.dev/verification_summary/v1 \
   --insecure-ignore-tlog \
   --allow-insecure-registry \
-  ${RELEASE_IMAGE_URL}@${RELEASE_IMAGE_DIGEST} || { echo "VSA verification failed!"; exit 1; }
+  ${RELEASE_IMAGE_URL_EXTERNAL}@${RELEASE_IMAGE_DIGEST} || { echo "VSA verification failed!"; exit 1; }
 ```
 
 VSAs are stored as OCI attestations co-located with the artifact image. Consumers retrieve them using `cosign`. Attestations are cryptographically signed with the release signing key.

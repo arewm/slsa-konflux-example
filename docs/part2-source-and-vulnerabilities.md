@@ -499,7 +499,16 @@ rule_data:
     - high
 ```
 
-Now unpatched critical and high severity CVEs become violations instead of warnings. Use this carefully. Blocking on unpatched CVEs can halt all releases if an upstream dependency has a disclosed but unpatched vulnerability.
+Now unpatched critical and high severity CVEs become violations instead of warnings. The component-onboarding chart supports this via the `restrictUnpatchedCveLevels` value:
+
+```bash
+helm upgrade --install source-test-repo ./charts/component-onboarding \
+  --reuse-values \
+  --set 'release.policy.restrictUnpatchedCveLevels[0]=critical' \
+  --set 'release.policy.restrictUnpatchedCveLevels[1]=high'
+```
+
+Use this carefully. Blocking on unpatched CVEs can halt all releases if an upstream dependency has a disclosed but unpatched vulnerability.
 
 ## Hermetic Builds
 
@@ -507,7 +516,7 @@ Network access during builds introduces non-determinism. A build that succeeds t
 
 Konflux supports hermetic builds through the `hermetic` pipeline parameter. When set to `true`, the build container loses network access after the `prefetch-dependencies` task completes.
 
-**Note**: The hermetic build configuration applies to any component. The examples in this section demonstrate with Festoji from Part 1, but the same approach works for source-test-repo or any other component.
+**Note**: The hermetic build configuration applies to any component. The examples below use Festoji from Part 1, which has Go dependencies requiring `prefetch-input=gomod`. Components without external dependencies (like source-test-repo) can be made hermetic by setting only `hermetic=true` with an empty `prefetch-input` — network access is still disabled during the build, but no dependencies need prefetching.
 
 ### How It Works
 
