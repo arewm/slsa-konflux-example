@@ -98,6 +98,8 @@ SLSA Source Track provides assurance about where source code came from and how i
 
 Achieving Level 3 requires integration between your source repository and source attestation tools.
 
+**Important**: Setting `slsaSourceMinLevel="3"` in the onboarding chart is a policy *requirement*, not a guarantee. The policy says "reject builds that don't achieve Level 3" — but the build itself must actually achieve that level. This requires enrolling the repository with [source-tool](https://github.com/slsa-framework/source-tool) and configuring branch protection rules on the main branch. Without both, push builds will achieve at most Level 1 and fail the policy check at release time.
+
 ### Source-Tool Enrollment
 
 source-test-repo is enrolled with source-tool via a GitHub Actions workflow. The workflow file `.github/workflows/compute_slsa_source.yaml` runs on every push to protected branches:

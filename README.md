@@ -66,7 +66,7 @@ The prerequisites script prepares the cluster for the SLSA walkthrough:
 - Labels the internal registry credential (`regcred-internal-registry`) so build-service auto-links it to every component's build pipeline ServiceAccount
 - Copies registry credentials to `managed-tenant` and links them to the integration and release pipeline ServiceAccounts
 
-**Note**: The pre-built pipeline bundle and task bundles in `quay.io/slsa-konflux-example` are public and require no authentication. The `hack/build-pipeline.sh` script is for advanced users who want to customize and push to their own registry.
+**Note**: The pre-built pipeline bundle and task bundles in `quay.io/slsa-konflux-example` are public and require no authentication. The `hack/build-pipeline.sh` script is for advanced users who want to customize and push to their own registry. After rebuilding, re-run `./scripts/setup-prerequisites.sh` to update the Konflux CR with the new bundle reference.
 
 For detailed deployment options, see the [Local Installation Guide](https://konflux-ci.dev/konflux-ci/docs/installation/install-local/).
 
