@@ -139,7 +139,7 @@ trustedCABundle:
   # Enable auto-detection and creation of CA bundle ConfigMaps
   # Required when using an internal registry with self-signed TLS certificates (e.g., KinD)
   # Not needed for production clusters using publicly-trusted CAs
-  enabled: false
+  enabled: true
 
   # Registry host:port to connect to for certificate extraction
   # Defaults to the hostname from release.trustedArtifacts.ociStorage with port 443
