@@ -87,6 +87,24 @@ spec:
       description: Expected builder ID in base image provenance for dependency level verification
       type: string
       default: "https://tekton.dev/chains/v2"
+    - name: rekorHost
+      description: Rekor transparency log URL for keyless signature verification.
+      type: string
+      default: "http://rekor-server.rekor-system.svc.cluster.local"
+    - name: tufMirror
+      description: TUF mirror URL for fetching Sigstore trust roots.
+      type: string
+      default: "http://tuf-server.tuf-system.svc.cluster.local"
+    - name: certificateIdentity
+      description: >-
+        Certificate identity (URI SAN) for keyless verification of Tekton
+        Chains signatures.
+      type: string
+      default: "https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-chains-controller"
+    - name: certificateOidcIssuer
+      description: OIDC issuer URL for keyless verification.
+      type: string
+      default: "https://kubernetes.default.svc"
   tasks:
     - name: verify-access-to-resources
       taskRef:
@@ -315,8 +333,16 @@ spec:
         - name: STRICT
           # only set to false for development
           value: "true"
+        - name: REKOR_HOST
+          value: "$(params.rekorHost)"
+        - name: TUF_MIRROR
+          value: "$(params.tufMirror)"
         - name: IGNORE_REKOR
-          value: "true"
+          value: "false"
+        - name: CERTIFICATE_IDENTITY
+          value: "$(params.certificateIdentity)"
+        - name: CERTIFICATE_OIDC_ISSUER
+          value: "$(params.certificateOidcIssuer)"
         - name: EXTRA_RULE_DATA
           value: $(params.enterpriseContractExtraRuleData)
         - name: TIMEOUT

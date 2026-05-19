@@ -777,8 +777,11 @@ The policy contains three key components.
 
 **Signing Key** (`spec.publicKey`):
 
-- **Key location**: `k8s://tekton-pipelines/public-key`
-- Used to verify Tekton Chains signatures on attestations
+- **Default (keyless)**: omitted — Conforma verifies Tekton Chains signatures
+  against the Rekor transparency log using the Fulcio root CA distributed by TUF.
+  This is the default when Sigstore is deployed.
+- **Keypair fallback**: set `release.signing.publicKey` in the component-onboarding
+  chart values (e.g. `k8s://tekton-pipelines/public-key`) for clusters without Sigstore.
 
 The policy includes 104 policy rules across three collections:
 

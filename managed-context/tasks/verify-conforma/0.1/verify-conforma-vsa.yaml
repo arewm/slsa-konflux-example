@@ -185,6 +185,21 @@ spec:
       description: Maximum wait time between retries (e.g., "3s", "10s")
       default: "3s"
 
+    - name: CERTIFICATE_IDENTITY
+      type: string
+      description: >-
+        Certificate identity for keyless verification of Tekton Chains signatures.
+        When set alongside CERTIFICATE_OIDC_ISSUER, enables keyless verification
+        mode and PUBLIC_KEY is ignored. Leave empty for keypair-based verification.
+      default: ""
+
+    - name: CERTIFICATE_OIDC_ISSUER
+      type: string
+      description: >-
+        OIDC issuer URL for keyless verification of Tekton Chains signatures.
+        Used together with CERTIFICATE_IDENTITY.
+      default: ""
+
     - name: ENABLE_VSA
       type: string
       description: Enable VSA generation
@@ -299,6 +314,14 @@ spec:
           --rekor-url "$(params.REKOR_HOST)"
           --ignore-rekor=$(params.IGNORE_REKOR)
           --workers "$(params.WORKERS)"
+
+        if [[ -n "$(params.CERTIFICATE_IDENTITY)" && -n "$(params.CERTIFICATE_OIDC_ISSUER)" ]]; then
+          EC_ARGS+=(
+            --certificate-identity "$(params.CERTIFICATE_IDENTITY)"
+            --certificate-oidc-issuer "$(params.CERTIFICATE_OIDC_ISSUER)"
+          )
+        fi
+
           --info=$(params.INFO)
           --timeout=100h
           --strict=false

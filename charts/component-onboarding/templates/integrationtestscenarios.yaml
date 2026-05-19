@@ -23,7 +23,7 @@ spec:
     - name: POLICY_CONFIGURATION
       value: {{ .Values.release.targetNamespace }}/{{ $applicationName }}-{{ .Values.release.policyName }}
     - name: PUBLIC_KEY
-      value: k8s://tekton-pipelines/public-key
+      value: {{ .Values.release.signing.publicKey | quote }}
     - name: STRICT
       value: "true"
     - name: EXTRA_RULE_DATA
@@ -52,6 +52,6 @@ spec:
     - name: POLICY_CONFIGURATION
       value: {{ .Values.release.targetNamespace }}/{{ $applicationName }}-{{ .Values.release.policyName }}
     - name: PUBLIC_KEY
-      value: k8s://tekton-pipelines/public-key
+      value: {{ .Values.release.signing.publicKey | quote }}
     - name: STRICT
       value: "true"

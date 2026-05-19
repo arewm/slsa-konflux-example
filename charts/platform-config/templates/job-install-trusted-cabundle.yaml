@@ -59,6 +59,18 @@ spec:
           echo "$CA_BUNDLE" | openssl x509 -noout -subject -issuer -dates 2>/dev/null || true
           echo ""
 
+          # Append Fulcio root CA if the Sigstore scaffold chart has been deployed.
+          # The scaffold chart stores the Fulcio signing CA in fulcio-server-secret.
+          FULCIO_CA=$(kubectl get secret fulcio-server-secret \
+            -n fulcio-system \
+            -o jsonpath='{.data.cert}' 2>/dev/null | base64 -d || true)
+          if [ -n "${FULCIO_CA}" ]; then
+            echo "Appending Fulcio root CA from fulcio-system/fulcio-server-secret"
+            CA_BUNDLE="${CA_BUNDLE}"$'\n'"${FULCIO_CA}"
+          else
+            echo "Sigstore not deployed or fulcio-server-secret not found; skipping Fulcio CA"
+          fi
+
           for NS in "${NAMESPACES[@]}"; do
             echo "Creating ${CONFIGMAP_NAME} in namespace ${NS}..."
 

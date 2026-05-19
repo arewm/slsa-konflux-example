@@ -7,7 +7,9 @@ metadata:
   namespace: {{ .Values.release.targetNamespace }}
 spec:
   description: SLSA policy for {{ $applicationName }}
-  publicKey: 'k8s://tekton-pipelines/public-key'
+{{- if .Values.release.signing.publicKey }}
+  publicKey: {{ .Values.release.signing.publicKey | quote }}
+{{- end }}
   sources:
     - name: Release Policies
       policy:

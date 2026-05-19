@@ -52,7 +52,14 @@ RELEASE_URL="https://github.com/konflux-ci/konflux-ci/releases/download/${KONFLU
 
 This script creates a Kind cluster, deploys the Konflux operator, creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev), and configures webhooks for Pipelines as Code.
 
-After deploying the operator, run the prerequisites script:
+After deploying the operator, install the Sigstore stack (Fulcio, Rekor, CT Log, TUF). This configures Tekton Chains for keyless signing and registers the in-cluster Sigstore services with the Konflux CR:
+
+```bash
+# Still in the konflux-ci directory
+./integrations/sigstore/install.sh
+```
+
+Then run the prerequisites script from this repository:
 
 ```bash
 cd /path/to/slsa-konflux-example

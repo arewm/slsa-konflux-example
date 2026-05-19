@@ -87,6 +87,14 @@ release:
   # Full name will be "{componentName}-{policyName}" (or "{applicationName}-{policyName}" if applicationName is set)
   policyName: "ec-policy"
 
+  signing:
+    # Public key for verifying Tekton Chains signatures on build provenance.
+    # Set to a cosign key reference (e.g. "k8s://tekton-pipelines/public-key")
+    # when using keypair-based Chains signing. Leave empty (default) for
+    # keyless signing via Sigstore/Fulcio, where Conforma verifies against
+    # the Rekor transparency log instead.
+    publicKey: ""
+
   # Enterprise Contract policy configuration
   policy:
     # Policy OCI bundle reference

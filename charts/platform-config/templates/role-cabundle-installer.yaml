@@ -25,4 +25,21 @@ rules:
 - apiGroups: [""]
   resources: ["configmaps"]
   verbs: ["get", "create", "delete", "patch", "update"]
+---
+# Read access to the Fulcio CA secret created by the Sigstore scaffold chart.
+# Best-effort: Sigstore may not be deployed; the job handles absence gracefully.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cabundle-installer-sigstore
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["fulcio-server-secret"]
+  verbs: ["get"]
+  # namespace: fulcio-system (ClusterRole because Role can't span namespaces)
 {{- end }}
