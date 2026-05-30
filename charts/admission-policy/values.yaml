@@ -1,0 +1,19 @@
+# Trusted bundle patterns with signing keys.
+# Each entry is matched as a glob prefix against the TaskRun bundle reference.
+# Leave signingKeys empty to configure the pattern without verification
+# (useful before tasks are signed — everything lands on dev).
+trustedBundles: []
+# Example:
+#   - pattern: "quay.io/konflux-ci/tekton-catalog/*"
+#     signingKeys:
+#       - name: "konflux-release-2026"
+#         publicKey: |
+#           -----BEGIN PUBLIC KEY-----
+#           ...
+#           -----END PUBLIC KEY-----
+
+# Namespaces where TaskRun classification is applied.
+# These namespaces also get labeled trusted-tasks-enabled: "true" by the chart.
+namespaces:
+  - default-tenant
+  - managed-tenant
