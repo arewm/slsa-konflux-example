@@ -1,0 +1,6 @@
+apiVersion: v2
+name: admission-policy
+description: Kyverno admission policies for TaskRun trust classification and Pod label spoofing prevention
+type: application
+version: 0.1.0
+appVersion: "1.0"
