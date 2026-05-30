@@ -1,0 +1,61 @@
+# Arm64 overlay for sigstore/scaffold chart
+#
+# Pass this file to install.sh via EXTRA_VALUES when deploying on arm64 hosts
+# (Apple Silicon, AWS Graviton, libkrun, etc.):
+#
+#   EXTRA_VALUES=$(pwd)/integrations/sigstore/values-arm64.yaml \
+#     /path/to/konflux-ci/integrations/sigstore/install.sh
+#
+# Why these overrides are needed:
+#
+# 1. gcr.io/trillian-opensource-ci/db_server is amd64-only. Under QEMU
+#    emulation, MySQL auto-sizes InnoDB to the full host RAM and gets OOMKilled.
+#    mysql:8.0 is multi-arch and natively arm64.
+#
+# 2. The default probe command (/etc/init.d/mysql status) does not exist in
+#    mysql:8.0 and the 1s timeout is too tight on constrained hardware.
+#
+# 3. docker.io/alpine/k8s is pinned to an amd64-only digest in the scaffold
+#    chart. Go binaries crash under QEMU with `lfstack.push invalid packing`.
+#    alpine/k8s 1.32.3 ships a multi-arch manifest; we pin the arm64 digest.
+
+trillian:
+  mysql:
+    image:
+      registry: docker.io
+      repository: library/mysql
+      version: "8.0"
+      pullPolicy: IfNotPresent
+    # --ignore-db-dir is MariaDB-only; omit it for mysql:8.0
+    args:
+      - "--innodb-buffer-pool-size=32M"
+      - "--innodb-log-buffer-size=8M"
+    livenessProbe:
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 10
+      failureThreshold: 5
+      successThreshold: 1
+      exec:
+        command:
+          - sh
+          - -c
+          - "mysqladmin ping -h 127.0.0.1 -u root --password=$MYSQL_ROOT_PASSWORD"
+    readinessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 10
+      failureThreshold: 3
+      successThreshold: 1
+      exec:
+        command:
+          - sh
+          - -c
+          - "mysqladmin ping -h 127.0.0.1 -u root --password=$MYSQL_ROOT_PASSWORD"
+
+copySecretJob:
+  # alpine/k8s 1.32.3 arm64 digest — chart default pins an amd64-only digest
+  registry: docker.io
+  repository: alpine/k8s
+  version: sha256:b97520499c9312c6c2ee0baaaa3baa87a9fe07657fdfb752a31e8a74d69b7dbb
+  pullPolicy: IfNotPresent

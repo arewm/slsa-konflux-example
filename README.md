@@ -59,6 +59,13 @@ After deploying the operator, install the Sigstore stack (Fulcio, Rekor, CT Log,
 ./integrations/sigstore/install.sh
 ```
 
+> **arm64 hosts (Apple Silicon, AWS Graviton, etc.):** the scaffold chart pins several amd64-only images that crash or OOMKill under QEMU emulation. Pass the overlay from this repository to substitute arm64-native images:
+>
+> ```bash
+> ./integrations/sigstore/install.sh \
+>   --extra-values-file /path/to/slsa-konflux-example/integrations/sigstore/values-arm64.yaml
+> ```
+
 Then run the prerequisites script from this repository:
 
 ```bash
