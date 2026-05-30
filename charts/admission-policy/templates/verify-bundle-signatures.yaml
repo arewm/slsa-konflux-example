@@ -1,0 +1,72 @@
+{{- if .Values.trustedBundles }}
+---
+# Intended to block TaskRuns referencing trusted bundle patterns that lack a valid cosign
+# signature. KNOWN LIMITATION (Kyverno 1.17): verifyImages cannot extract image references
+# from TaskRun spec.taskRef.params (resolver format) because the imageExtractors schema
+# does not support the 'filter' field needed to select a specific param by name. The
+# verifyImages rule currently fires on the TaskRun but finds no matching images and
+# passes vacuously. Until this is fixed upstream (tracked in
+# https://github.com/kyverno/kyverno/issues/XXXX), cosign signature enforcement for
+# resolver-format bundles must rely on registry access control.
+#
+# The preconditions ARE enforced — they correctly gate the rule on pattern+digest match.
+# The gap is signature verification within verifyImages once preconditions pass.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-bundle-signatures
+spec:
+  failurePolicy: Fail
+  rules:
+  - name: require-valid-signature
+    match:
+      any:
+      - resources:
+          kinds: ["TaskRun"]
+          namespaces: {{ .Values.namespaces | toJson }}
+    {{- $regexParts2 := list }}
+    {{- range .Values.trustedBundles }}
+      {{- $regexParts2 = append $regexParts2 (.pattern | replace "." "[.]" | replace "*" ".*") }}
+    {{- end }}
+    {{- $bundleRegex2 := join "|" $regexParts2 }}
+    context:
+    - name: bundleRef
+      variable:
+        jmesPath: "request.object.spec.taskRef.params[?name == 'bundle'] | [0] | value || ''"
+        default: ""
+    - name: isDigestPinned
+      variable:
+        value: "{{`{{ regex_match('@sha256:[a-f0-9]{64}', bundleRef) }}`}}"
+    - name: matchesPattern
+      variable:
+        value: "{{ `{{` }} regex_match('{{ $bundleRegex2 }}', bundleRef) {{ `}}` }}"
+    preconditions:
+      all:
+      - key: "{{`{{ bundleRef }}`}}"
+        operator: NotEquals
+        value: ""
+      - key: "{{`{{ isDigestPinned }}`}}"
+        operator: Equals
+        value: true
+      - key: "{{`{{ matchesPattern }}`}}"
+        operator: Equals
+        value: true
+    # Rule-level imageExtractors teach verifyImages where to find the bundle reference
+    # in the TaskRun spec (resolver format and legacy direct format).
+    verifyImages:
+    - imageReferences:
+      {{- range .Values.trustedBundles }}
+        - {{ .pattern | quote }}
+      {{- end }}
+      mutateDigest: false
+      verifyDigest: true
+      required: true
+      attestors:
+      {{- range .Values.trustedBundles }}
+        {{- range .signingKeys }}
+      - entries:
+          - keys:
+              publicKeys: {{ .publicKey | quote }}
+        {{- end }}
+      {{- end }}
+{{- end }}

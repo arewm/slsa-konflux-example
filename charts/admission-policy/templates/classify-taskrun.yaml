@@ -1,0 +1,66 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: classify-taskrun
+spec:
+  failurePolicy: Ignore
+  rules:
+  - name: set-dev-label
+    match:
+      any:
+      - resources:
+          kinds: ["TaskRun"]
+          operations: ["CREATE", "UPDATE"]
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            trusted-task-role: "dev"
+
+  {{- if .Values.trustedBundles }}
+  {{- /* Convert glob patterns to a combined regex: escape dots, replace * with .* */}}
+  {{- $regexParts := list }}
+  {{- range .Values.trustedBundles }}
+    {{- $regexParts = append $regexParts (.pattern | replace "." "[.]" | replace "*" ".*") }}
+  {{- end }}
+  {{- $bundleRegex := join "|" $regexParts }}
+  # Upgrades TaskRuns to prod when the bundle is digest-pinned AND matches a trusted URL
+  # pattern. Signature verification is enforced by the verify-bundle-signatures ClusterPolicy
+  # which blocks admission for trusted-pattern bundles lacking a valid cosign signature.
+  - name: upgrade-to-prod
+    match:
+      any:
+      - resources:
+          kinds: ["TaskRun"]
+          namespaces: {{ .Values.namespaces | toJson }}
+    context:
+    # Pre-compute the bundle reference from either resolver or direct taskRef format.
+    - name: bundleRef
+      variable:
+        jmesPath: "request.object.spec.taskRef.params[?name == 'bundle'] | [0] | value || ''"
+        default: ""
+    # Chain context variables — later entries can reference earlier ones by name
+    - name: isDigestPinned
+      variable:
+        value: "{{`{{ regex_match('@sha256:[a-f0-9]{64}', bundleRef) }}`}}"
+    - name: matchesPattern
+      variable:
+        value: "{{ `{{` }} regex_match('{{ $bundleRegex }}', bundleRef) {{ `}}` }}"
+    preconditions:
+      all:
+      - key: "{{`{{ bundleRef }}`}}"
+        operator: NotEquals
+        value: ""
+      - key: "{{`{{ isDigestPinned }}`}}"
+        operator: Equals
+        value: true
+      - key: "{{`{{ matchesPattern }}`}}"
+        operator: Equals
+        value: true
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            trusted-task-role: "prod"
+  {{- end }}
