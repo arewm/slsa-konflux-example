@@ -66,7 +66,7 @@ kubectl patch sa konflux-integration-runner -n default-tenant \
 # internal registry and needs authentication.
 echo "Configuring internal registry credentials for release pipeline..."
 REGCRED_JSON=$(kubectl get secret regcred-internal-registry -n default-tenant \
-  -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null)
+  -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null || true)
 if [ -n "$REGCRED_JSON" ]; then
     kubectl apply -f - <<CREDEOF
 apiVersion: v1
