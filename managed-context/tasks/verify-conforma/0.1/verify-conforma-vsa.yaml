@@ -417,6 +417,16 @@ spec:
           mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
           subPath: ca-bundle.crt
           readOnly: true
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+      env:
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///spiffe-workload-api/spire-agent.sock"
+        - name: SIGSTORE_FULCIO_URL
+          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
+        - name: SIGSTORE_REKOR_URL
+          value: "http://rekor-server.rekor-system.svc.cluster.local"
 
     - name: report-json
       image: quay.io/conforma/cli:latest@sha256:2f5bed7fd51f678ea960aaf5bed033412b7d207a83bb1b02b108be5ca71a058d
@@ -512,3 +522,7 @@ spec:
         optional: true
     - name: workdir
       emptyDir: {}
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true

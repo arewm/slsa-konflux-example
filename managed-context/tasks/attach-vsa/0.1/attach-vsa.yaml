@@ -398,8 +398,7 @@ spec:
           if ! cosign attest \
             --predicate "$VSA_FILE" \
             --type "$PRED_TYPE" \
-            --key "$(params.VSA_SIGNING_KEY)" \
-            --tlog-upload=false \
+            --yes \
             "$DEST_IMAGE"; then
             echo "ERROR: Failed to attach $BASENAME to $DEST_IMAGE"
             ERRORS=$((ERRORS + 1))
@@ -415,10 +414,19 @@ spec:
       env:
         - name: SSL_CERT_DIR
           value: "/tekton-custom-certs:/etc/ssl/certs:/etc/pki/tls/certs:/system/etc/security/cacerts:$(params.SSL_CERT_DIR)"
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///spiffe-workload-api/spire-agent.sock"
+        - name: SIGSTORE_FULCIO_URL
+          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
+        - name: SIGSTORE_REKOR_URL
+          value: "http://rekor-server.rekor-system.svc.cluster.local"
       volumeMounts:
         - name: trusted-ca
           mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
           subPath: ca-bundle.crt
+          readOnly: true
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
           readOnly: true
 
   volumes:
@@ -435,3 +443,7 @@ spec:
         optional: true
     - name: workdir
       emptyDir: {}
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true
