@@ -1,0 +1,12 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: konflux-dev
+spec:
+  # SPIRE controller manager evaluates this template at runtime (Go templates, not Helm).
+  # The backtick block prevents Helm from processing the inner brace expressions.
+  spiffeIDTemplate: >-
+    spiffe://{{ .Values.trustDomain }}/dev/{{ .Values.clusterName }}/{{`{{ .PodSpec.ServiceAccountName }}/{{ index .PodMeta.Labels "tekton.dev/task" }}`}}
+  podSelector:
+    matchLabels:
+      trusted-task-role: "dev"

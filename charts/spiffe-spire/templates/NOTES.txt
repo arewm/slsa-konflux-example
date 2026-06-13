@@ -1,0 +1,12 @@
+SPIRE identity infrastructure deployed.
+
+ClusterSPIFFEID resources are active:
+  - konflux-trusted-prod: spiffe://{{ .Values.trustDomain }}/trusted/{{ .Values.clusterName }}/...
+  - konflux-dev:          spiffe://{{ .Values.trustDomain }}/dev/{{ .Values.clusterName }}/...
+
+Fulcio has been patched to trust the SPIRE OIDC issuer at:
+  {{ .Values.oidcDiscoveryUrl }}
+
+NOTE: This chart requires spire-crds to be installed first:
+  helm upgrade --install spire-crds spiffe/spire-crds --namespace spire --create-namespace
+  helm upgrade --install spire ./charts/spiffe-spire --namespace spire
