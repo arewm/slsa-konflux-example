@@ -338,6 +338,49 @@ spec:
         note="Task $(context.task.name) completed: Refer to Tekton task result SCAN_OUTPUT for vulnerabilities scanned by Trivy."
         TEST_OUTPUT=$(make_result_json -r "SUCCESS" -t "$note")
         echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+
+    - name: sign-scan-reports
+      image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
+      workingDir: /tekton/home
+      env:
+        - name: IMAGE_URL
+          value: $(params.image-url)
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///spiffe-workload-api/spire-agent.sock"
+        - name: SIGSTORE_FULCIO_URL
+          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
+        - name: SIGSTORE_REKOR_URL
+          value: "http://rekor-server.rekor-system.svc.cluster.local"
+      volumeMounts:
+        - name: trusted-ca
+          mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+          subPath: ca-bundle.crt
+          readOnly: true
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        imagewithouttag=$(echo -n "$IMAGE_URL" | sed "s/\(.*\):.*/\1/")
+
+        for f in trivy-report-*.json; do
+          [ -e "$f" ] || continue
+          arch="${f#trivy-report-}"
+          arch="${arch%.json}"
+          digest=$(cat "image-manifest-${arch}.sha" 2>/dev/null || true)
+          [ -n "$digest" ] || continue
+
+          image_ref="${imagewithouttag}@${digest}"
+          echo "Signing trivy report for $arch ($image_ref)..."
+          cosign attest \
+            --predicate "$f" \
+            --type "https://aquasecurity.github.io/trivy/report/v1" \
+            --yes \
+            "$image_ref"
+        done
+
   volumes:
   - name: trusted-ca
     configMap:
@@ -346,3 +389,7 @@ spec:
         - key: $(params.ca-trust-config-map-key)
           path: ca-bundle.crt
       optional: true
+  - name: spiffe-workload-api
+    csi:
+      driver: csi.spiffe.io
+      readOnly: true
