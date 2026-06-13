@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fulcio-spire-integrator
+  namespace: default
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fulcio-spire-integrator
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: [{{ .Values.fulcio.configMapName | quote }}]
+  verbs: ["get", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["fulcio-server"]
+  verbs: ["patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/status"]
+  resourceNames: ["fulcio-server"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fulcio-spire-integrator
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fulcio-spire-integrator
+subjects:
+- kind: ServiceAccount
+  name: fulcio-spire-integrator
+  namespace: default
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fulcio-spire-integration
+  namespace: default
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    metadata:
+      name: fulcio-spire-integration
+    spec:
+      serviceAccountName: fulcio-spire-integrator
+      restartPolicy: Never
+      containers:
+      - name: integrate
+        image: docker.io/alpine/k8s:1.32.3
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -euo pipefail
+
+          FULCIO_NS="{{ .Values.fulcio.namespace }}"
+          CM_NAME="{{ .Values.fulcio.configMapName }}"
+          CM_KEY="{{ .Values.fulcio.configMapKey }}"
+          TRUST_DOMAIN="{{ .Values.trustDomain }}"
+          SPIRE_ISSUER_URL="{{ .Values.oidcDiscoveryUrl }}"
+
+          echo "Fetching Fulcio config from ${FULCIO_NS}/${CM_NAME} key ${CM_KEY}..."
+          CONFIG=$(kubectl get configmap "${CM_NAME}" -n "${FULCIO_NS}" -o jsonpath="{.data.${CM_KEY//./\\.}}")
+
+          if echo "${CONFIG}" | python3 -c "
+          import sys, json
+          cfg = json.load(sys.stdin)
+          issuers = cfg.get('OIDCIssuers', {})
+          sys.exit(0 if '${SPIRE_ISSUER_URL}' in issuers else 1)
+          " 2>/dev/null; then
+            echo "SPIRE OIDC issuer already present in Fulcio config; skipping."
+            exit 0
+          fi
+
+          echo "Adding SPIRE OIDC issuer to Fulcio config..."
+          UPDATED=$(echo "${CONFIG}" | python3 -c "
+          import sys, json
+          cfg = json.load(sys.stdin)
+          if 'OIDCIssuers' not in cfg:
+              cfg['OIDCIssuers'] = {}
+          cfg['OIDCIssuers']['${SPIRE_ISSUER_URL}'] = {
+              'IssuerURL': '${SPIRE_ISSUER_URL}',
+              'ClientID': 'sigstore',
+              'Type': 'spiffe',
+              'SPIFFETrustDomain': '${TRUST_DOMAIN}'
+          }
+          print(json.dumps(cfg))
+          ")
+
+          kubectl patch configmap "${CM_NAME}" -n "${FULCIO_NS}" --type=merge \
+            -p "{\"data\":{\"${CM_KEY}\":$(echo "${UPDATED}" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}}"
+
+          echo "Restarting Fulcio to pick up new OIDC issuer config..."
+          kubectl rollout restart deployment/fulcio-server -n "${FULCIO_NS}"
+          kubectl rollout status deployment/fulcio-server -n "${FULCIO_NS}" --timeout=120s
+
+          echo "Fulcio SPIRE integration complete."

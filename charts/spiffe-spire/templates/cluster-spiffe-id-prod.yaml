@@ -1,0 +1,17 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: konflux-trusted-prod
+spec:
+  # SPIRE controller manager evaluates this template at runtime (Go templates, not Helm).
+  # The backtick block prevents Helm from processing the inner brace expressions.
+  # Open question: .ClusterName availability in controller manager context (see design doc).
+  # Using the Helm-rendered clusterName value as a literal here for determinism.
+  spiffeIDTemplate: >-
+    spiffe://{{ .Values.trustDomain }}/trusted/{{ .Values.clusterName }}/{{`{{ .PodSpec.ServiceAccountName }}/{{ index .PodMeta.Labels "tekton.dev/task" }}`}}
+  podSelector:
+    matchLabels:
+      trusted-task-role: "prod"
+  namespaceSelector:
+    matchLabels:
+      {{ .Values.trustedNamespaceLabel }}: "true"

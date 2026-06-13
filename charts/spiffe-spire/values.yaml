@@ -1,0 +1,42 @@
+trustDomain: "konflux-ci.dev"
+clusterName: "kind-konflux"
+
+# Namespace selector label used by the prod ClusterSPIFFEID
+trustedNamespaceLabel: "trusted-tasks-enabled"
+
+# In-cluster URL of the SPIRE OIDC Discovery Provider.
+# Used as both the JWT issuer embedded in SPIRE tokens and the Fulcio OIDC issuer entry.
+# Assumes the chart is installed with release name "spire" in namespace "spire".
+# Override if using a different release name or namespace:
+#   helm upgrade --install spire ./charts/spiffe-spire --namespace spire
+oidcDiscoveryUrl: "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"
+
+fulcio:
+  namespace: "fulcio-system"
+  configMapName: "fulcio-server-config"
+  configMapKey: "config.json"
+
+# Values forwarded to spiffe/spire subchart
+spire:
+  global:
+    spire:
+      trustDomain: "konflux-ci.dev"
+      clusterName: "kind-konflux"
+      # Must match oidcDiscoveryUrl above so SPIRE embeds the same URL in its JWTs
+      # and Fulcio can reach the JWKS endpoint to validate them.
+      jwtIssuer: "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"
+    installAndUpgradeHooks:
+      enabled: true
+    deleteHooks:
+      enabled: true
+  spire-server:
+    controllerManager:
+      enabled: true
+      identities:
+        clusterSPIFFEIDs:
+          default:
+            enabled: false
+  spiffe-oidc-discovery-provider:
+    enabled: true
+  spiffe-csi-driver:
+    enabled: true

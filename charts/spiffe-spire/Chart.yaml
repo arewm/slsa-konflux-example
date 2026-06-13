@@ -1,0 +1,9 @@
+apiVersion: v2
+name: spiffe-spire
+description: SPIRE identity infrastructure with Fulcio integration for trusted Tekton tasks
+type: application
+version: 0.1.0
+dependencies:
+  - name: spire
+    version: "0.29.0"
+    repository: "https://spiffe.github.io/helm-charts-hardened/"
