@@ -45,7 +45,7 @@ First, Kubernetes pod isolation ensures that each build runs in an ephemeral pod
 
 Second, namespace separation prevents builds from accessing signing keys. Builds run in the tenant namespace (default-tenant), while signing keys exist only in the managed namespace (managed-tenant). Kubernetes RBAC prevents tenant workloads from reading secrets in the managed namespace. This ensures that even if a build task is compromised, it cannot access the cryptographic material used to sign attestations during release.
 
-Third, Conforma's `trusted_tasks` package validates that every task in the build pipeline comes from an approved Tekton bundle. The Enterprise Contract policy includes a list of acceptable bundles, and at release time, Conforma verifies that each task in the build provenance matches an entry in that list. This prevents an attacker from injecting a malicious task that claims to have produced a legitimate artifact.
+Third, Conforma's `trusted_tasks` package validates that every task in the build pipeline comes from an approved Tekton bundle. The Conforma policy includes a list of acceptable bundles, and at release time, Conforma verifies that each task in the build provenance matches an entry in that list. This prevents an attacker from injecting a malicious task that claims to have produced a legitimate artifact.
 
 These three mechanisms combine to satisfy the isolation, non-falsifiable, and hermetic build requirements of SLSA Build Level 3. The signing keys are in a namespace the build cannot access, the build runs in an isolated ephemeral environment, and the policy verification step ensures that only trusted tasks were used to produce the artifact. For a detailed threat model, see [Trusting Artifacts](trusting-artifacts.md).
 
@@ -691,7 +691,7 @@ EOF
 
 ## Consumer Verification
 
-Released artifacts include signed Verification Summary Attestations (VSAs) that consumers can use to verify the artifact meets SLSA requirements before use.
+Released artifacts include signed Verification Summary Attestations (VSAs) that consumers can use to verify the artifact meets SLSA requirements before use. The VSA is signed with the release platform's key — separate from the build platform's Tekton Chains identity — so consumers need only trust this one stable key rather than knowing how build provenance was signed. See [Trusting Artifacts](trusting-artifacts.md#consumer-trust-the-vsa-as-trust-anchor) for the full rationale.
 
 First, extract the release signing public key from the cluster:
 
@@ -869,6 +869,6 @@ This walkthrough covered the basic build and release flow with SLSA compliance. 
 
 For advanced topics including source track details, vulnerability management, and customizing policies, see [Part 2: Source and Vulnerabilities](part2-source-and-vulnerabilities.md).
 
-To adapt Konflux for your own projects, install the platform configuration once per cluster and then use the component-onboarding chart for each component you want to build. Customize the Enterprise Contract policy in `managed-context/policies/ec-policy-data/data/rule_data.yml` to match your security requirements.
+To adapt Konflux for your own projects, install the platform configuration once per cluster and then use the component-onboarding chart for each component you want to build. Customize the Conforma policy data in `managed-context/policies/ec-policy-data/data/rule_data.yml` to match your security requirements.
 
 For complete platform documentation, see [Konflux Documentation](https://konflux-ci.dev/docs/). For the SLSA specification, see [slsa.dev](https://slsa.dev/spec/). For policy validation details, see [Conforma](https://conforma.dev).

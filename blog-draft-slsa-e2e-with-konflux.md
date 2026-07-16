@@ -9,8 +9,8 @@ draft: true
 
 This guest post walks through a practical, end-to-end SLSA implementation using
 [Konflux](https://konflux-ci.dev/) — a Kubernetes-native CI/CD system built on
-Tekton — along with [Conforma](https://conforma.dev/) (formerly Enterprise
-Contract) for policy evaluation and VSA generation. You'll see how Konflux
+Tekton — along with [Conforma](https://conforma.dev/), a supply chain policy
+engine built on OPA/Rego, for policy evaluation and VSA generation. You'll see how Konflux
 enforces trust boundaries between build and release contexts, and how each stage
 of the SLSA E2E model is validated with concrete policy rules.
 
@@ -22,7 +22,7 @@ repository, which provides Helm charts, Tekton pipelines, and Conforma policies
 for a complete SLSA deployment. To try it yourself, you need:
 
 - A Kubernetes cluster (Kind works for local development)
-- [Konflux operator](https://github.com/konflux-ci/konflux-ci) deployed
+- [Konflux](https://github.com/konflux-ci/konflux-ci) deployed, including the Sigstore stack (Fulcio, Rekor, CT Log, TUF) — the README walks through setup
 - [Helm](https://helm.sh/) for chart installation
 - `cosign` and `crane` for inspecting attestations
 
@@ -76,9 +76,19 @@ Namespace separation prevents builds from accessing signing keys. Builds run in
 prevents tenant workloads from reading secrets in the managed namespace.
 
 Conforma's `trusted_tasks` package validates that every task in the build
-pipeline comes from an approved, digest-pinned Tekton bundle. The Enterprise
-Contract policy includes a list of acceptable bundles, and at release time,
-Conforma verifies each task in the build provenance matches that list.
+pipeline comes from an approved, digest-pinned Tekton bundle. Conforma's policy
+includes a list of acceptable bundles, and at release time, Conforma verifies
+each task in the build provenance matches that list.
+
+Trusted task verification is what distinguishes Build L3 from Build L2. At L2,
+you have provenance, a hosted builder, and a signed attestation — but you cannot
+verify that the build environment actually provided isolation guarantees. The
+trusted task check closes that gap: when every task in the provenance matches the
+allowlist, Conforma can confirm the build used only reviewed, digest-pinned
+definitions, which is the evidence base for the L3 claim. Without it, the VSA
+would show `SLSA_BUILD_LEVEL_2`. For a side-by-side comparison of both levels
+with interchangeable policy engines, see
+[mild-to-wild-samples](https://github.com/arewm/mild-to-wild-samples).
 
 Together, these properties mean an attacker who compromises a single build
 cannot affect other builds, cannot sign arbitrary artifacts, and cannot inject
@@ -118,8 +128,10 @@ repository with source-tool raises the source level to L3.
 Unlike systems where you manually generate provenance, Konflux delegates this to
 [Tekton Chains](https://tekton.dev/docs/chains/). Chains observes every
 PipelineRun, captures the build inputs and outputs, and generates SLSA
-provenance attestations automatically. The attestation is signed with a key
-managed by the platform — the build pipeline itself never sees it.
+provenance attestations automatically. The attestation is signed with an
+ephemeral certificate issued by in-cluster Fulcio via OIDC — the build pipeline
+itself never sees the signing material, and the signature is recorded in the
+in-cluster Rekor transparency log.
 
 The `@slsa3` policy collection validates the provenance:
 
@@ -223,13 +235,20 @@ these tasks:
    signing key available
 2. **`apply-mapping`** — Maps build artifacts to release destinations
 3. **`push-snapshot`** — Publishes the verified image to the release registry
-4. **`attach-vsa`** — Generates and signs VSAs, attaching them to the released
-   image
+4. **`attach-vsa`** — Generates and signs VSAs using the release signing key,
+   attaching them to the released image
 
 The release pipeline runs entirely in the managed namespace. The tenant has no
 ability to interfere with policy evaluation or signing.
 
 ### The VSA
+
+Build provenance is signed by Tekton Chains using the build platform's identity.
+The `attach-vsa` task distills Conforma's evaluation into a new VSA document and
+signs it using the release platform's key — a separate, stable identity that
+consumers can verify without knowing anything about the build platform's signing
+setup. This trust delegation is the point: regardless of how build provenance was
+signed, consumers get a single, stable key to trust.
 
 The `attach-vsa` task generates a SLSA Verification Summary Attestation that
 captures the verification result:
@@ -279,9 +298,11 @@ Plus `.sig` (signature) and `.sbom` (software bill of materials) artifacts.
 ## End User Verification
 
 Downstream consumers can verify the released image using the VSA without
-repeating all 104 policy checks. The VSA acts as a receipt: if you trust the
-verifier (Conforma) and the signing key, you can check the VSA instead of
-re-running the full policy evaluation.
+repeating all 104 policy checks or knowing anything about the build platform.
+The release signing key is the only trust anchor needed: if you trust the
+release platform's integrity and the policy it ran, verifying the VSA signature
+is sufficient. The build platform's signing infrastructure — Tekton Chains,
+ephemeral Fulcio certificates, in-cluster Rekor — stays internal to the platform.
 
 ```bash
 # Inspect attestations on the released image
@@ -433,10 +454,12 @@ results would need to be preserved with exclusion metadata. This would let
 consumers understand not just what passed, but what was assessed and
 intentionally accepted.
 
-**Transparency log integration.** Publishing VSAs and provenance to Sigstore's
-Rekor transparency log would add public auditability and tamper detection.
-Combined with OIDC-based keyless signing, this removes the need for consumers
-to manage verification keys.
+**Public transparency log.** Build provenance is already published to an
+in-cluster Rekor log via Tekton Chains, and signatures use ephemeral OIDC
+certificates from in-cluster Fulcio. Extending this to the public Sigstore
+infrastructure (transparency.dev / sigstore.dev) would add external auditability
+so anyone can audit the build record without access to the cluster, and would
+remove the need for consumers to configure the in-cluster TUF mirror.
 
 Each of these extensions follows the same pattern: add a Tekton task to generate
 or collect the attestation, and add a Conforma rule to verify it. The trust
@@ -475,7 +498,7 @@ slsa-konflux-example, the SLSA E2E demo repository:<br>
 Konflux CI, Kubernetes-native CI/CD:<br>
 [https://konflux-ci.dev/](https://konflux-ci.dev/)
 
-Conforma (Enterprise Contract), policy engine for supply chain security:<br>
+Conforma, policy engine for supply chain security:<br>
 [https://conforma.dev/](https://conforma.dev/)
 
 Tekton Chains, automatic provenance generation:<br>

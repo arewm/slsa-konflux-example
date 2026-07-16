@@ -25,9 +25,9 @@ The onboarding commands shown in this guide use source-test-repo for illustratio
 
 This exercises Source Track Level 3, CVE scanning on real packages, and base image verification.
 
-## Per-Application Enterprise Contract Policies
+## Per-Application Conforma Policies
 
-Different applications have different assurance requirements. A customer-facing production service needs stronger guarantees than an internal development tool. Konflux supports this through per-application Enterprise Contract policies.
+Different applications have different assurance requirements. A customer-facing production service needs stronger guarantees than an internal development tool. Konflux supports this through per-application Conforma policies.
 
 The component-onboarding Helm chart creates an EnterpriseContractPolicy resource in the managed namespace for each application you onboard. This policy is referenced by the ReleasePlanAdmission and used during the release pipeline's verify-conforma task.
 
@@ -316,7 +316,7 @@ Compare this to Festoji, which shows `SLSA_SOURCE_LEVEL_1` because it is not enr
 
 Real-world container images contain dependencies with known vulnerabilities. The question is not whether CVEs exist, but how to manage them systematically.
 
-Konflux integrates vulnerability scanning into the release process through the Enterprise Contract's `@minimal` collection, which includes the `cve.cve_blockers` rule. This rule blocks releases when critical or high severity CVEs with known fixes are present.
+Konflux integrates vulnerability scanning into the release process through Conforma's `@minimal` collection, which includes the `cve.cve_blockers` rule. This rule blocks releases when critical or high severity CVEs with known fixes are present.
 
 ### Scanning and Detection
 
@@ -665,7 +665,7 @@ cosign download attestation --allow-insecure-registry \
 }
 ```
 
-`SLSA_BUILD_LEVEL_3` confirms that the build ran on a hosted builder with hermetic isolation. Compare this with a non-hermetic build, which would show `SLSA_BUILD_LEVEL_2`.
+`SLSA_BUILD_LEVEL_3` is determined by trusted task verification, not hermetic mode. Conforma checks that every task in the build provenance came from the approved, digest-pinned allowlist — that is what justifies the L3 claim. Hermetic builds improve supply chain quality (reproducibility, accurate SBOMs, network isolation) but do not change the SLSA build level.
 
 ## Putting It All Together
 
