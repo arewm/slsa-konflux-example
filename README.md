@@ -21,7 +21,7 @@ The repository is organized into two walkthroughs that build on each other:
 
 **[Part 1: Build and Release](docs/part1-build-and-release.md)** covers the fundamentals using Festoji as a simple example component. You will onboard a component, understand how Konflux achieves SLSA Build L3, inspect build artifacts (SBOM, provenance, signatures), run integration tests, release with policy enforcement, and verify artifacts as a consumer.
 
-**[Part 2: Source Track, Vulnerability Management, and Hermetic Builds](docs/part2-source-and-vulnerabilities.md)** introduces advanced topics using source-test-repo as an example. It covers SLSA Source Track L3 via source-tool enrollment, per-application Enterprise Contract policies, CVE management (leeway, per-CVE exceptions, volatile configuration), and hermetic builds for reproducibility.
+**[Part 2: Source Track, Vulnerability Management, and Hermetic Builds](docs/part2-source-and-vulnerabilities.md)** introduces advanced topics using source-test-repo as an example. It covers SLSA Source Track L3 via source-tool enrollment, per-application Conforma policies, CVE management (leeway, per-CVE exceptions, volatile configuration), and hermetic builds for reproducibility.
 
 For the threat model behind trusted tasks, artifact immutability, and signing key isolation, see [Trusting Artifacts](docs/trusting-artifacts.md).
 
@@ -58,6 +58,13 @@ After deploying the operator, install the Sigstore stack (Fulcio, Rekor, CT Log,
 # Still in the konflux-ci directory
 ./integrations/sigstore/install.sh
 ```
+
+> **arm64 hosts (Apple Silicon, AWS Graviton, etc.):** the scaffold chart pins several amd64-only images that crash or OOMKill under QEMU emulation. Pass the overlay from this repository to substitute arm64-native images:
+>
+> ```bash
+> ./integrations/sigstore/install.sh \
+>   --extra-values-file /path/to/slsa-konflux-example/integrations/sigstore/values-arm64.yaml
+> ```
 
 Then run the prerequisites script from this repository:
 

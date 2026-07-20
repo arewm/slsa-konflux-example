@@ -52,6 +52,20 @@ Together, these properties mean that an attacker who compromises a single build 
 
 For a walkthrough of these properties in practice, see [Part 1: Build and Release](part1-build-and-release.md).
 
+## Consumer Trust: The VSA as Trust Anchor
+
+Build provenance from Tekton Chains is signed with the build platform's identity — an ephemeral OIDC certificate from Fulcio, or a platform-managed keypair on clusters without Sigstore. A consumer who wants to verify the build provenance directly must know and trust that identity, which can change when the platform is upgraded, migrated, or replaced.
+
+The Verification Summary Attestation solves this. Rather than asking consumers to verify the full build chain themselves, the release pipeline runs Conforma against the build provenance, distills the conclusions into a new VSA document, and signs it using the release signing key — a separate, stable identity controlled by the release platform and distributed out-of-band to consumers (for example, included in a project's security documentation or pinned in a trust policy).
+
+This is trust delegation: the release platform (known, stable key) vouches that it ran the full policy evaluation against the build provenance. Consumers verify one signature against one key and receive the SLSA level claims without needing to:
+
+- Know the build platform's signing identity or certificate issuance details
+- Understand how Tekton Chains signs provenance
+- Reproduce the full policy evaluation
+
+The tradeoff is explicit: consumers trust that Conforma's evaluation was correct and that the release platform is trustworthy. The VSA is a receipt, not an independent proof — its value depends on the release platform running meaningful policy in an integrity-controlled environment. This is why the release pipeline runs in the managed namespace where platform operators, not developers, control policy and signing keys.
+
 ## References
 
 - [Tekton Chains Documentation](https://tekton.dev/docs/chains/)
