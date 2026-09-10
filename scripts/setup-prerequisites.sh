@@ -55,6 +55,10 @@ kubectl label secret regcred-internal-registry -n default-tenant \
   build.appstudio.openshift.io/common-secret=true --overwrite 2>/dev/null || \
   echo "Warning: regcred-internal-registry secret not found. Internal registry credentials may not be configured."
 
+# Link to default SA in default-tenant for direct/test PipelineRuns
+kubectl patch sa default -n default-tenant \
+  -p '{"secrets":[{"name":"regcred-internal-registry"}]}' 2>/dev/null || true
+
 # The integration-runner SA is created by the operator, not build-service,
 # so the common-secret label doesn't cover it. Link the credential directly.
 kubectl patch sa konflux-integration-runner -n default-tenant \

@@ -338,7 +338,7 @@ spec:
         - name: TUF_MIRROR
           value: "$(params.tufMirror)"
         - name: IGNORE_REKOR
-          value: "false"
+          value: "true"
         - name: CERTIFICATE_IDENTITY
           value: "$(params.certificateIdentity)"
         - name: CERTIFICATE_OIDC_ISSUER

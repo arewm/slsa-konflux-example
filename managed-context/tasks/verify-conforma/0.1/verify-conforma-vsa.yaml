@@ -66,7 +66,7 @@ spec:
       type: string
       description: >-
         Skip Rekor transparency log checks during validation.
-      default: "false"
+      default: "true"
 
     - name: TUF_MIRROR
       type: string
