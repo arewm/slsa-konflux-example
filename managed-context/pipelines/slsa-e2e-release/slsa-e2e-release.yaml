@@ -98,13 +98,13 @@ spec:
     - name: certificateIdentity
       description: >-
         Certificate identity (URI SAN) for keyless verification of Tekton
-        Chains signatures.
+        Chains signatures. Leave empty when using keypair signing.
       type: string
-      default: "https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-chains-controller"
+      default: ""
     - name: certificateOidcIssuer
-      description: OIDC issuer URL for keyless verification.
+      description: OIDC issuer URL for keyless verification. Leave empty when using keypair signing.
       type: string
-      default: "https://kubernetes.default.svc"
+      default: ""
   tasks:
     - name: verify-access-to-resources
       taskRef:
