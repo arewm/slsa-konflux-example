@@ -1,22 +1,16 @@
 {{- if .Values.trustedBundles }}
 ---
-# Intended to block TaskRuns referencing trusted bundle patterns that lack a valid cosign
-# signature. KNOWN LIMITATION (Kyverno 1.17): verifyImages cannot extract image references
-# from TaskRun spec.taskRef.params (resolver format) because the imageExtractors schema
-# does not support the 'filter' field needed to select a specific param by name. The
-# verifyImages rule currently fires on the TaskRun but finds no matching images and
-# passes vacuously. Until this is fixed upstream (tracked in
-# https://github.com/kyverno/kyverno/issues/XXXX), cosign signature enforcement for
-# resolver-format bundles must rely on registry access control.
-#
-# The preconditions ARE enforced — they correctly gate the rule on pattern+digest match.
-# The gap is signature verification within verifyImages once preconditions pass.
+# Blocks TaskRuns referencing trusted bundle patterns that lack a valid signature.
+# Requires the patched Kyverno build (fix/imageextractor-combined) for:
+#   - filter field in imageExtractors (to isolate the bundle param from other params)
+#   - SigstoreBundle static key support (to verify keypair-signed OCI referrer bundles)
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: verify-bundle-signatures
 spec:
   failurePolicy: Fail
+  validationFailureAction: Enforce
   rules:
   - name: require-valid-signature
     match:
@@ -53,8 +47,18 @@ spec:
         value: true
     # Rule-level imageExtractors teach verifyImages where to find the bundle reference
     # in the TaskRun spec (resolver format and legacy direct format).
+    imageExtractors:
+      TaskRun:
+      - path: "/spec/taskRef/params/*"
+        name: "bundle"
+        key: "name"
+        value: "value"
+        filter: "bundle"
+      - path: "/spec/taskRef/bundle"
+        name: "bundle"
     verifyImages:
-    - imageReferences:
+    - type: SigstoreBundle
+      imageReferences:
       {{- range .Values.trustedBundles }}
         - {{ .pattern | quote }}
       {{- end }}
@@ -67,6 +71,10 @@ spec:
       - entries:
           - keys:
               publicKeys: {{ .publicKey | quote }}
+              rekor:
+                ignoreTlog: true
+              ctlog:
+                ignoreSCT: true
         {{- end }}
       {{- end }}
 {{- end }}
