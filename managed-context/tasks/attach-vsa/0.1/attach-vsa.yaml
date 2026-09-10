@@ -399,6 +399,7 @@ spec:
             --predicate "$VSA_FILE" \
             --type "$PRED_TYPE" \
             --key "$(params.VSA_SIGNING_KEY)" \
+            --use-signing-config=false \
             --tlog-upload=false \
             "$DEST_IMAGE"; then
             echo "ERROR: Failed to attach $BASENAME to $DEST_IMAGE"
