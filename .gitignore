@@ -21,6 +21,8 @@ kind-config.yaml
 
 # Claude related things
 .serena
+.claude/
+.claire/
 
 # Git worktrees
 .worktrees/
