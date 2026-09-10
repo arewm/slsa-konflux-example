@@ -60,6 +60,34 @@ artifacts flow in; signed, verified releases flow out.
 This separation means a compromised build environment cannot forge release
 attestations, and developers never touch signing keys.
 
+## It All Starts at the Source
+
+Konflux uses a `verify-source` Tekton task that validates each source repository
+used in the build. The task receives the repository URL and commit SHA from the
+`git-clone` task results, ensuring the verification targets exactly what was
+built — not a potentially different ref.
+
+The results are checked by a custom Conforma policy in the `@slsa_source`
+collection (`slsa_source_verification.rego`), which enforces four rules:
+
+- **`required_level_achieved`** — The verify-source task achieved the minimum
+  required SLSA source level
+- **`result_provided`** — The task actually produced a
+  `SLSA_SOURCE_LEVEL_ACHIEVED` result
+- **`parameters_match_git_clone`** — The URL and revision passed to
+  verify-source match what git-clone reported
+- **`verified_all_materials`** — Every git repository in the attestation
+  materials has a corresponding verify-source task
+
+For Festoji, we achieve SLSA Source Level 1 (version controlled) because the
+repository has not been enrolled with
+[source-tool](https://github.com/slsa-framework/source-tool). The default
+`slsa_source_min_level` in `rule_data.yml` is `"2"`, but the component-onboarding
+chart defaults to `"1"` (via `slsaSourceMinLevel` in `values.yaml`), which is
+what gets templated into the `EnterpriseContractPolicy` resource. Raising the bar
+is a policy change — not a pipeline change. In Part 2, we show how enrolling a
+repository with source-tool raises the source level to L3.
+
 ## SLSA Build Level 3 — By Default
 
 SLSA Build Level 3 requires isolated builds, inaccessible signing keys, and
@@ -95,33 +123,12 @@ cannot affect other builds, cannot sign arbitrary artifacts, and cannot inject
 untrusted tasks without detection. For more on the threat model, see
 [Trusting Artifacts](https://github.com/arewm/slsa-konflux-example/blob/main/docs/trusting-artifacts.md).
 
-## It All Starts at the Source
-
-Konflux uses a `verify-source` Tekton task that validates each source repository
-used in the build. The task receives the repository URL and commit SHA from the
-`git-clone` task results, ensuring the verification targets exactly what was
-built — not a potentially different ref.
-
-The results are checked by a custom Conforma policy in the `@slsa_source`
-collection (`slsa_source_verification.rego`), which enforces four rules:
-
-- **`required_level_achieved`** — The verify-source task achieved the minimum
-  required SLSA source level
-- **`result_provided`** — The task actually produced a
-  `SLSA_SOURCE_LEVEL_ACHIEVED` result
-- **`parameters_match_git_clone`** — The URL and revision passed to
-  verify-source match what git-clone reported
-- **`verified_all_materials`** — Every git repository in the attestation
-  materials has a corresponding verify-source task
-
-For Festoji, we achieve SLSA Source Level 1 (version controlled) because the
-repository has not been enrolled with
-[source-tool](https://github.com/slsa-framework/source-tool). The default
-`slsa_source_min_level` in `rule_data.yml` is `"2"`, but the component-onboarding
-chart defaults to `"1"` (via `slsaSourceMinLevel` in `values.yaml`), which is
-what gets templated into the `EnterpriseContractPolicy` resource. Raising the bar
-is a policy change — not a pipeline change. In Part 2, we show how enrolling a
-repository with source-tool raises the source level to L3.
+One caveat for this example: it runs on a local Kind cluster where the same
+person operates both the platform and runs builds on it. SLSA Build L3's
+isolation guarantees are meaningful to downstream consumers when the platform is
+operated independently — as it is on hosted Konflux instances where platform
+operators are separate from the teams building on it. The architecture here is
+identical; the local setup is used for reproducibility.
 
 ## Build Provenance — Automatic With Tekton Chains
 
@@ -221,22 +228,25 @@ scenarios are configured:
 - **`policy-push`** — Runs on push (merge) builds with full policy enforcement,
   matching release requirements
 
-If the push ITS fails, no Release is created. This is the gate between "built"
-and "releasable."
+After a successful build, Tekton Chains signs the artifacts and Konflux creates
+a Snapshot — an immutable record of the built image digests. The ITS runs
+against the Snapshot. If the push ITS passes, Konflux automatically creates a
+Release resource. If it fails, no Release is created. The Snapshot is the gate
+between "built" and "releasable."
 
 ## Publication — The Release Pipeline
 
 When the integration test passes, Konflux automatically creates a Release
-resource. This triggers the release pipeline in the managed context, which runs
-these tasks:
+resource. This triggers the release pipeline in the managed context. The key
+tasks run in this order:
 
-1. **`verify-conforma`** — Re-evaluates the full EC policy (52 rules per
-   component, 104 total for multi-arch) in the managed context with the release
-   signing key available
-2. **`apply-mapping`** — Maps build artifacts to release destinations
+1. **`apply-mapping`** — Maps build artifacts to release destinations
+2. **`verify-conforma`** — Re-evaluates the full Conforma policy (52 rules per
+   component, 104 total for multi-arch) in the managed context; `push-snapshot`
+   cannot run until this passes
 3. **`push-snapshot`** — Publishes the verified image to the release registry
-4. **`attach-vsa`** — Generates and signs VSAs using the release signing key,
-   attaching them to the released image
+4. **`attach-vsa`** — Distills Conforma's evaluation into VSA documents and
+   signs them with the release signing key, attaching them to the released image
 
 The release pipeline runs entirely in the managed namespace. The tenant has no
 ability to interfere with policy evaluation or signing.
@@ -264,6 +274,7 @@ captures the verification result:
     }
   }],
   "predicate": {
+    "slsaVersion": "1.0",
     "verificationResult": "PASSED",
     "verifiedLevels": [
       "SLSA_BUILD_LEVEL_3",
@@ -276,6 +287,7 @@ captures the verification result:
     "policy": {
       "uri": "oci::quay.io/conforma/release-policy:konflux@sha256:1b296a..."
     },
+    "resourceUri": "registry-service.kind-registry/konflux-festoji@sha256:db12fe...",
     "timeVerified": "2026-05-04T19:16:10.167893793Z"
   }
 }
@@ -289,9 +301,15 @@ image as an in-toto attestation.
 
 The released image ends up with three attestation layers:
 
-1. **Build provenance** — SLSA provenance from Tekton Chains
-2. **Conforma VSA** — Detailed verification summary with full policy config
-3. **SLSA VSA** — Standard SLSA verification summary
+1. **Build provenance** — SLSA provenance from Tekton Chains, signed with the
+   build platform's identity
+2. **Conforma VSA** — Full Conforma evaluation report including complete policy
+   configuration (collections, data sources, rule data), signed with the release
+   key
+3. **SLSA VSA** — Standardized SLSA Verification Summary Attestation
+   (`https://slsa.dev/verification_summary/v1`) containing `verifiedLevels` and
+   a policy URI, signed with the release key; this is the document consumers
+   verify
 
 Plus `.sig` (signature) and `.sbom` (software bill of materials) artifacts.
 
@@ -305,15 +323,19 @@ is sufficient. The build platform's signing infrastructure — Tekton Chains,
 ephemeral Fulcio certificates, in-cluster Rekor — stays internal to the platform.
 
 ```bash
-# Inspect attestations on the released image
-crane ls <registry>/released-festoji --insecure
+# Obtain the release signing public key (distributed out-of-band by the platform;
+# in the demo it can be extracted directly from the cluster)
+kubectl get secret release-signing-key -n managed-tenant \
+  -o jsonpath='{.data.cosign\.pub}' | base64 -d > cosign-release.pub
 
-# Download the SLSA VSA
-crane manifest <registry>/released-festoji:sha256-<digest>.att --insecure \
-  | jq -r '.layers[] | select(.annotations.predicateType == 
-    "https://slsa.dev/verification_summary/v1") | .digest' \
-  | xargs -I{} crane blob <registry>/released-festoji@{} --insecure \
-  | jq '.payload' -r | base64 -d | jq '.'
+# Verify the SLSA VSA signature and inspect the predicate
+cosign verify-attestation \
+  --key cosign-release.pub \
+  --type https://slsa.dev/verification_summary/v1 \
+  --insecure-ignore-tlog \
+  --allow-insecure-registry \
+  <registry>/released-festoji@<digest> \
+  | jq -r '.payload | @base64d | fromjson | .predicate'
 ```
 
 For consumers who want deeper assurance, the full build provenance and SBOM are
