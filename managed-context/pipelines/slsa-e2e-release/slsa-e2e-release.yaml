@@ -415,7 +415,7 @@ spec:
       runAfter:
         - verify-conforma
         - check-data-keys
-    - name: attach-vsa
+    - name: attach-summary-attestations
       when:
         - input: "$(tasks.verify-conforma.results.VSA_GENERATED)"
           operator: in
@@ -431,7 +431,7 @@ spec:
           - name: revision
             value: $(params.taskGitRevision)
           - name: pathInRepo
-            value: "managed-context/tasks/attach-vsa/0.1/attach-vsa.yaml"
+            value: "managed-context/tasks/attach-summary-attestations/0.1/attach-summary-attestations.yaml"
       params:
         - name: SNAPSHOT_FILENAME
           value: "$(tasks.collect-data.results.snapshotSpec)"
@@ -446,9 +446,9 @@ spec:
         - name: TRUSTED_ARTIFACTS_DEBUG
           value: "$(params.trustedArtifactsDebug)"
         - name: TRUSTED_ARTIFACTS_EXTRACT_DIR
-          value: "/var/workdir/attach-vsa"
+          value: "/var/workdir/attach-summary-attestations"
         - name: HOMEDIR
-          value: "/var/workdir/attach-vsa"
+          value: "/var/workdir/attach-summary-attestations"
         - name: SSL_CERT_DIR
           value: /var/run/secrets/kubernetes.io/serviceaccount
         - name: CA_TRUST_CONFIGMAP_NAME
@@ -490,4 +490,4 @@ spec:
           - name: pathInRepo
             value: tasks/managed/update-cr-status/update-cr-status.yaml
       runAfter:
-        - attach-vsa
+        - attach-summary-attestations
