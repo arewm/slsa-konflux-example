@@ -105,7 +105,8 @@ jobs:
 
           cd /tmp/konflux-ci
           SKIP_SECRETS=true \
-          RELEASE_URL="https://github.com/konflux-ci/konflux-ci/releases/download/${KONFLUX_VERSION}/install.yaml" \
+          OPERATOR_INSTALL_METHOD=release \
+          OPERATOR_RELEASE="${KONFLUX_VERSION}" \
             ./scripts/deploy-local.sh
 
       - name: Run setup-prerequisites
