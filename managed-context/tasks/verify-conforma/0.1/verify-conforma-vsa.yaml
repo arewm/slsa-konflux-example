@@ -314,14 +314,6 @@ spec:
           --rekor-url "$(params.REKOR_HOST)"
           --ignore-rekor=$(params.IGNORE_REKOR)
           --workers "$(params.WORKERS)"
-
-        if [[ -n "$(params.CERTIFICATE_IDENTITY)" && -n "$(params.CERTIFICATE_OIDC_ISSUER)" ]]; then
-          EC_ARGS+=(
-            --certificate-identity "$(params.CERTIFICATE_IDENTITY)"
-            --certificate-oidc-issuer "$(params.CERTIFICATE_OIDC_ISSUER)"
-          )
-        fi
-
           --info=$(params.INFO)
           --timeout=100h
           --strict=false
@@ -329,6 +321,13 @@ spec:
           --effective-time=$(params.EFFECTIVE_TIME)
           --extra-rule-data=$(params.EXTRA_RULE_DATA)
         )
+
+        if [[ -n "$(params.CERTIFICATE_IDENTITY)" && -n "$(params.CERTIFICATE_OIDC_ISSUER)" ]]; then
+          EC_ARGS+=(
+            --certificate-identity "$(params.CERTIFICATE_IDENTITY)"
+            --certificate-oidc-issuer "$(params.CERTIFICATE_OIDC_ISSUER)"
+          )
+        fi
 
         EC_ARGS+=(
           --retry-max-wait "$(params.RETRY_MAX_WAIT)"
