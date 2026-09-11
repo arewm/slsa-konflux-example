@@ -490,6 +490,13 @@ spec:
         done
         echo ""
 
+        if [[ -S /spiffe-workload-api/spire-agent.sock ]]; then
+          echo "Initializing TUF root from local cluster for ambient verification..."
+          cosign initialize --mirror http://tuf-server.tuf-system.svc.cluster.local --root http://tuf-server.tuf-system.svc.cluster.local/root.json 2>/dev/null || true
+          echo "Waiting 5s for SPIRE server registration..."
+          sleep 5
+        fi
+
         # Attach each per-component VSA to its matching destination image.
         # svr.json is excluded here; it is attached to all images separately below.
         # VSA filenames encode the component name:
@@ -524,14 +531,31 @@ spec:
           fi
 
           echo "Attaching $BASENAME ($PRED_TYPE) → $DEST_IMAGE"
-          if ! cosign attest \
-            --predicate "$VSA_FILE" \
-            --type "$PRED_TYPE" \
-            --key "$(params.VSA_SIGNING_KEY)" \
-            --tlog-upload=false \
-            "$DEST_IMAGE"; then
-            echo "ERROR: Failed to attach $BASENAME to $DEST_IMAGE"
-            ERRORS=$((ERRORS + 1))
+          if [[ -S /spiffe-workload-api/spire-agent.sock ]]; then
+            echo "Using SPIFFE Workload Identity for keyless signing..."
+            export SPIFFE_ENDPOINT_SOCKET="/spiffe-workload-api/spire-agent.sock"
+            if ! cosign attest \
+              --predicate "$VSA_FILE" \
+              --type "$PRED_TYPE" \
+              --use-signing-config=false \
+              --fulcio-url="${SIGSTORE_FULCIO_URL:-http://fulcio-server.fulcio-system.svc.cluster.local}" \
+              --rekor-url="${SIGSTORE_REKOR_URL:-http://rekor-server.rekor-system.svc.cluster.local}" \
+              --yes \
+              "$DEST_IMAGE"; then
+              echo "ERROR: Failed to attach $BASENAME to $DEST_IMAGE"
+              ERRORS=$((ERRORS + 1))
+            fi
+          else
+            echo "Using static signing key..."
+            if ! cosign attest \
+              --predicate "$VSA_FILE" \
+              --type "$PRED_TYPE" \
+              --key "$(params.VSA_SIGNING_KEY)" \
+              --tlog-upload=false \
+              "$DEST_IMAGE"; then
+              echo "ERROR: Failed to attach $BASENAME to $DEST_IMAGE"
+              ERRORS=$((ERRORS + 1))
+            fi
           fi
         done
 
@@ -541,14 +565,29 @@ spec:
           for name in "${!COMP_DEST_MAP[@]}"; do
             DEST_IMAGE="${COMP_DEST_MAP[$name]}"
             echo "Attaching svr.json → $DEST_IMAGE"
-            if ! cosign attest \
-              --predicate "$VSA_DIR/svr.json" \
-              --type "https://in-toto.io/attestation/svr/v0.2" \
-              --key "$(params.VSA_SIGNING_KEY)" \
-              --tlog-upload=false \
-              "$DEST_IMAGE"; then
-              echo "ERROR: Failed to attach SVR to $DEST_IMAGE"
-              ERRORS=$((ERRORS + 1))
+            if [[ -S /spiffe-workload-api/spire-agent.sock ]]; then
+              export SPIFFE_ENDPOINT_SOCKET="/spiffe-workload-api/spire-agent.sock"
+              if ! cosign attest \
+                --predicate "$VSA_DIR/svr.json" \
+                --type "https://in-toto.io/attestation/svr/v0.2" \
+                --use-signing-config=false \
+                --fulcio-url="${SIGSTORE_FULCIO_URL:-http://fulcio-server.fulcio-system.svc.cluster.local}" \
+                --rekor-url="${SIGSTORE_REKOR_URL:-http://rekor-server.rekor-system.svc.cluster.local}" \
+                --yes \
+                "$DEST_IMAGE"; then
+                echo "ERROR: Failed to attach SVR to $DEST_IMAGE"
+                ERRORS=$((ERRORS + 1))
+              fi
+            else
+              if ! cosign attest \
+                --predicate "$VSA_DIR/svr.json" \
+                --type "https://in-toto.io/attestation/svr/v0.2" \
+                --key "$(params.VSA_SIGNING_KEY)" \
+                --tlog-upload=false \
+                "$DEST_IMAGE"; then
+                echo "ERROR: Failed to attach SVR to $DEST_IMAGE"
+                ERRORS=$((ERRORS + 1))
+              fi
             fi
           done
         fi
@@ -562,10 +601,19 @@ spec:
       env:
         - name: SSL_CERT_DIR
           value: "/tekton-custom-certs:/etc/ssl/certs:/etc/pki/tls/certs:/system/etc/security/cacerts:$(params.SSL_CERT_DIR)"
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///spiffe-workload-api/spire-agent.sock"
+        - name: SIGSTORE_FULCIO_URL
+          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
+        - name: SIGSTORE_REKOR_URL
+          value: "http://rekor-server.rekor-system.svc.cluster.local"
       volumeMounts:
         - name: trusted-ca
           mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
           subPath: ca-bundle.crt
+          readOnly: true
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
           readOnly: true
 
   volumes:
@@ -582,3 +630,7 @@ spec:
         optional: true
     - name: workdir
       emptyDir: {}
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true

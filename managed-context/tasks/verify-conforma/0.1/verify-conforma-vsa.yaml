@@ -310,18 +310,9 @@ spec:
           image
           --images /tekton/home/snapshot.json
           --policy "${POLICY_CONFIGURATION}"
-          --public-key "$(params.PUBLIC_KEY)"
           --rekor-url "$(params.REKOR_HOST)"
           --ignore-rekor=$(params.IGNORE_REKOR)
           --workers "$(params.WORKERS)"
-
-        if [[ -n "$(params.CERTIFICATE_IDENTITY)" && -n "$(params.CERTIFICATE_OIDC_ISSUER)" ]]; then
-          EC_ARGS+=(
-            --certificate-identity "$(params.CERTIFICATE_IDENTITY)"
-            --certificate-oidc-issuer "$(params.CERTIFICATE_OIDC_ISSUER)"
-          )
-        fi
-
           --info=$(params.INFO)
           --timeout=100h
           --strict=false
@@ -329,6 +320,17 @@ spec:
           --effective-time=$(params.EFFECTIVE_TIME)
           --extra-rule-data=$(params.EXTRA_RULE_DATA)
         )
+
+        if [[ -n "$(params.PUBLIC_KEY)" ]]; then
+          EC_ARGS+=(--public-key "$(params.PUBLIC_KEY)")
+        fi
+
+        if [[ -n "$(params.CERTIFICATE_IDENTITY)" && -n "$(params.CERTIFICATE_OIDC_ISSUER)" ]]; then
+          EC_ARGS+=(
+            --certificate-identity "$(params.CERTIFICATE_IDENTITY)"
+            --certificate-oidc-issuer "$(params.CERTIFICATE_OIDC_ISSUER)"
+          )
+        fi
 
         EC_ARGS+=(
           --retry-max-wait "$(params.RETRY_MAX_WAIT)"
@@ -406,6 +408,12 @@ spec:
         # files from an image, see https://github.com/conforma/cli/issues/1109
         - name: EC_CACHE
           value: "false"
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///spiffe-workload-api/spire-agent.sock"
+        - name: SIGSTORE_FULCIO_URL
+          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
+        - name: SIGSTORE_REKOR_URL
+          value: "http://rekor-server.rekor-system.svc.cluster.local"
       computeResources:
         requests:
           cpu: 250m
@@ -420,13 +428,6 @@ spec:
         - name: spiffe-workload-api
           mountPath: /spiffe-workload-api
           readOnly: true
-      env:
-        - name: SPIFFE_ENDPOINT_SOCKET
-          value: "unix:///spiffe-workload-api/spire-agent.sock"
-        - name: SIGSTORE_FULCIO_URL
-          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
-        - name: SIGSTORE_REKOR_URL
-          value: "http://rekor-server.rekor-system.svc.cluster.local"
 
     - name: report-json
       image: quay.io/conforma/cli:latest@sha256:2f5bed7fd51f678ea960aaf5bed033412b7d207a83bb1b02b108be5ca71a058d
