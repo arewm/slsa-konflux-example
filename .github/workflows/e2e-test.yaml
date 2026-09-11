@@ -207,7 +207,8 @@ jobs:
         timeout-minutes: 20
         run: |
           echo "Waiting for build PipelineRun to complete..."
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
           echo "PipelineRun: ${PRN}"
 
@@ -239,7 +240,8 @@ jobs:
 
       - name: Verify build artifacts
         run: |
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
           IMAGE_URL=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
@@ -257,7 +259,8 @@ jobs:
 
       - name: Wait for Tekton Chains signing
         run: |
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
           echo "Waiting 60s for Tekton Chains to sign..."
@@ -273,7 +276,8 @@ jobs:
 
       - name: Create release test
         run: |
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
           IMAGE_URL=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
@@ -281,6 +285,8 @@ jobs:
           IMAGE_DIGEST=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
             -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
           REPO_URL="${IMAGE_URL%%:*}"
+          CHAINS_COMMIT=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.status.results[?(@.name=="CHAINS-GIT_COMMIT")].value}')
 
           # Create Snapshot CR
           cat <<EOF | kubectl apply -f -
@@ -299,7 +305,7 @@ jobs:
                 source:
                   git:
                     url: "https://github.com/konflux-ci/testrepo"
-                    revision: "${TESTREPO_SHA}"
+                    revision: "${CHAINS_COMMIT}"
           EOF
 
           # Create Release CR
