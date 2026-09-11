@@ -104,6 +104,9 @@ jobs:
           printf 'GITHUB_APP_ID=\nGITHUB_APP_PRIVATE_KEY=\nGITHUB_APP_WEBHOOK_SECRET=\nGITOPS_REPO=\nMY_GITHUB_TOKEN=\n' > /tmp/konflux-ci/deploy-local.env
 
           cd /tmp/konflux-ci
+          # On standard GitHub Actions runners with 7-14GB RAM, reduce KIND_MEMORY_GB from 8 to 1
+          # so kubelet does not reserve 8GB for the host OS and leave pods unschedulable.
+          export KIND_MEMORY_GB=1
           SKIP_SECRETS=true \
           OPERATOR_INSTALL_METHOD=release \
           OPERATOR_RELEASE="${KONFLUX_VERSION}" \
@@ -177,6 +180,21 @@ jobs:
                     resources:
                       requests:
                         storage: 1Gi
+            taskRunSpecs:
+              - pipelineTaskName: prefetch-dependencies
+                computeResources:
+                  requests:
+                    cpu: 100m
+                    memory: 256Mi
+                  limits:
+                    memory: 1Gi
+              - pipelineTaskName: build-container
+                computeResources:
+                  requests:
+                    cpu: 200m
+                    memory: 512Mi
+                  limits:
+                    memory: 2Gi
           EOF
 
       - name: Wait for build PipelineRun
