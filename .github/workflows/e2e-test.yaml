@@ -15,7 +15,7 @@ env:
   # renovate: datasource=github-releases depName=kubernetes/kubernetes
   KUBECTL_VERSION: "1.36.0"
   # renovate: datasource=github-releases depName=konflux-ci/konflux-ci
-  KONFLUX_VERSION: "v0.2.1"
+  KONFLUX_VERSION: "v0.2.2"
 
 jobs:
   validate:
@@ -77,6 +77,9 @@ jobs:
         run: |
           sudo systemctl stop apparmor || true
           sudo systemctl disable apparmor || true
+          # Ubuntu 24.04 kernel restricts unprivileged user namespaces by default,
+          # which causes buildah/unshare to fail with "Error during unshare: Operation not permitted".
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -104,7 +107,12 @@ jobs:
           printf 'GITHUB_APP_ID=\nGITHUB_APP_PRIVATE_KEY=\nGITHUB_APP_WEBHOOK_SECRET=\nGITOPS_REPO=\nMY_GITHUB_TOKEN=\n' > /tmp/konflux-ci/deploy-local.env
 
           cd /tmp/konflux-ci
-          RELEASE_URL="https://github.com/konflux-ci/konflux-ci/releases/download/${KONFLUX_VERSION}/install.yaml" \
+          # On standard GitHub Actions runners with 7-14GB RAM, reduce KIND_MEMORY_GB from 8 to 1
+          # so kubelet does not reserve 8GB for the host OS and leave pods unschedulable.
+          export KIND_MEMORY_GB=1
+          SKIP_SECRETS=true \
+          OPERATOR_INSTALL_METHOD=release \
+          OPERATOR_RELEASE="${KONFLUX_VERSION}" \
             ./scripts/deploy-local.sh
 
       - name: Run setup-prerequisites
@@ -114,12 +122,17 @@ jobs:
       - name: Install platform configuration
         run: |
           helm install platform ./charts/platform-config
+          # Ensure release SA is linked to registry credentials
+          kubectl patch sa release-service-account -n managed-tenant \
+            -p '{"secrets":[{"name":"regcred-internal-registry"}]}' 2>/dev/null || true
 
       - name: Onboard test component
         run: |
           helm install test-component ./charts/component-onboarding \
             --set componentName=test-app \
-            --set gitRepoUrl=https://github.com/konflux-ci/testrepo
+            --set gitRepoUrl=https://github.com/konflux-ci/testrepo \
+            --set release.pipeline.revision=fix/e2e-ci-konflux-bump \
+            --set release.signing.publicKey="k8s://tekton-pipelines/public-key"
 
       - name: Verify resources created
         run: |
@@ -152,7 +165,7 @@ jobs:
               resolver: bundles
               params:
                 - name: bundle
-                  value: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest@sha256:5b4594d16eb6242f1f22845753d7c7285a6b100296f0a1d971c9a5e87c9c9948
+                  value: quay.io/slsa-konflux-example/pipeline-slsa-e2e-oci-ta:latest@sha256:086650cb7640955989a4c1acfa21fb94a6138e6f3f24e46ae4cceec2e61b8e42
                 - name: name
                   value: slsa-e2e-oci-ta
                 - name: kind
@@ -173,27 +186,62 @@ jobs:
                     resources:
                       requests:
                         storage: 1Gi
+            taskRunSpecs:
+              - pipelineTaskName: prefetch-dependencies
+                computeResources:
+                  requests:
+                    cpu: 100m
+                    memory: 256Mi
+                  limits:
+                    memory: 1Gi
+              - pipelineTaskName: build-container
+                computeResources:
+                  requests:
+                    cpu: 200m
+                    memory: 512Mi
+                  limits:
+                    memory: 2Gi
           EOF
 
       - name: Wait for build PipelineRun
         timeout-minutes: 20
         run: |
           echo "Waiting for build PipelineRun to complete..."
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
           echo "PipelineRun: ${PRN}"
 
-          kubectl wait --for=condition=Succeeded "pipelinerun/${PRN}" \
-            -n default-tenant --timeout=1200s || {
-            echo "Build PipelineRun failed or timed out"
-            kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
-            exit 1
-          }
-          echo "Build PipelineRun succeeded."
+          START_TIME=$(date +%s)
+          while true; do
+            STATUS=$(kubectl get pipelinerun "${PRN}" -n default-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || true)
+            REASON=$(kubectl get pipelinerun "${PRN}" -n default-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || true)
+            MSG=$(kubectl get pipelinerun "${PRN}" -n default-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].message}' 2>/dev/null || true)
+
+            if [ "$STATUS" = "True" ]; then
+              echo "Build PipelineRun succeeded."
+              break
+            elif [ "$STATUS" = "False" ]; then
+              echo "ERROR: Build PipelineRun failed immediately with Reason: ${REASON}, Message: ${MSG}"
+              kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
+              exit 1
+            fi
+
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            if [ "$ELAPSED" -ge 1200 ]; then
+              echo "ERROR: Timed out waiting for build PipelineRun after ${ELAPSED}s"
+              kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
+              exit 1
+            fi
+
+            echo "  Waiting for build PipelineRun... (${ELAPSED}s elapsed)"
+            sleep 10
+          done
 
       - name: Verify build artifacts
         run: |
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
           IMAGE_URL=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
@@ -211,7 +259,8 @@ jobs:
 
       - name: Wait for Tekton Chains signing
         run: |
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
           echo "Waiting 60s for Tekton Chains to sign..."
@@ -227,13 +276,17 @@ jobs:
 
       - name: Create release test
         run: |
-          PRN=$(kubectl get pipelineruns -n default-tenant -l appstudio.openshift.io/component=test-app \
+          PRN=$(kubectl get pipelineruns -n default-tenant \
+            -l pipelines.appstudio.openshift.io/type=build,appstudio.openshift.io/component=test-app \
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
           IMAGE_URL=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
             -o jsonpath='{.status.results[?(@.name=="IMAGE_URL")].value}')
           IMAGE_DIGEST=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
             -o jsonpath='{.status.results[?(@.name=="IMAGE_DIGEST")].value}')
+          REPO_URL="${IMAGE_URL%%:*}"
+          CHAINS_COMMIT=$(kubectl get pipelinerun "${PRN}" -n default-tenant \
+            -o jsonpath='{.status.results[?(@.name=="CHAINS-GIT_COMMIT")].value}')
 
           # Create Snapshot CR
           cat <<EOF | kubectl apply -f -
@@ -248,7 +301,11 @@ jobs:
             application: test-app
             components:
               - name: test-app
-                containerImage: "${IMAGE_URL}@${IMAGE_DIGEST}"
+                containerImage: "${REPO_URL}@${IMAGE_DIGEST}"
+                source:
+                  git:
+                    url: "https://github.com/konflux-ci/testrepo"
+                    revision: "${CHAINS_COMMIT}"
           EOF
 
           # Create Release CR
@@ -260,7 +317,7 @@ jobs:
             namespace: default-tenant
           spec:
             snapshot: test-snapshot
-            releasePlan: test-app
+            releasePlan: test-app-release-plan
           EOF
 
       - name: Wait for release PipelineRun
@@ -283,13 +340,31 @@ jobs:
             exit 1
           fi
 
-          kubectl wait --for=condition=Succeeded "pipelinerun/${RELEASE_PR}" \
-            -n managed-tenant --timeout=1200s || {
-            echo "Release PipelineRun failed or timed out"
-            kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
-            exit 1
-          }
-          echo "Release PipelineRun succeeded."
+          START_TIME=$(date +%s)
+          while true; do
+            STATUS=$(kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || true)
+            REASON=$(kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || true)
+            MSG=$(kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].message}' 2>/dev/null || true)
+
+            if [ "$STATUS" = "True" ]; then
+              echo "Release PipelineRun succeeded."
+              break
+            elif [ "$STATUS" = "False" ]; then
+              echo "ERROR: Release PipelineRun failed immediately with Reason: ${REASON}, Message: ${MSG}"
+              kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
+              exit 1
+            fi
+
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            if [ "$ELAPSED" -ge 1200 ]; then
+              echo "ERROR: Timed out waiting for release PipelineRun after ${ELAPSED}s"
+              kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
+              exit 1
+            fi
+
+            echo "  Waiting for release PipelineRun... (${ELAPSED}s elapsed)"
+            sleep 10
+          done
 
       - name: Verify VSA generation
         run: |
@@ -314,10 +389,17 @@ jobs:
           echo "=== PipelineRuns (managed-tenant) ===" > /tmp/e2e-logs/release-pipelineruns.txt
           kubectl get pipelineruns -n managed-tenant -o yaml >> /tmp/e2e-logs/release-pipelineruns.txt 2>&1 || true
 
-          echo "=== Pod logs (default-tenant) ===" > /tmp/e2e-logs/pod-logs.txt
+          echo "=== TaskRuns (managed-tenant) ===" >> /tmp/e2e-logs/release-taskruns.txt
+          kubectl get taskruns -n managed-tenant -o yaml >> /tmp/e2e-logs/release-taskruns.txt 2>&1 || true
+
+          echo "=== Pod logs ===" > /tmp/e2e-logs/pod-logs.txt
           for pod in $(kubectl get pods -n default-tenant -o name 2>/dev/null); do
-            echo "--- ${pod} ---" >> /tmp/e2e-logs/pod-logs.txt
+            echo "--- ${pod} (default-tenant) ---" >> /tmp/e2e-logs/pod-logs.txt
             kubectl logs "${pod}" -n default-tenant --all-containers >> /tmp/e2e-logs/pod-logs.txt 2>&1 || true
+          done
+          for pod in $(kubectl get pods -n managed-tenant -o name 2>/dev/null); do
+            echo "--- ${pod} (managed-tenant) ---" >> /tmp/e2e-logs/pod-logs.txt
+            kubectl logs "${pod}" -n managed-tenant --all-containers >> /tmp/e2e-logs/pod-logs.txt 2>&1 || true
           done
 
           echo "=== Konflux CRs ===" > /tmp/e2e-logs/konflux-crs.txt
