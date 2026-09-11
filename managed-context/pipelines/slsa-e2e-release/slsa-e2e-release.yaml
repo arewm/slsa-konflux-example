@@ -88,13 +88,13 @@ spec:
       type: string
       default: "https://tekton.dev/chains/v2"
     - name: rekorHost
-      description: Rekor transparency log URL for keyless signature verification.
+      description: Rekor transparency log URL for keyless signature verification. Leave empty when using keypair signing.
       type: string
-      default: "http://rekor-server.rekor-system.svc.cluster.local"
+      default: ""
     - name: tufMirror
-      description: TUF mirror URL for fetching Sigstore trust roots.
+      description: TUF mirror URL for fetching Sigstore trust roots. Leave empty when using keypair signing.
       type: string
-      default: "http://tuf-server.tuf-system.svc.cluster.local"
+      default: ""
     - name: certificateIdentity
       description: >-
         Certificate identity (URI SAN) for keyless verification of Tekton
