@@ -122,6 +122,9 @@ jobs:
       - name: Install platform configuration
         run: |
           helm install platform ./charts/platform-config
+          # Ensure release SA is linked to registry credentials
+          kubectl patch sa release-service-account -n managed-tenant \
+            -p '{"secrets":[{"name":"regcred-internal-registry"}]}' 2>/dev/null || true
 
       - name: Onboard test component
         run: |
@@ -380,10 +383,17 @@ jobs:
           echo "=== PipelineRuns (managed-tenant) ===" > /tmp/e2e-logs/release-pipelineruns.txt
           kubectl get pipelineruns -n managed-tenant -o yaml >> /tmp/e2e-logs/release-pipelineruns.txt 2>&1 || true
 
-          echo "=== Pod logs (default-tenant) ===" > /tmp/e2e-logs/pod-logs.txt
+          echo "=== TaskRuns (managed-tenant) ===" >> /tmp/e2e-logs/release-taskruns.txt
+          kubectl get taskruns -n managed-tenant -o yaml >> /tmp/e2e-logs/release-taskruns.txt 2>&1 || true
+
+          echo "=== Pod logs ===" > /tmp/e2e-logs/pod-logs.txt
           for pod in $(kubectl get pods -n default-tenant -o name 2>/dev/null); do
-            echo "--- ${pod} ---" >> /tmp/e2e-logs/pod-logs.txt
+            echo "--- ${pod} (default-tenant) ---" >> /tmp/e2e-logs/pod-logs.txt
             kubectl logs "${pod}" -n default-tenant --all-containers >> /tmp/e2e-logs/pod-logs.txt 2>&1 || true
+          done
+          for pod in $(kubectl get pods -n managed-tenant -o name 2>/dev/null); do
+            echo "--- ${pod} (managed-tenant) ---" >> /tmp/e2e-logs/pod-logs.txt
+            kubectl logs "${pod}" -n managed-tenant --all-containers >> /tmp/e2e-logs/pod-logs.txt 2>&1 || true
           done
 
           echo "=== Konflux CRs ===" > /tmp/e2e-logs/konflux-crs.txt
