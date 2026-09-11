@@ -47,6 +47,24 @@ kubectl patch konflux konflux --type=merge -p "{
   }
 }"
 
+# Configure Tekton Chains to write provenance as Sigstore bundles via OCI 1.1 Referrers
+echo "Configuring Tekton Chains to use OCI 1.1 Referrers (sigstore-bundle format)..."
+kubectl patch tektonconfig config --type=merge -p '{
+  "spec": {
+    "chain": {
+      "options": {
+        "configMaps": {
+          "chains-config": {
+            "data": {
+              "storage.oci.encoding-format": "sigstore-bundle"
+            }
+          }
+        }
+      }
+    }
+  }
+}' 2>/dev/null || echo "Warning: Could not patch TektonConfig for Chains sigstore-bundle format."
+
 # Configure internal registry access for build and integration pipelines.
 # The common-secret label makes build-service auto-link the credential to
 # every build-pipeline-{component} SA it creates.
