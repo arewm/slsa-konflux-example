@@ -7,6 +7,12 @@ spec:
   # The backtick block prevents Helm from processing the inner brace expressions.
   spiffeIDTemplate: >-
     spiffe://{{ .Values.trustDomain }}/dev/{{ .Values.clusterName }}/{{`{{ .PodSpec.ServiceAccountName }}/{{ index .PodMeta.Labels "tekton.dev/task" }}`}}
+  namespaceSelector:
+    matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: NotIn
+      values:
+      - managed-tenant
   podSelector:
     matchLabels:
       trusted-task-role: "dev"

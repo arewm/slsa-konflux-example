@@ -1,0 +1,23 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: classify-release-authority
+spec:
+  failurePolicy: Ignore
+  rules:
+  - name: label-release-authority-taskrun
+    match:
+      any:
+      - resources:
+          kinds: ["TaskRun"]
+          namespaces: ["managed-tenant"]
+    preconditions:
+      all:
+      - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipeline\" || '' }}`}}"
+        operator: Equals
+        value: "slsa-e2e-release-dual-gated"
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            trusted-pipeline-role: "release-authority"

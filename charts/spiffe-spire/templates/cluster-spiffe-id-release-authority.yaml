@@ -1,0 +1,15 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: konflux-release-authority
+spec:
+  className: spire-spire
+  podSelector:
+    matchLabels:
+      trusted-pipeline-role: release-authority
+      tekton.dev/pipelineTask: attach-summary-attestations
+  namespaceSelector:
+    matchLabels:
+      {{ .Values.trustedNamespaceLabel }}: "true"
+  spiffeIDTemplate: >-
+    spiffe://{{ .Values.trustDomain }}/release/{{`{{ index .PodMeta.Labels "appstudio.openshift.io/application" }}/{{ index .PodMeta.Labels "tekton.dev/pipeline" }}`}}
