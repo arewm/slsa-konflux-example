@@ -3,7 +3,8 @@
 **Date:** 2026-09-11  
 **Target Event:** KubeCon Presentation  
 **Target Branch:** `worktree-spiffe-spire-exploration`  
-**Related Design:** `docs/plans/2026-05-14-spiffe-spire-trusted-tasks-design.md`, `docs/plans/2026-05-30-trusted-task-admission-status.md`
+**Related Design:** `docs/plans/2026-05-14-spiffe-spire-trusted-tasks-design.md`, `docs/plans/2026-05-30-trusted-task-admission-status.md`  
+**Implementation Guide:** `docs/dual-gated-release-guide.md`
 
 ---
 
@@ -13,7 +14,7 @@
 
 This plan outlines the implementation and demonstration of **task-scoped cryptographic workload identities** in Tekton pipelines using **Kyverno** (admission classification and OCI bundle signature verification) and **SPIFFE/SPIRE** (workload attestation and identity issuance).
 
-Furthermore, this document records an architectural analysis and design for the **Managed Context (Release Pipeline)** trust boundary, contrasting naive task-level identity with **PipelineRun-scoped identity** and **Cryptographic Policy Clearance Tokens**.
+Furthermore, this document records the architectural analysis and implementation for the **Managed Context (Release Pipeline)** trust boundary, contrasting naive task-level identity with **PipelineRun-scoped dual-gating** (Model 2, implemented and verified) and **Cryptographic Policy Clearance Tokens** (Model 3, capability-based gating).
 
 ---
 
@@ -47,133 +48,196 @@ Consumers verifying a Verification Summary Attestation (VSA) or Software Verific
 2. The evaluation used the authorized `EnterpriseContractPolicy` (and pinned revision).
 3. Early tasks (e.g. `collect-data` or `apply-mapping`) could not leverage ambient authority to sign a VSA prematurely.
 
-#### Three Evolving Release Trust Models
+#### Crucial Invariant: Why `verify-conforma` Must Be a Trusted Task
+In both Model 2 and Model 3, **`verify-conforma` itself must be a trusted, signed catalog task admitted by Kyverno (`trusted-task-role: prod`)**.
+- If a tenant or compromised managed pipeline could substitute an arbitrary or unpinned `verify-conforma` task (e.g. replacing the image with a container that simply runs `echo '{"result":"SUCCESS"}'`), any downstream gating mechanism is rendered useless.
+- Therefore, the pipeline admission gate must enforce that `verify-conforma` is pulled from a digest-pinned, Cosign-signed catalog bundle before any release workflow is permitted to proceed.
 
+---
+
+## 3. Comparison of Release Trust Models
+
+| Dimension | Model 1: Static Keypair (Baseline) | Model 2: Dual-Gated Identity (Implemented) | Model 3: Clearance Token (Capability Gating) |
+| :--- | :--- | :--- | :--- |
+| **Trust Anchor** | Secret in `managed-tenant` | Kyverno admission + SPIRE pod conjunction | Ephemeral JWT signed by Policy Evaluator |
+| **Identity Scope** | Ambient ServiceAccount | PipelineRun-scoped release authority | Ephemeral Capability Token tied to Policy Verdict |
+| **Gating Level** | Control plane (ServiceAccount) | Control plane conjunction (Kyverno + SPIRE) | Data plane cryptographic token handoff |
+| **Attestation Signer** | Long-lived static key | Short-lived Fulcio cert with Release SAN | Fulcio cert issued on clearance presentation |
+| **Policy Proof** | Implicit (assumes pipeline ran) | Implicit (conjunction ensures late pipeline step) | **Explicit & Cryptographic** (verdict in token) |
+| **Replay Protection** | None (key usable anytime) | Bound to PipelineRun lifecycle | Token bound to PipelineRun UID + image digest |
+| **Implementation Status**| Baseline (`main`) | **Fully Implemented & Verified Live** | Detailed Architectural Specification |
+
+---
+
+## 4. Deep-Dive: Model 2 — PipelineRun-Scoped Dual-Gated Identity *(Implemented)*
+
+Model 2 solves the ambient authority problem by issuing the release authority identity **only** to the exact task in the pipeline that is authorized to attach attestations, and only when running inside the legitimate release pipeline.
+
+### Conjunction Rules:
+1. **Admission Rule (`classify-release-authority` ClusterPolicy):**
+   ```yaml
+   apiVersion: kyverno.io/v1
+   kind: ClusterPolicy
+   metadata:
+     name: classify-release-authority
+   spec:
+     rules:
+     - name: label-release-authority-taskrun
+       match:
+         any:
+         - resources:
+             kinds: ["TaskRun"]
+             namespaces: ["managed-tenant"]
+       preconditions:
+         all:
+         - key: "{{ request.object.metadata.labels.\"tekton.dev/pipeline\" || '' }}"
+           operator: Equals
+           value: "slsa-e2e-release-dual-gated"
+       mutate:
+         patchStrategicMerge:
+           metadata:
+             labels:
+               trusted-pipeline-role: "release-authority"
+   ```
+
+2. **Attestation Conjunction (`ClusterSPIFFEID` `konflux-release-authority`):**
+   ```yaml
+   apiVersion: spire.spiffe.io/v1alpha1
+   kind: ClusterSPIFFEID
+   metadata:
+     name: konflux-release-authority
+   spec:
+     className: spire-spire
+     namespaceSelector:
+       matchLabels:
+         trusted-tasks-enabled: "true"
+     podSelector:
+       matchLabels:
+         trusted-pipeline-role: release-authority
+         tekton.dev/pipelineTask: attach-summary-attestations
+     spiffeIDTemplate: >-
+       spiffe://{{ .Values.trustDomain }}/release/{{ index .PodMeta.Labels "appstudio.openshift.io/application" }}/{{ index .PodMeta.Labels "tekton.dev/pipeline" }}
+   ```
+
+### Execution Guarantee:
+- Early tasks (`collect-data`, `apply-mapping`, `verify-conforma`, `push-snapshot`) match `trusted-pipeline-role: release-authority`, but their `tekton.dev/pipelineTask` is NOT `attach-summary-attestations`. SPIRE issues **no identity**.
+- Only `attach-summary-attestations` matches both selectors. It receives:
+  `spiffe://konflux-ci.dev/release/test-app/slsa-e2e-release-dual-gated`.
+- Fulcio issues an ephemeral certificate with that SAN; Cosign signs the VSA and SVR to Rekor.
+
+---
+
+## 5. Deep-Dive: Model 3 — Cryptographic Policy Clearance Token *(Capability-Based Gating)*
+
+While Model 2 enforces control-plane gating (admitting the task only at the right step), Model 3 advances to **zero-trust capability-based gating**. Signing authority is physically un-mintable without a passing cryptographic proof issued by the policy engine.
+
+### Architectural Flow:
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. Current / Baseline: Static Keypair                                      │
-│    - Signing key stored in Secret (managed-tenant/release-signing-key)      │
-│    - Simple, offline, but ambient authority across the release SA           │
+│ 1. verify-conforma Evaluates EnterpriseContractPolicy                       │
+│    Runs 104 rules against Snapshot, SBOMs, CVE scans, and SLSA provenance.  │
+│    Status verdict: 104/104 PASSED (0 violations).                           │
 └─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 2. PipelineRun-Scoped Dual-Gated Identity (SPIRE + Kyverno Conjunction)     │
-│    - Identity represents the authorized release workflow:                   │
-│      spiffe://konflux-ci.dev/release/{app}/{pipeline}                       │
-│    - Issued ONLY to pods matching BOTH:                                     │
-│      • trusted-pipeline-role: release-authority (verified by Kyverno)        │
-│      • tekton.dev/pipelineTask: attach-summary-attestations                 │
-│    - Early pipeline tasks have zero signing access                          │
+│ 2. Ephemeral Clearance Token Minting                                        │
+│    verify-conforma requests / mints an ephemeral Clearance JWT Token:       │
+│    Signed by Policy Evaluator Private Key (or SPIRE OIDC delegated signer). │
+│                                                                             │
+│    Claims:                                                                  │
+│      iss: https://policy.konflux-ci.dev/verifier                            │
+│      sub: pipelinerun/dual-gated-release-9vd22                              │
+│      aud: sigstore-release-ca                                               │
+│      digest: sha256:b27826d99fa895c302c327c58ca1d861b962b7cc...             │
+│      verdict: PASSED                                                        │
+│      policy_hash: sha256:1b296a925b4021f4b4959ea289596925...                │
+│      exp: <5 minutes>                                                       │
 └─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │ (Passed via Trusted Artifacts OCI)
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 3. Cryptographic Policy Clearance Token (Capability-Based Gating)           │
-│    - verify-conforma evaluates 104 rules                                    │
-│    - If 104/104 pass with 0 violations:                                    │
-│      Mints ephemeral JWT: clearance-token.jwt                               │
-│        • sub: pipelinerun/{UID}                                             │
-│        • digest: sha256:{image-digest}                                      │
-│        • status: SUCCESS                                                    │
-│    - attach-summary-attestations presents Token + SPIFFE identity to Fulcio│
-│    - Replay-immune across pipeline runs; physical impossibility to sign    │
-│      without a passing Conforma verdict                                     │
+│ 3. Token Presentation at Signing Gate                                       │
+│    attach-summary-attestations unpacks clearance-token.jwt.                │
+│    Presents to Fulcio:                                                      │
+│      1. Workload Identity (JWT-SVID from SPIRE Workload API)                │
+│      2. Clearance Token (policy proof)                                      │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 4. Fulcio Verification & Certificate Issuance                               │
+│    Fulcio validates:                                                        │
+│      • SPIFFE SVID proves the caller is attach-summary-attestations         │
+│      • Clearance Token signature is valid from the Policy Evaluator         │
+│      • Token claims match: pipelinerun_uid and image digest                 │
+│      • Token verdict == PASSED and exp has not expired                      │
+│    Fulcio embeds custom extension:                                          │
+│      1.3.6.1.4.1.57264.1.X (Policy Clearance Verdict: PASSED)               │
+│    Issues signing certificate. Cosign attaches VSA to container image.      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 3. Implementation Roadmap for the KubeCon Demo
-
-### Phase 1: Local Patched Kyverno Controller Deployment
-Because official Kyverno `v1.19.1` cut release 8 hours prior to the merge of PR #16269 (`filter` field on `imageExtractors`), we deploy the patched build from `~/workspace/src/github.com/arewm/kyverno` (`fix/imageextractor-filter`).
-
-1. **Build Controller Image:**
-   ```bash
-   cd /Users/arewm/workspace/src/github.com/arewm/kyverno
-   KO_DOCKER_REPO=kind.local make docker-build-admission-controller
-   ```
-2. **Load into Kind Cluster:**
-   ```bash
-   kind load docker-image kind.local/kyverno:latest --name konflux
-   ```
-3. **Deploy Kyverno via Helm:**
-   - Install Kyverno CRDs with `filter` field in `ImageExtractorConfig`.
-   - Deploy Kyverno controller pointing to `kind.local/kyverno:latest`.
+### Threat Model & Mitigations:
+1. **Malicious / Compromised Pipeline Task:**
+   - *Threat:* An earlier task in `managed-tenant` attempts to sign a VSA without running policy checks.
+   - *Mitigation:* Fulcio rejects certificate requests lacking a valid `clearance-token.jwt` signed by the Policy Evaluator.
+2. **Replay Across Pipeline Runs:**
+   - *Threat:* An attacker reuses an old passing clearance token from a previous build on a newly built, vulnerable snapshot.
+   - *Mitigation:* The clearance token is bound to both the unique `PipelineRunUID` and the immutable target container `image-digest`, with a tight 5-minute TTL.
+3. **Forged Policy Engine:**
+   - *Threat:* An attacker runs a fake `verify-conforma` task that always returns success.
+   - *Mitigation:* Kyverno requires `verify-conforma` to be a signed catalog bundle (`trusted-task-role: prod`). Only tasks with the authenticated policy evaluator SPIFFE identity can obtain the token-signing key from SPIRE.
 
 ---
 
-### Phase 2: Deploy Admission Policies (`charts/admission-policy`)
-Deploy the three Kyverno ClusterPolicies:
-1. `classify-taskrun`: Labels TaskRuns with `trusted-task-role: dev` or `prod` based on digest-pinning and trusted bundle patterns.
-2. `prevent-pod-label-spoofing`: Enforces that pods cannot self-assign `trusted-task-role`.
-3. `verify-bundle-signatures`: Uses `filter: "bundle"` and `type: SigstoreBundle` to enforce cryptographic Cosign signatures on OCI referrer bundles.
+## 6. Implementation Roadmap & Verified Deliverables
 
-```bash
-helm upgrade --install admission-policy \
-  .claude/worktrees/spiffe-spire-exploration/charts/admission-policy
-```
+### Phase 1: Local Patched Kyverno Controller Deployment *(Completed)*
+- Built patched Kyverno admission controller from `~/workspace/src/github.com/arewm/kyverno` (`fix/imageextractor-filter`) containing PR #16268 (scalar skip) and PR #16269 (`filter` field on `imageExtractors`).
+- Loaded image `kind.local/kyverno:latest` into Kind cluster `konflux`.
+- Deployed Kyverno Helm chart with custom CA and internal registry credentials mounted.
 
----
+### Phase 2: Deploy Admission Policies (`charts/admission-policy`) *(Completed)*
+- Deployed `classify-taskrun`: labels tasks `dev` or `prod` based on digest-pinning and trusted catalog patterns.
+- Deployed `prevent-pod-label-spoofing`: validates ownerReference to prevent label spoofing.
+- Deployed `verify-bundle-signatures`: enforces Cosign signatures on Tekton catalog task bundles using `type: SigstoreBundle` and `filter: bundle`.
+- Deployed `classify-release-authority`: stamps `trusted-pipeline-role: release-authority` on release pipeline tasks.
 
-### Phase 3: Deploy SPIFFE/SPIRE Infrastructure (`charts/spiffe-spire`)
-1. **Deploy SPIRE Server & Agent DaemonSet:**
-   - CSI Driver mounted at `/spiffe-workload-api/spire-agent.sock`.
-   - SPIRE OIDC Discovery Provider configured for Fulcio federation.
-2. **Apply `ClusterSPIFFEID` CRs:**
-   - `konflux-trusted-prod`: Mints `spiffe://konflux-ci.dev/trusted/...` for pods with `trusted-task-role: prod`.
-   - `konflux-dev`: Mints `spiffe://konflux-ci.dev/dev/...` for pods with `trusted-task-role: dev`.
-3. **Run Fulcio Integration Job:**
-   - Registers SPIRE OIDC discovery endpoint with the in-cluster Fulcio configuration.
+### Phase 3: Deploy SPIFFE/SPIRE Infrastructure (`charts/spiffe-spire`) *(Completed)*
+- Deployed SPIRE Server, Agent DaemonSet, SPIFFE CSI Driver, and SPIRE OIDC Discovery Provider.
+- Configured `ClusterSPIFFEID`s: `konflux-dev`, `konflux-trusted-prod`, and `konflux-release-authority`.
+- Configured in-cluster Fulcio with SPIRE root CA and OIDC discovery URL.
 
-```bash
-helm upgrade --install spiffe-spire \
-  .claude/worktrees/spiffe-spire-exploration/charts/spiffe-spire
-```
+### Phase 4: Non-Breaking Dual-Mode Task Configuration *(Completed)*
+- Updated `attach-summary-attestations` to auto-detect SPIFFE CSI socket at `/spiffe-workload-api/spire-agent.sock` and execute keyless Cosign attestations via Fulcio/Rekor, falling back to static keypairs if absent.
+- Configured Tekton Chains in `TektonConfig` via `scripts/setup-prerequisites.sh` to use `storage.oci.encoding-format: sigstore-bundle` (OCI 1.1 Referrers).
+- Created and executed `slsa-e2e-release-dual-gated.yaml` demonstrating full Model 2 dual-gating.
 
 ---
 
-### Phase 4: Non-Breaking Dual-Mode Task Configuration
-To allow `main` and `worktree-spiffe-spire-exploration` to co-exist without breaking CI or non-SPIRE clusters:
-1. **Declare Workspaces as `optional: true`:**
-   In `trivy-sbom-scan` and `attach-summary-attestations`:
-   ```yaml
-   workspaces:
-     - name: spiffe-workload-api
-       optional: true
-       mountPath: /spiffe-workload-api
-   ```
-2. **Runtime Detection in Task Scripts:**
-   ```bash
-   if [ -S /spiffe-workload-api/spire-agent.sock ]; then
-     echo "Using SPIFFE Workload Identity..."
-     export SPIFFE_ENDPOINT_SOCKET="unix:///spiffe-workload-api/spire-agent.sock"
-     cosign attest --predicate "$PRED" --type "$TYPE" --yes "$IMAGE"
-   else
-     echo "Falling back to static keypair..."
-     cosign attest --predicate "$PRED" --type "$TYPE" --key "$KEY" --use-signing-config=false --tlog-upload=false "$IMAGE"
-   fi
-   ```
-
----
-
-## 4. The Live Demo Script
+## 7. The Live Demo Script
 
 1. **Scene 1 — The Untrusted Task (Role: Dev):**
    - Submit a PipelineRun with an unpinned or untrusted task bundle.
-   - Show Kyverno admission log: TaskRun is classified as `trusted-task-role: dev`.
-   - Inspect Pod SVID: `spiffe://konflux-ci.dev/dev/...`.
-   - Attempt to verify via production policy: Conforma rejects the untrusted signature.
+   - Kyverno admission stamps `trusted-task-role: dev`.
+   - Pod receives `spiffe://konflux-ci.dev/dev/...`.
+   - Conforma policy rejects dev identity signature for production release.
 
 2. **Scene 2 — The Trusted Separation of Roles (Role: Prod):**
-   - Submit the official SLSA build pipeline with signed task bundles.
-   - Kyverno verifies Cosign signature on the task bundle; stamps `trusted-task-role: prod`.
-   - **Trivy Pod** receives `.../task/trivy-sbom-scan` ➔ Signs CVE report.
-   - **Buildah Pod** receives `.../task/buildah-oci-ta` ➔ Signs SBOM and provenance.
+   - Submit the official SLSA build pipeline with signed catalog task bundles.
+   - Kyverno verifies Cosign bundle signature; stamps `trusted-task-role: prod`.
+   - **Trivy Pod** receives `.../trivy-sbom-scan` ➔ Signs CVE report.
+   - **Buildah Pod** receives `.../buildah-oci-ta` ➔ Signs SBOM and provenance.
 
 3. **Scene 3 — The Conforma Policy Evaluation:**
    - Execute Conforma policy validation.
-   - Show rule verification: Conforma checks that the CVE report came from `.../trivy-sbom-scan` and the SBOM came from `.../buildah-oci-ta`.
-   - Show positive assertion: "Right role for the right job."
+   - Proves separation of duties: CVE report must be signed by scanner, SBOM by builder.
+   - Adversarial attempt (builder signs CVE report) is rejected by Rego policy.
 
-4. **Scene 4 — The Future: Managed Release Gating (Discussion / Cap-stone):**
-   - Show how the release pipeline uses PipelineRun-scoped identity or Cryptographic Clearance Tokens to sign the final VSA only after all gates clear.
+4. **Scene 4 — The Managed Release Boundary (Dual-Gated Authority):**
+   - Execute `slsa-e2e-release-dual-gated`.
+   - Demonstrate that early tasks in `managed-tenant` have NO release identity.
+   - Once `verify-conforma` clears 104/104 checks, `attach-summary-attestations` matches the dual-gate conjunction.
+   - SPIRE mints `spiffe://konflux-ci.dev/release/test-app/slsa-e2e-release-dual-gated`.
+   - Keyless VSA/SVR signed into Rekor transparency log.
