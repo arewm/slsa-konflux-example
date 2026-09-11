@@ -77,6 +77,9 @@ jobs:
         run: |
           sudo systemctl stop apparmor || true
           sudo systemctl disable apparmor || true
+          # Ubuntu 24.04 kernel restricts unprivileged user namespaces by default,
+          # which causes buildah/unshare to fail with "Error during unshare: Operation not permitted".
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -205,13 +208,31 @@ jobs:
             --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
           echo "PipelineRun: ${PRN}"
 
-          kubectl wait --for=condition=Succeeded "pipelinerun/${PRN}" \
-            -n default-tenant --timeout=1200s || {
-            echo "Build PipelineRun failed or timed out"
-            kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
-            exit 1
-          }
-          echo "Build PipelineRun succeeded."
+          START_TIME=$(date +%s)
+          while true; do
+            STATUS=$(kubectl get pipelinerun "${PRN}" -n default-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || true)
+            REASON=$(kubectl get pipelinerun "${PRN}" -n default-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || true)
+            MSG=$(kubectl get pipelinerun "${PRN}" -n default-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].message}' 2>/dev/null || true)
+
+            if [ "$STATUS" = "True" ]; then
+              echo "Build PipelineRun succeeded."
+              break
+            elif [ "$STATUS" = "False" ]; then
+              echo "ERROR: Build PipelineRun failed immediately with Reason: ${REASON}, Message: ${MSG}"
+              kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
+              exit 1
+            fi
+
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            if [ "$ELAPSED" -ge 1200 ]; then
+              echo "ERROR: Timed out waiting for build PipelineRun after ${ELAPSED}s"
+              kubectl get pipelinerun "${PRN}" -n default-tenant -o yaml
+              exit 1
+            fi
+
+            echo "  Waiting for build PipelineRun... (${ELAPSED}s elapsed)"
+            sleep 10
+          done
 
       - name: Verify build artifacts
         run: |
@@ -310,13 +331,31 @@ jobs:
             exit 1
           fi
 
-          kubectl wait --for=condition=Succeeded "pipelinerun/${RELEASE_PR}" \
-            -n managed-tenant --timeout=1200s || {
-            echo "Release PipelineRun failed or timed out"
-            kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
-            exit 1
-          }
-          echo "Release PipelineRun succeeded."
+          START_TIME=$(date +%s)
+          while true; do
+            STATUS=$(kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || true)
+            REASON=$(kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].reason}' 2>/dev/null || true)
+            MSG=$(kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].message}' 2>/dev/null || true)
+
+            if [ "$STATUS" = "True" ]; then
+              echo "Release PipelineRun succeeded."
+              break
+            elif [ "$STATUS" = "False" ]; then
+              echo "ERROR: Release PipelineRun failed immediately with Reason: ${REASON}, Message: ${MSG}"
+              kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
+              exit 1
+            fi
+
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            if [ "$ELAPSED" -ge 1200 ]; then
+              echo "ERROR: Timed out waiting for release PipelineRun after ${ELAPSED}s"
+              kubectl get pipelinerun "${RELEASE_PR}" -n managed-tenant -o yaml
+              exit 1
+            fi
+
+            echo "  Waiting for release PipelineRun... (${ELAPSED}s elapsed)"
+            sleep 10
+          done
 
       - name: Verify VSA generation
         run: |
