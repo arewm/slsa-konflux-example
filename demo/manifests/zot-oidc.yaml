@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-oidc-config
+  namespace: kind-registry
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.1",
+      "storage": {
+        "rootDirectory": "/var/lib/registry-oidc"
+      },
+      "http": {
+        "address": "0.0.0.0",
+        "port": 5000,
+        "compat": ["docker2s2"],
+        "tls": {
+          "cert": "/certs/tls.crt",
+          "key": "/certs/tls.key"
+        },
+        "auth": {
+          "bearer": {
+            "realm": "https://registry-oidc.kind-registry:5000",
+            "service": "registry-oidc.kind-registry:5000",
+            "oidc": [
+              {
+                "issuer": "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local",
+                "audiences": ["https://registry-oidc.kind-registry:5000", "sigstore"],
+                "certificateAuthorityFile": "/etc/ssl/certs/spire-ca.crt"
+              }
+            ]
+          }
+        },
+        "accessControl": {
+          "repositories": {
+            "**": {
+              "policies": [
+                {
+                  "users": [
+                    "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local/spiffe://konflux-ci.dev/trusted/kind-konflux/default/buildah-oci-ta",
+                    "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local/spiffe://konflux-ci.dev/release/test-app/slsa-e2e-release-dual-gated"
+                  ],
+                  "actions": ["read", "create", "update"]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "log": {
+        "level": "debug"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry-oidc
+  namespace: kind-registry
+  labels:
+    app: registry-oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registry-oidc
+  template:
+    metadata:
+      labels:
+        app: registry-oidc
+    spec:
+      containers:
+      - name: registry
+        image: ghcr.io/project-zot/zot:v2.1.21
+        command:
+        - /usr/local/bin/zot-linux-arm64
+        args:
+        - serve
+        - /etc/zot/config.json
+        ports:
+        - containerPort: 5000
+          name: https
+        volumeMounts:
+        - mountPath: /certs
+          name: certs
+          readOnly: true
+        - mountPath: /etc/zot
+          name: zot-config
+          readOnly: true
+        - mountPath: /var/lib/registry-oidc
+          name: storage
+        - mountPath: /etc/ssl/certs/spire-ca.crt
+          name: trusted-ca
+          readOnly: true
+          subPath: ca-bundle.crt
+      volumes:
+      - name: certs
+        secret:
+          secretName: local-registry-tls
+      - name: zot-config
+        configMap:
+          name: zot-oidc-config
+      - emptyDir: {}
+        name: storage
+      - name: trusted-ca
+        configMap:
+          items:
+          - key: ca-bundle.crt
+            path: ca-bundle.crt
+          name: trusted-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry-oidc
+  namespace: kind-registry
+  labels:
+    app: registry-oidc
+spec:
+  ports:
+  - port: 5000
+    targetPort: 5000
+    name: https
+  selector:
+    app: registry-oidc
