@@ -146,8 +146,63 @@ clear
 p "# =================================================================="
 p "# ACT 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating"
 p "# =================================================================="
-p "# In standard CI/CD, every task mounts the ServiceAccount's ambient registry secret."
+p "# In Kubernetes, the 'default' keyless workload identity is projected ServiceAccount tokens:"
+p "#   iss: https://kubernetes.default.svc"
+p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
 p "#"
+p "# Let's inspect what identity a task receives under this standard pattern:"
+pe "cat << 'EOF' | kubectl apply -f -
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: demo-sa-token-inspection
+  namespace: default-tenant
+spec:
+  taskSpec:
+    stepTemplate:
+      volumeMounts:
+      - mountPath: /var/run/secrets/tokens
+        name: sa-token
+    steps:
+    - name: inspect-sa-token
+      image: curlimages/curl:latest
+      command:
+      - /bin/sh
+      - -c
+      - |
+        TOKEN=\$(cat /var/run/secrets/tokens/sa-token)
+        echo \"\$TOKEN\"
+    volumes:
+    - name: sa-token
+      projected:
+        sources:
+        - serviceAccountToken:
+            audience: https://registry-oidc.kind-registry:5000
+            expirationSeconds: 3600
+            path: sa-token
+EOF"
+
+kubectl wait --for=condition=Succeeded taskrun/demo-sa-token-inspection -n default-tenant --timeout=30s >/dev/null 2>&1 || true
+pe "kubectl logs demo-sa-token-inspection-pod -n default-tenant -c step-inspect-sa-token | python3 -c \"
+import sys, json, base64
+raw = sys.stdin.read().strip()
+for line in raw.splitlines():
+    if line.startswith('ey'):
+        p = line.split('.')[1]
+        p += '=' * (-len(p)%4)
+        claims = json.loads(base64.urlsafe_b64decode(p).decode())
+        print('Projected SA Identity (Default Keyless):')
+        print('  Issuer (iss):', claims.get('iss'))
+        print('  Subject (sub):', claims.get('sub'))
+        print('  Namespace:    ', claims.get('kubernetes.io', {}).get('namespace'))
+        print('  ServiceAccount:', claims.get('kubernetes.io', {}).get('serviceaccount', {}).get('name'))
+\"
+kubectl delete taskrun demo-sa-token-inspection -n default-tenant >/dev/null 2>&1"
+
+p "# Notice the problem: The identity is coarse-grained to the ServiceAccount (default-tenant:default)."
+p "# EVERY task running in this namespace shares this exact same identity and ambient credentials!"
+wait
+
 p "# THE ATTACK:"
 p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
 p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
@@ -201,7 +256,7 @@ kubectl wait --for=condition=Ready pod/rogue-ambient-push -n default-tenant --ti
 pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
 kubectl delete pod rogue-ambient-push -n default-tenant >/dev/null 2>&1
 
-p "# The tag was silently overwritten because traditional credentials provide ambient authority!"
+p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
 wait
 
 p "# THE DEFENSE: Task-Scoped OCI Push Gating with Zot OIDC Bearer Auth"
@@ -432,8 +487,8 @@ pe "kubectl get clusterspiffeid konflux-release-authority -o yaml"
 p "# Inspect the released container image OCI 1.1 referrers in the registry:"
 pe "curl -s -k -u konflux:6V99jCUvkV-VxycFp8Ixadp51oHBnRiD https://localhost:5001/v2/released-test-app/referrers/sha256:b27826d99fa895c302c327c58ca1d861b962b7cc0587efdc7911e3d770a13d85 | jq .manifests[].artifactType"
 
-p "# Query the Rekor transparency log entry to verify the signer certificate identity:"
-pe "kubectl create job --from=cronjob/none query-rekor-demo 2>/dev/null || cat << 'EOF' | kubectl apply -f -
+p "# Query the Rekor transparency log dynamically using the released image digest:"
+pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -445,7 +500,17 @@ spec:
       containers:
       - name: query
         image: curlimages/curl:latest
-        command: [\"curl\", \"-s\", \"http://rekor-server.rekor-system.svc.cluster.local/api/v1/log/entries?logIndex=19\"]
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          RELEASED_DIGEST=\"sha256:b27826d99fa895c302c327c58ca1d861b962b7cc0587efdc7911e3d770a13d85\"
+          # Query latest entry in Rekor log tree dynamically
+          TREE_SIZE=\$(curl -s \"http://rekor-server.rekor-system.svc.cluster.local/api/v1/log\" | sed -n 's/.*\"treeSize\":\([0-9]*\).*/\\1/p')
+          LATEST_INDEX=\$((TREE_SIZE - 1))
+          echo \"Rekor current treeSize: \${TREE_SIZE}, querying latest logIndex: \${LATEST_INDEX}...\"
+          curl -s \"http://rekor-server.rekor-system.svc.cluster.local/api/v1/log/entries?logIndex=\${LATEST_INDEX}\"
       restartPolicy: Never
 EOF"
 
@@ -453,17 +518,30 @@ kubectl wait --for=condition=Complete job/query-rekor-demo -n default --timeout=
 
 pe "kubectl logs job/query-rekor-demo | python3 -c \"
 import sys, json, base64, subprocess, tempfile
+
+line = sys.stdin.readline()
+print(line.strip())
 raw = sys.stdin.read()
 data = json.loads(raw)
 entry = list(data.values())[0]
 body = json.loads(base64.b64decode(entry['body']).decode())
-cert_pem = base64.b64decode(body['spec']['signature']['publicKey']['content']).decode()
-with tempfile.NamedTemporaryFile('w') as tf:
-    tf.write(cert_pem)
-    tf.flush()
-    san = subprocess.check_output(f'openssl x509 -in {tf.name} -noout -ext subjectAltName', shell=True).decode()
-    print('Rekor logIndex 19 Certificate SAN:')
-    print(san.strip())
+kind = body.get('kind')
+print(f'Entry kind: {kind}, logIndex: {entry.get(\\\"logIndex\\\")}')
+
+cert_b64 = None
+if kind == 'dsse':
+    cert_b64 = body.get('spec', {}).get('signatures', [{}])[0].get('verifier')
+elif kind == 'hashedrekord':
+    cert_b64 = body.get('spec', {}).get('signature', {}).get('publicKey', {}).get('content')
+
+if cert_b64:
+    cert_pem = base64.b64decode(cert_b64).decode()
+    with tempfile.NamedTemporaryFile('w') as tf:
+        tf.write(cert_pem)
+        tf.flush()
+        san = subprocess.check_output(f'openssl x509 -in {tf.name} -noout -ext subjectAltName', shell=True).decode()
+        print('Rekor Certificate SAN:')
+        print(san.strip())
 \""
 kubectl delete job query-rekor-demo >/dev/null 2>&1
 
