@@ -59,7 +59,7 @@ After deploying the operator, install the Sigstore stack (Fulcio, Rekor, CT Log,
 ./integrations/sigstore/install.sh
 ```
 
-> **arm64 hosts (Apple Silicon, AWS Graviton, etc.):** the scaffold chart pins several amd64-only images that crash or OOMKill under QEMU emulation. Pass the overlay from this repository to substitute arm64-native images:
+> **arm64 hosts (Apple Silicon, AWS Graviton, etc.):** the scaffold chart pins amd64-only images that crash or OOMKill under QEMU emulation (note that while scaffold v0.6.115+ resolved the `copySecretJob` image upstream in sigstore/helm-charts#1234, Trillian MySQL still requires an arm64-native substitute). Pass the overlay from this repository to substitute arm64-native images:
 >
 > ```bash
 > ./integrations/sigstore/install.sh \

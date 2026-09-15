@@ -15,9 +15,12 @@
 # 2. The default probe command (/etc/init.d/mysql status) does not exist in
 #    mysql:8.0 and the 1s timeout is too tight on constrained hardware.
 #
-# 3. docker.io/alpine/k8s is pinned to an amd64-only digest in the scaffold
-#    chart. Go binaries crash under QEMU with `lfstack.push invalid packing`.
-#    alpine/k8s 1.32.3 ships a multi-arch manifest; we pin the arm64 digest.
+# 3. In scaffold <= 0.6.114, docker.io/alpine/k8s was pinned to an amd64-only
+#    digest, causing Go binaries to panic under QEMU (`lfstack.push invalid packing`).
+#    Scaffold 0.6.115+ (sigstore/helm-charts#1234) updated copySecretJob to a multi-arch
+#    digest (alpine/k8s:1.37.0). The override below aligns with the upstream multi-arch
+#    digest for backward compatibility with scaffold <= 0.6.114; when deploying
+#    scaffold >= 0.6.115, the copySecretJob section can be omitted.
 
 trillian:
   mysql:
@@ -54,8 +57,10 @@ trillian:
           - "mysqladmin ping -h 127.0.0.1 -u root --password=$MYSQL_ROOT_PASSWORD"
 
 copySecretJob:
-  # alpine/k8s 1.32.3 arm64 digest — chart default pins an amd64-only digest
+  # Aligned with upstream scaffold >= 0.6.115 (sigstore/helm-charts#1234).
+  # Retained for backward compatibility with scaffold <= 0.6.114 (e.g. konflux-ci pin)
+  # where the chart default pinned an amd64-only digest.
   registry: docker.io
   repository: alpine/k8s
-  version: sha256:b97520499c9312c6c2ee0baaaa3baa87a9fe07657fdfb752a31e8a74d69b7dbb
+  version: 1.37.0@sha256:b421c2e9419edb98db39b6ab641669f4db7bb2acf354f22450c6b7e7176d1ff4
   pullPolicy: IfNotPresent
