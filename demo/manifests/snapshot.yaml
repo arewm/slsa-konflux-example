@@ -1,0 +1,17 @@
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Snapshot
+metadata:
+  name: demo-app-snapshot
+  namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  application: demo-app
+  components:
+  - name: demo-app
+    containerImage: registry-service.kind-registry/slsa-e2e-test:latest
+    source:
+      git:
+        revision: e23b07349111de53ec6ce2fc06c9a004ee56ed78
+        url: https://github.com/konflux-ci/testrepo
