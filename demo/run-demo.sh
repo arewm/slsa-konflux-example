@@ -14,7 +14,7 @@ DEMO_CLEANUP="${DEMO_CLEANUP:-false}"
 
 demo_cleanup() {
   if [[ "${DEMO_CLEANUP}" == "true" ]]; then
-    kubectl delete "$@" >/dev/null 2>&1 || true
+    kubectl delete "$@" --wait=true >/dev/null 2>&1 || true
   fi
 }
 
@@ -32,13 +32,23 @@ echo ""
 wait
 
 # ==============================================================================
-# ACT 0: PRE-FLIGHT VERIFICATION
+# ACT 0: PRE-FLIGHT VERIFICATION & IDEMPOTENT BASELINE
 # ==============================================================================
 p "# =================================================================="
 p "# PRE-FLIGHT: Verifying Platform Prerequisites"
 p "# =================================================================="
 p "# Before starting, verify Kyverno admission policies, SPIRE identity server, and OIDC discovery:"
-echo -e "   ${CYAN}Konflux UI Application View:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app"
+
+# Ensure demo environment is primed and in a clean state
+if ! kubectl get application demo-app -n default-tenant >/dev/null 2>&1 || ! kubectl get deployment cve-database-service -n services >/dev/null 2>&1; then
+  echo "   [Notice] Demo prerequisites missing. Running setup-demo.sh..."
+  "${DIR}/setup-demo.sh" >/dev/null 2>&1
+else
+  # Fast reset of any leftover run resources to ensure repeatable runs
+  "${DIR}/cleanup-demo.sh" >/dev/null 2>&1
+fi
+
+echo -e "   ${CYAN}Konflux UI Application View:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app"
 echo ""
 pe "kubectl get clusterpolicies"
 pe "kubectl get pods -n spire -l app.kubernetes.io/instance=spire"
@@ -60,25 +70,26 @@ pe "kubectl get clusterpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.r
 
 p "# 1. Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
 p "# Expected: Kyverno admits the task but restricts it to the unprivileged 'dev' role."
-pe "cat << 'EOF' | kubectl create -f -
+UNTRUSTED_TR=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   generateName: demo-untrusted-run-
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskSpec:
     steps:
     - name: echo
       image: alpine:latest
       script: echo 'Untrusted inline code execution'
-EOF"
+EOF
+)
 
-UNTRUSTED_TR=$(kubectl get taskruns -n default-tenant --sort-by=.metadata.creationTimestamp | grep demo-untrusted-run | tail -n1 | awk '{print $1}')
-kubectl wait --for=condition=Ready taskrun/${UNTRUSTED_TR} -n default-tenant --timeout=30s >/dev/null 2>&1 || true
+pe "kubectl wait --for=condition=Succeeded taskrun/${UNTRUSTED_TR} -n default-tenant --timeout=30s"
 
 p "# Inspect the labels Kyverno stamped on the TaskRun:"
 pe "kubectl get taskrun ${UNTRUSTED_TR} -n default-tenant --show-labels"
@@ -103,7 +114,7 @@ p "#"
 p "# Inspect the bundle signature enforcement policy:"
 pe "kubectl get clusterpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.rules[] | {\"rule\": .name, \"match\": .match, \"verifyImages\": .verifyImages}'"
 
-kubectl delete taskrun attacker-unsigned-task -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun attacker-unsigned-task -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f - || true
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -111,8 +122,9 @@ metadata:
   name: attacker-unsigned-task
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskRef:
     resolver: bundles
@@ -130,7 +142,7 @@ wait
 
 p "# 3. Now submit a cryptographically signed, pinned catalog task bundle (signed with Cosign):"
 p "# Expected: Kyverno verifies the Sigstore bundle signature and promotes the role to 'prod'."
-kubectl delete taskrun demo-signed-task -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun demo-signed-task -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -138,8 +150,9 @@ metadata:
   name: demo-signed-task
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskRef:
     resolver: bundles
@@ -152,7 +165,7 @@ spec:
       value: task
 EOF"
 
-kubectl wait --for=condition=Ready taskrun/demo-signed-task -n default-tenant --timeout=30s >/dev/null 2>&1 || true
+pe "kubectl wait --for=condition=Succeeded taskrun/demo-signed-task -n default-tenant --timeout=30s"
 
 p "# Inspect the TaskRun labels stamped by Kyverno:"
 pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
@@ -188,7 +201,7 @@ p "#   iss: https://kubernetes.default.svc"
 p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
 p "#"
 p "# Let's inspect what identity a task receives under this standard pattern:"
-kubectl delete taskrun demo-sa-token-inspection -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun demo-sa-token-inspection -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -196,8 +209,9 @@ metadata:
   name: demo-sa-token-inspection
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskSpec:
     stepTemplate:
@@ -247,7 +261,7 @@ wait
 p "# THE ATTACK:"
 p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
 p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
-kubectl delete pod rogue-ambient-push -n default-tenant >/dev/null 2>&1 || true
+kubectl delete pod rogue-ambient-push -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -255,8 +269,9 @@ metadata:
   name: rogue-ambient-push
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   containers:
   - name: attacker
@@ -311,7 +326,7 @@ pe "kubectl get configmap zot-oidc-config -n kind-registry -o jsonpath='{.data.c
 
 p "# 1. Attack Attempt on Gated Registry:"
 p "# A rogue dev task attempts to push to slsa-e2e-test using its SPIFFE JWT-SVID:"
-kubectl delete taskrun demo-rogue-push-attempt -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun demo-rogue-push-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -319,9 +334,10 @@ metadata:
   name: demo-rogue-push-attempt
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
     tekton.dev/task: rogue-attacker-task
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskSpec:
     stepTemplate:
@@ -336,7 +352,9 @@ spec:
     steps:
     - name: wait-spire
       image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command: [\"sleep\", \"5\"]
+      command:
+      - sleep
+      - '10'
     - name: fetch-jwt
       image: ghcr.io/spiffe/spire-agent:1.15.3
       command:
@@ -379,7 +397,7 @@ wait
 
 p "# 2. Legitimate Push on Gated Registry:"
 p "# The vetted Builder task bundle (buildah-oci-ta) executes with its trusted production identity:"
-kubectl delete taskrun demo-builder-gated-push -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun demo-builder-gated-push -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -387,8 +405,9 @@ metadata:
   name: demo-builder-gated-push
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskRef:
     resolver: bundles
@@ -429,7 +448,7 @@ pe "kubectl get pods,services -n services"
 
 p "# 1. Untrusted Task Attempt:"
 p "# A dev task requests a token and attempts to access the CVE feed:"
-kubectl delete taskrun demo-untrusted-service-query -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun demo-untrusted-service-query -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -437,8 +456,9 @@ metadata:
   name: demo-untrusted-service-query
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskSpec:
     stepTemplate:
@@ -453,7 +473,9 @@ spec:
     steps:
     - name: wait-spire
       image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command: [\"sleep\", \"5\"]
+      command:
+      - sleep
+      - '10'
     - name: fetch-jwt
       image: ghcr.io/spiffe/spire-agent:1.15.3
       command:
@@ -483,7 +505,7 @@ EOF"
 kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n default-tenant --timeout=60s
 
 UNTRUSTED_SVID=$(kubectl logs demo-untrusted-service-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-kubectl delete pod test-untrusted-client -n default-tenant >/dev/null 2>&1 || true
+kubectl delete pod test-untrusted-client -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "kubectl run test-untrusted-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${UNTRUSTED_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
 kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-untrusted-client -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
 pe "kubectl logs test-untrusted-client -n default-tenant"
@@ -493,10 +515,11 @@ demo_cleanup taskrun demo-untrusted-service-query -n default-tenant
 
 p "# HTTP/1.0 403 Forbidden! The untrusted task lacks scanner authorization."
 wait
+sleep 2
 
 p "# 2. Vetted Scanner Task (trivy-sbom-scan):"
 p "# The catalog scanner task presents its audience-scoped SVID to the service:"
-kubectl delete taskrun demo-trusted-scanner-query -n default-tenant >/dev/null 2>&1 || true
+kubectl delete taskrun demo-trusted-scanner-query -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -504,8 +527,9 @@ metadata:
   name: demo-trusted-scanner-query
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
-    appstudio.openshift.io/component: test-app
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskRef:
     resolver: bundles
@@ -521,7 +545,7 @@ EOF"
 kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n default-tenant --timeout=60s
 
 SCANNER_SVID=$(kubectl logs demo-trusted-scanner-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-kubectl delete pod test-scanner-client -n default-tenant >/dev/null 2>&1 || true
+kubectl delete pod test-scanner-client -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "kubectl run test-scanner-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${SCANNER_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
 kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-scanner-client -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
 pe "kubectl logs test-scanner-client -n default-tenant"
@@ -547,7 +571,7 @@ pe "kubectl get clusterpolicy classify-release-authority -o yaml 2>/dev/null | y
 pe "kubectl get clusterspiffeid konflux-release-authority -o yaml 2>/dev/null | yq '.spec'"
 
 p "# 1. Create an AppStudio Release Custom Resource in default-tenant:"
-echo -e "   ${CYAN}Release View in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app/releases"
+echo -e "   ${CYAN}Release View in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/releases"
 echo ""
 RELEASE_NAME=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
 apiVersion: appstudio.redhat.com/v1alpha1
@@ -556,17 +580,18 @@ metadata:
   generateName: demo-release-
   namespace: default-tenant
   labels:
-    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/application: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
-  releasePlan: test-app-release-plan
-  snapshot: demo-snapshot-release
+  releasePlan: demo-app-release-plan
+  snapshot: demo-app-snapshot
 EOF
 )
 pe "kubectl get release ${RELEASE_NAME} -n default-tenant"
 
 p "# 2. Execute the Dual-Gated Managed Release Authority PipelineRun:"
 p "# The release pipeline executes in managed-tenant with access to the SPIFFE Release Authority."
-echo -e "   ${CYAN}PipelineRuns in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app/activity/pipelineruns"
+echo -e "   ${CYAN}PipelineRuns in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/activity/pipelineruns"
 echo ""
 
 RELEASE_PR=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
@@ -576,10 +601,11 @@ metadata:
   generateName: demo-dual-gated-release-
   namespace: managed-tenant
   labels:
-    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/application: demo-app
     appstudio.openshift.io/service: release
     pipelines.appstudio.openshift.io/type: managed
     tekton.dev/pipeline: slsa-e2e-release-dual-gated
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskRunTemplate:
     serviceAccountName: release-service-account
@@ -610,7 +636,9 @@ spec:
         steps:
         - name: wait-spire
           image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-          command: ["sleep", "5"]
+          command:
+          - sleep
+          - '10'
         - name: sign-release-attestation
           image: quay.io/konflux-ci/task-runner:2.1.0@sha256:c34c933c269e2401bb042fe69e2999cf288331b6586d4f4eca9c845270d9b1f9
           env:
@@ -632,7 +660,7 @@ spec:
             set -euo pipefail
             echo "Initializing TUF root from local cluster..."
             cosign initialize --mirror "${SIGSTORE_TUF_URL}" --root "${SIGSTORE_TUF_URL}/root.json" || true
-            echo '{"status": "PASSED", "policy": "dual-gated-release", "application": "test-app"}' > /tmp/vsa.json
+            echo '{"status": "PASSED", "policy": "dual-gated-release", "application": "demo-app"}' > /tmp/vsa.json
             echo "Invoking keyless Cosign attest with SPIFFE Release Authority Workload Identity..."
             cosign attest \
               --predicate /tmp/vsa.json \
@@ -657,7 +685,7 @@ spec:
 EOF
 )
 echo -e "   ${GREEN}Scheduled PipelineRun:${COLOR_RESET} ${RELEASE_PR}"
-echo -e "   ${CYAN}Track in Browser:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app/activity/pipelineruns"
+echo -e "   ${CYAN}Track in Browser:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/activity/pipelineruns"
 echo ""
 
 p "# Wait for the dual-gated release authority pipeline to complete:"
@@ -672,13 +700,15 @@ RELEASE_DIGEST=$(curl -s -k -u "${REG_USER}" -I -H "Accept: application/vnd.oci.
 pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/slsa-e2e-test/referrers/${RELEASE_DIGEST} | jq .manifests[].artifactType"
 
 p "# 4. Query the Rekor transparency log dynamically using the released image attestation:"
-kubectl delete job query-rekor-demo -n default >/dev/null 2>&1 || true
+kubectl delete job query-rekor-demo -n default --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: query-rekor-demo
   namespace: default
+  labels:
+    app.kubernetes.io/part-of: kubecon-demo
 spec:
   template:
     spec:
@@ -736,3 +766,23 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  Demo Complete! Location ≠ Authorization. Trust is Restored across the Arc.     ${COLOR_RESET}"
 echo -e "${GREEN}═════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}"
 echo ""
+echo "Inspect live demo resources in Konflux UI:"
+echo -e "  - ${CYAN}Application:${COLOR_RESET}  https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app"
+echo -e "  - ${CYAN}Releases:${COLOR_RESET}     https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/releases"
+echo -e "  - ${CYAN}PipelineRuns:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/activity/pipelineruns"
+echo ""
+
+if [[ "${DEMO_CLEANUP}" == "true" ]]; then
+  echo "==> DEMO_CLEANUP=true set; executing demo/cleanup-demo.sh..."
+  "${DIR}/cleanup-demo.sh"
+else
+  echo -e "Resources have been retained on the cluster for UI inspection."
+  echo -e "Run ${CYAN}${DIR}/cleanup-demo.sh${COLOR_RESET} anytime to reset the cluster."
+  echo ""
+  if [ -t 0 ]; then
+    read -p "Clean up demo execution resources now? [y/N]: " -r RESP
+    if [[ "$RESP" =~ ^[Yy]$ ]]; then
+      "${DIR}/cleanup-demo.sh"
+    fi
+  fi
+fi
