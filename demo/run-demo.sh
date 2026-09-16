@@ -7,6 +7,42 @@ source "${DIR}/demo-magic.sh"
 
 DEMO_PROMPT="${CYAN}kubecon@konflux-ci${COLOR_RESET}:${BLUE}~/demo${COLOR_RESET}$ "
 
+# Parse command-line arguments
+SELECTED_ACT="all"
+DEMO_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --act|-a)
+      SELECTED_ACT="$2"
+      shift 2
+      ;;
+    --act=*)
+      SELECTED_ACT="${1#*=}"
+      shift 1
+      ;;
+    *)
+      DEMO_ARGS+=("$1")
+      shift 1
+      ;;
+  esac
+done
+
+should_run_act() {
+  local target="$1"
+  if [[ "$SELECTED_ACT" == "all" || "$SELECTED_ACT" == "0" ]]; then
+    return 0
+  fi
+  [[ "$SELECTED_ACT" == "$target" ]]
+}
+
+finish_act() {
+  local act="$1"
+  if [[ "$SELECTED_ACT" != "all" && "$SELECTED_ACT" != "0" ]]; then
+    printf "\033]0;ACT_${act}_COMPLETE\007"
+    exit 0
+  fi
+}
+
 # Demo lifecycle settings
 # Set DEMO_CLEANUP=true to delete resources immediately after each scene;
 # by default (false), resources are left intact on the cluster for UI inspection and post-demo auditing.
@@ -23,7 +59,18 @@ echo ""
 echo -e "${PURPLE}╔═════════════════════════════════════════════════════════════════════════════════╗${COLOR_RESET}"
 echo -e "${PURPLE}║                                                                                 ║${COLOR_RESET}"
 echo -e "${PURPLE}║      KubeCon NA 2026: \"Your CI's Mistaken Identity\"                             ║${COLOR_RESET}"
-echo -e "${PURPLE}║      Live Demonstration Arc: Secretless Tasks, Gated OCI & Dual Release         ║${COLOR_RESET}"
+if [[ "$SELECTED_ACT" != "all" && "$SELECTED_ACT" != "0" ]]; then
+  case "$SELECTED_ACT" in
+    1) ACT_TITLE="Act 1: Kyverno at the Gate & Separation of Duties Attestations" ;;
+    2) ACT_TITLE="Act 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating" ;;
+    3) ACT_TITLE="Act 3: Portable Secretless Service Access (CVE Database)" ;;
+    4) ACT_TITLE="Act 4: Managed Release Boundary (Dual-Gated Authority)" ;;
+    *) ACT_TITLE="Act ${SELECTED_ACT}" ;;
+  esac
+  printf "${PURPLE}║      %-75s║${COLOR_RESET}\n" "$ACT_TITLE"
+else
+  echo -e "${PURPLE}║      Live Demonstration Arc: Secretless Tasks, Gated OCI & Dual Release         ║${COLOR_RESET}"
+fi
 echo -e "${PURPLE}║                                                                                 ║${COLOR_RESET}"
 echo -e "${PURPLE}╚═════════════════════════════════════════════════════════════════════════════════╝${COLOR_RESET}"
 echo ""
@@ -31,6 +78,13 @@ echo -e "Press ${GREEN}[ENTER]${COLOR_RESET} to advance through each step."
 echo ""
 wait
 
+# Ensure demo environment is primed
+if ! kubectl get application demo-app -n default-tenant >/dev/null 2>&1 || ! kubectl get deployment cve-database-service -n services >/dev/null 2>&1; then
+  echo "   [Notice] Demo prerequisites missing. Running setup-demo.sh..."
+  "${DIR}/setup-demo.sh" >/dev/null 2>&1
+fi
+
+if should_run_act 0; then
 # ==============================================================================
 # ACT 0: PRE-FLIGHT VERIFICATION & IDEMPOTENT BASELINE
 # ==============================================================================
@@ -39,14 +93,8 @@ p "# PRE-FLIGHT: Verifying Platform Prerequisites"
 p "# =================================================================="
 p "# Before starting, verify Kyverno admission policies, SPIRE identity server, and OIDC discovery:"
 
-# Ensure demo environment is primed and in a clean state
-if ! kubectl get application demo-app -n default-tenant >/dev/null 2>&1 || ! kubectl get deployment cve-database-service -n services >/dev/null 2>&1; then
-  echo "   [Notice] Demo prerequisites missing. Running setup-demo.sh..."
-  "${DIR}/setup-demo.sh" >/dev/null 2>&1
-else
-  # Fast reset of any leftover run resources to ensure repeatable runs
-  "${DIR}/cleanup-demo.sh" >/dev/null 2>&1
-fi
+# Fast reset of any leftover run resources to ensure repeatable runs
+"${DIR}/cleanup-demo.sh" >/dev/null 2>&1
 
 echo -e "   ${CYAN}Konflux UI Application View:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app"
 echo ""
@@ -57,10 +105,12 @@ pe "kubectl get pods,services -n services -l app=cve-database-service"
 
 wait
 clear
+fi
 
 # ==============================================================================
 # ACT 1: ADMISSION CONTROL & ROLE-SCOPED ATTESTATION (THE PROMISE)
 # ==============================================================================
+if should_run_act 1; then
 p "# =================================================================="
 p "# ACT 1: Kyverno at the Gate & Separation of Duties Attestations"
 p "# =================================================================="
@@ -189,10 +239,13 @@ pe "opa test ${DIR}/manifests/separation_of_duties.rego ${DIR}/manifests/separat
 
 wait
 clear
+finish_act 1
+fi
 
 # ==============================================================================
 # ACT 2: AMBIENT PUSH HIJACK VS TASK-SCOPED OCI PUSH GATING
 # ==============================================================================
+if should_run_act 2; then
 p "# =================================================================="
 p "# ACT 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating"
 p "# =================================================================="
@@ -434,10 +487,13 @@ demo_cleanup taskrun demo-builder-gated-push -n default-tenant
 p "# HTTP/2 202 Accepted! Push upload session created strictly via Workload Identity."
 wait
 clear
+finish_act 2
+fi
 
 # ==============================================================================
 # ACT 3: PORTABLE SECRETLESS SERVICE ACCESS (TOKEN EXCHANGE)
 # ==============================================================================
+if should_run_act 3; then
 p "# =================================================================="
 p "# ACT 3: Portable Secretless Service Access (Cross-Namespace Token Exchange)"
 p "# =================================================================="
@@ -556,10 +612,13 @@ demo_cleanup taskrun demo-trusted-scanner-query -n default-tenant
 p "# HTTP/1.0 200 OK! Zero pre-shared secrets, zero credentials mounted in default-tenant."
 wait
 clear
+finish_act 3
+fi
 
 # ==============================================================================
 # ACT 4: DUAL-GATED MANAGED RELEASE AUTHORITY
 # ==============================================================================
+if should_run_act 4; then
 p "# =================================================================="
 p "# ACT 4: Managed Release Boundary (Dual-Gated Authority)"
 p "# =================================================================="
@@ -785,4 +844,11 @@ else
       "${DIR}/cleanup-demo.sh"
     fi
   fi
+fi
+
+finish_act 4
+fi
+
+if [[ "$SELECTED_ACT" == "0" || "$SELECTED_ACT" == "all" ]]; then
+  printf "\033]0;ACT_0_COMPLETE\007"
 fi
