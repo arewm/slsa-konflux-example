@@ -2,11 +2,21 @@
 set -e
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+TYPE_SPEED=30
 source "${DIR}/demo-magic.sh"
 
-# Demo-magic settings
-TYPE_SPEED=30
 DEMO_PROMPT="${CYAN}kubecon@konflux-ci${COLOR_RESET}:${BLUE}~/demo${COLOR_RESET}$ "
+
+# Demo lifecycle settings
+# Set DEMO_CLEANUP=true to delete resources immediately after each scene;
+# by default (false), resources are left intact on the cluster for UI inspection and post-demo auditing.
+DEMO_CLEANUP="${DEMO_CLEANUP:-false}"
+
+demo_cleanup() {
+  if [[ "${DEMO_CLEANUP}" == "true" ]]; then
+    kubectl delete "$@" >/dev/null 2>&1 || true
+  fi
+}
 
 clear
 echo ""
@@ -50,6 +60,9 @@ kind: TaskRun
 metadata:
   generateName: demo-untrusted-run-
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskSpec:
     steps:
@@ -70,17 +83,23 @@ pe "kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} --sh
 p "# What workload identity does SPIRE mint for this untrusted task?"
 pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show | grep -B 1 -A 5 \"$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} -o jsonpath='{.items[0].metadata.uid}')\""
 
+demo_cleanup taskrun "${UNTRUSTED_TR}" -n default-tenant
+
 wait
 clear
 
 p "# 2. What happens when an attacker attempts to spoof a catalog bundle by submitting an unsigned image?"
 p "# Expected: Kyverno inspects the bundle referrer in the registry and REJECTS admission."
+kubectl delete taskrun attacker-unsigned-task -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f - || true
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   name: attacker-unsigned-task
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskRef:
     resolver: bundles
@@ -98,12 +117,16 @@ wait
 
 p "# 3. Now submit a cryptographically signed, pinned catalog task bundle (signed with Cosign):"
 p "# Expected: Kyverno verifies the Sigstore bundle signature and promotes the role to 'prod'."
+kubectl delete taskrun demo-signed-task -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   name: demo-signed-task
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskRef:
     resolver: bundles
@@ -124,7 +147,7 @@ pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
 p "# Inspect the production SVID minted by SPIRE:"
 pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show | grep -A 6 \"trusted/kind-konflux\""
 
-kubectl delete taskrun demo-signed-task -n default-tenant >/dev/null 2>&1 || true
+demo_cleanup taskrun demo-signed-task -n default-tenant
 wait
 clear
 
@@ -151,12 +174,16 @@ p "#   iss: https://kubernetes.default.svc"
 p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
 p "#"
 p "# Let's inspect what identity a task receives under this standard pattern:"
+kubectl delete taskrun demo-sa-token-inspection -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   name: demo-sa-token-inspection
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskSpec:
     stepTemplate:
@@ -196,8 +223,8 @@ for line in raw.splitlines():
         print('  Subject (sub):', claims.get('sub'))
         print('  Namespace:    ', claims.get('kubernetes.io', {}).get('namespace'))
         print('  ServiceAccount:', claims.get('kubernetes.io', {}).get('serviceaccount', {}).get('name'))
-\"
-kubectl delete taskrun demo-sa-token-inspection -n default-tenant >/dev/null 2>&1"
+\""
+demo_cleanup taskrun demo-sa-token-inspection -n default-tenant
 
 p "# Notice the problem: The identity is coarse-grained to the ServiceAccount (default-tenant:default)."
 p "# EVERY task running in this namespace shares this exact same identity and ambient credentials!"
@@ -206,12 +233,16 @@ wait
 p "# THE ATTACK:"
 p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
 p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
+kubectl delete pod rogue-ambient-push -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
   name: rogue-ambient-push
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   containers:
   - name: attacker
@@ -254,7 +285,7 @@ EOF"
 
 kubectl wait --for=condition=Ready pod/rogue-ambient-push -n default-tenant --timeout=30s >/dev/null 2>&1 || true
 pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
-kubectl delete pod rogue-ambient-push -n default-tenant >/dev/null 2>&1
+demo_cleanup pod rogue-ambient-push -n default-tenant
 
 p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
 wait
@@ -266,6 +297,7 @@ pe "kubectl get configmap zot-oidc-config -n kind-registry -o jsonpath='{.data.c
 
 p "# 1. Attack Attempt on Gated Registry:"
 p "# A rogue dev task attempts to push to slsa-e2e-test using its SPIFFE JWT-SVID:"
+kubectl delete taskrun demo-rogue-push-attempt -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
@@ -273,6 +305,8 @@ metadata:
   name: demo-rogue-push-attempt
   namespace: default-tenant
   labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
     tekton.dev/task: rogue-attacker-task
 spec:
   taskSpec:
@@ -324,19 +358,23 @@ pe "python3 -c \"import sys, json, base64; p = '${ROGUE_JWT}'.split('.')[1]; p +
 p "# Attempt push handshake to the gated registry with the rogue identity:"
 pe "curl -s -k -i -X POST -H \"Authorization: Bearer ${ROGUE_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/ | head -n 1"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":403 || true"
-kubectl delete taskrun demo-rogue-push-attempt -n default-tenant >/dev/null 2>&1
+demo_cleanup taskrun demo-rogue-push-attempt -n default-tenant
 
 p "# HTTP/2 403 Forbidden! The rogue task cannot overwrite the image tag."
 wait
 
 p "# 2. Legitimate Push on Gated Registry:"
 p "# The vetted Builder task bundle (buildah-oci-ta) executes with its trusted production identity:"
+kubectl delete taskrun demo-builder-gated-push -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   name: demo-builder-gated-push
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskRef:
     resolver: bundles
@@ -358,7 +396,7 @@ pe "python3 -c \"import sys, json, base64; p = '${BUILDER_JWT}'.split('.')[1]; p
 p "# Inspect the in-pod push handshake result against the gated registry:"
 pe "curl -s -k -i -X POST -H \"Authorization: Bearer ${BUILDER_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/ | head -n 1"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":202 || true"
-kubectl delete taskrun demo-builder-gated-push -n default-tenant >/dev/null 2>&1
+demo_cleanup taskrun demo-builder-gated-push -n default-tenant
 
 p "# HTTP/2 202 Accepted! Push upload session created strictly via Workload Identity."
 wait
@@ -377,12 +415,16 @@ pe "kubectl get pods,services -n services"
 
 p "# 1. Untrusted Task Attempt:"
 p "# A dev task requests a token and attempts to access the CVE feed:"
+kubectl delete taskrun demo-untrusted-service-query -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   name: demo-untrusted-service-query
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskSpec:
     stepTemplate:
@@ -427,25 +469,30 @@ EOF"
 kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n default-tenant --timeout=60s
 
 UNTRUSTED_SVID=$(kubectl logs demo-untrusted-service-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
+kubectl delete pod test-untrusted-client -n default-tenant >/dev/null 2>&1 || true
 pe "kubectl run test-untrusted-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${UNTRUSTED_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
 kubectl wait --for=condition=Ready pod/test-untrusted-client -n default-tenant --timeout=30s >/dev/null 2>&1 || true
 sleep 2
 pe "kubectl logs test-untrusted-client -n default-tenant"
 pe "kubectl logs deployment/cve-database-service -n services --tail=4"
-kubectl delete pod test-untrusted-client -n default-tenant >/dev/null 2>&1
-kubectl delete taskrun demo-untrusted-service-query -n default-tenant >/dev/null 2>&1
+demo_cleanup pod test-untrusted-client -n default-tenant
+demo_cleanup taskrun demo-untrusted-service-query -n default-tenant
 
 p "# HTTP/1.0 403 Forbidden! The untrusted task lacks scanner authorization."
 wait
 
 p "# 2. Vetted Scanner Task (trivy-sbom-scan):"
 p "# The catalog scanner task presents its audience-scoped SVID to the service:"
+kubectl delete taskrun demo-trusted-scanner-query -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   name: demo-trusted-scanner-query
   namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/component: test-app
 spec:
   taskRef:
     resolver: bundles
@@ -461,13 +508,14 @@ EOF"
 kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n default-tenant --timeout=60s
 
 SCANNER_SVID=$(kubectl logs demo-trusted-scanner-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
+kubectl delete pod test-scanner-client -n default-tenant >/dev/null 2>&1 || true
 pe "kubectl run test-scanner-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${SCANNER_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
 kubectl wait --for=condition=Ready pod/test-scanner-client -n default-tenant --timeout=30s >/dev/null 2>&1 || true
 sleep 2
 pe "kubectl logs test-scanner-client -n default-tenant"
 pe "kubectl logs deployment/cve-database-service -n services --tail=5"
-kubectl delete pod test-scanner-client -n default-tenant >/dev/null 2>&1
-kubectl delete taskrun demo-trusted-scanner-query -n default-tenant >/dev/null 2>&1
+demo_cleanup pod test-scanner-client -n default-tenant
+demo_cleanup taskrun demo-trusted-scanner-query -n default-tenant
 
 p "# HTTP/1.0 200 OK! Zero pre-shared secrets, zero credentials mounted in default-tenant."
 wait
@@ -488,6 +536,7 @@ p "# Inspect the released container image OCI 1.1 referrers in the registry:"
 pe "curl -s -k -u konflux:6V99jCUvkV-VxycFp8Ixadp51oHBnRiD https://localhost:5001/v2/released-test-app/referrers/sha256:b27826d99fa895c302c327c58ca1d861b962b7cc0587efdc7911e3d770a13d85 | jq .manifests[].artifactType"
 
 p "# Query the Rekor transparency log dynamically using the released image digest:"
+kubectl delete job query-rekor-demo -n default >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: batch/v1
 kind: Job
@@ -543,7 +592,7 @@ if cert_b64:
         print('Rekor Certificate SAN:')
         print(san.strip())
 \""
-kubectl delete job query-rekor-demo >/dev/null 2>&1
+demo_cleanup job query-rekor-demo -n default
 
 echo ""
 echo -e "${GREEN}═════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}"
