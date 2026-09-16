@@ -43,9 +43,16 @@ echo "==> [Demo Setup] Deploying CVE Database Service..."
 kubectl apply -f "${SCRIPT_DIR}/manifests/cve-database-service.yaml"
 kubectl rollout status deployment/cve-database-service -n services --timeout=60s
 
-# 5. Deploy dedicated Demo Application CRs
-echo "==> [Demo Setup] Deploying demo-app custom application CRs..."
-kubectl apply -f "${SCRIPT_DIR}/manifests/demo-app.yaml"
+# 5. Deploy dedicated Demo Application via component-onboarding Helm chart
+echo "==> [Demo Setup] Deploying demo-app via charts/component-onboarding..."
+helm upgrade --install demo-app "${SCRIPT_DIR}/../charts/component-onboarding" \
+  --set componentName=demo-app \
+  --set gitRepoUrl=https://github.com/konflux-ci/testrepo \
+  --set containerImage=registry-service.kind-registry/slsa-e2e-test:latest \
+  --set release.pipeline.pathInRepo=managed-context/pipelines/slsa-e2e-release-dual-gated/slsa-e2e-release-dual-gated.yaml
+
+echo "==> [Demo Setup] Applying demo-app test snapshot..."
+kubectl apply -f "${SCRIPT_DIR}/manifests/snapshot.yaml"
 
 # 6. Ensure clean initial baseline state
 echo "==> [Demo Setup] Establishing pristine baseline state..."

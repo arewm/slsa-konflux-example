@@ -78,7 +78,8 @@ fi
 
 if [[ "${PURGE_ALL}" == "true" ]]; then
   echo "==> [Demo Cleanup] Purging all demo infrastructure manifests..."
-  kubectl delete -f "${SCRIPT_DIR}/manifests/demo-app.yaml" --wait=true --ignore-not-found=true 2>/dev/null || true
+  helm uninstall demo-app 2>/dev/null || true
+  kubectl delete -f "${SCRIPT_DIR}/manifests/snapshot.yaml" --wait=true --ignore-not-found=true 2>/dev/null || true
   kubectl delete -f "${SCRIPT_DIR}/manifests/cve-database-service.yaml" --wait=true --ignore-not-found=true 2>/dev/null || true
   kubectl delete -f "${SCRIPT_DIR}/manifests/zot-oidc.yaml" --wait=true --ignore-not-found=true 2>/dev/null || true
 fi
