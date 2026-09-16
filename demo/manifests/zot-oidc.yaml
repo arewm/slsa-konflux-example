@@ -38,6 +38,7 @@ data:
                 {
                   "users": [
                     "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local/spiffe://konflux-ci.dev/trusted/kind-konflux/default/buildah-oci-ta",
+                    "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local/spiffe://konflux-ci.dev/release/demo-app/slsa-e2e-release-dual-gated",
                     "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local/spiffe://konflux-ci.dev/release/test-app/slsa-e2e-release-dual-gated"
                   ],
                   "actions": ["read", "create", "update"]

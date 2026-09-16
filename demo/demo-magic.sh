@@ -12,10 +12,10 @@
 ###############################################################################
 
 # the speed to "type" the text
-TYPE_SPEED=20
+TYPE_SPEED="${TYPE_SPEED:-20}"
 
 # no wait after "p" or "pe"
-NO_WAIT=false
+NO_WAIT="${NO_WAIT:-false}"
 
 # if > 0, will pause for this amount of seconds before automatically proceeding with any p or pe
 PROMPT_TIMEOUT=0
