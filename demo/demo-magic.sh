@@ -63,6 +63,9 @@ function usage() {
 # if $PROMPT_TIMEOUT > 0 this will be used as the max time for proceeding automatically
 ##
 function wait() {
+  if [[ "$NO_WAIT" == "true" ]]; then
+    return 0
+  fi
   if [[ "$PROMPT_TIMEOUT" == "0" ]]; then
     read -rs
   else
