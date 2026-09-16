@@ -52,6 +52,10 @@ clear
 p "# =================================================================="
 p "# ACT 1: Kyverno at the Gate & Separation of Duties Attestations"
 p "# =================================================================="
+p "# Inspect Kyverno's task classification rules before admission:"
+p "# Notice: default rule sets 'trusted-task-role: dev'; pinned catalog bundles upgrade to 'prod':"
+pe "kubectl get clusterpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.rules'"
+
 p "# 1. Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
 p "# Expected: Kyverno admits the task but restricts it to the unprivileged 'dev' role."
 pe "cat << 'EOF' | kubectl create -f -
@@ -81,15 +85,22 @@ p "# Verify Tekton propagates the Kyverno-verified label to the execution Pod:"
 pe "kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} --show-labels"
 
 p "# What workload identity does SPIRE mint for this untrusted task?"
-pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show | grep -B 1 -A 5 \"$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} -o jsonpath='{.items[0].metadata.uid}')\""
+POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} -o jsonpath='{.items[0].metadata.uid}')
+pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -selector \"k8s:pod-uid:${POD_UID}\""
 
 demo_cleanup taskrun "${UNTRUSTED_TR}" -n default-tenant
 
 wait
 clear
 
-p "# 2. What happens when an attacker attempts to spoof a catalog bundle by submitting an unsigned image?"
-p "# Expected: Kyverno inspects the bundle referrer in the registry and REJECTS admission."
+p "# 2. What happens when an attacker attempts to spoof our trusted catalog by submitting an unsigned bundle?"
+p "# Notice: Arbitrary tasks are safely admitted as 'dev', but claiming the trusted catalog pattern"
+p "# (registry-service.kind-registry/tekton-catalog/*) without a valid platform Cosign signature"
+p "# is an admission-blocking violation enforced by verify-bundle-signatures:"
+p "#"
+p "# Inspect the bundle signature enforcement policy:"
+pe "kubectl get clusterpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.rules[] | {\"rule\": .name, \"match\": .match, \"verifyImages\": .verifyImages}'"
+
 kubectl delete taskrun attacker-unsigned-task -n default-tenant >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f - || true
 apiVersion: tekton.dev/v1
@@ -144,8 +155,9 @@ kubectl wait --for=condition=Ready taskrun/demo-signed-task -n default-tenant --
 p "# Inspect the TaskRun labels stamped by Kyverno:"
 pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
 
-p "# Inspect the production SVID minted by SPIRE:"
-pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show | grep -A 6 \"trusted/kind-konflux\""
+p "# Inspect the production SVID minted by SPIRE for this specific Pod:"
+SIGNED_POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=demo-signed-task -o jsonpath='{.items[0].metadata.uid}')
+pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -selector \"k8s:pod-uid:${SIGNED_POD_UID}\""
 
 demo_cleanup taskrun demo-signed-task -n default-tenant
 wait
@@ -283,7 +295,7 @@ spec:
   restartPolicy: Never
 EOF"
 
-kubectl wait --for=condition=Ready pod/rogue-ambient-push -n default-tenant --timeout=30s >/dev/null 2>&1 || true
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 3
 pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
 demo_cleanup pod rogue-ambient-push -n default-tenant
 
@@ -471,8 +483,7 @@ kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n d
 UNTRUSTED_SVID=$(kubectl logs demo-untrusted-service-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
 kubectl delete pod test-untrusted-client -n default-tenant >/dev/null 2>&1 || true
 pe "kubectl run test-untrusted-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${UNTRUSTED_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
-kubectl wait --for=condition=Ready pod/test-untrusted-client -n default-tenant --timeout=30s >/dev/null 2>&1 || true
-sleep 2
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-untrusted-client -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
 pe "kubectl logs test-untrusted-client -n default-tenant"
 pe "kubectl logs deployment/cve-database-service -n services --tail=4"
 demo_cleanup pod test-untrusted-client -n default-tenant
@@ -510,8 +521,7 @@ kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n def
 SCANNER_SVID=$(kubectl logs demo-trusted-scanner-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
 kubectl delete pod test-scanner-client -n default-tenant >/dev/null 2>&1 || true
 pe "kubectl run test-scanner-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${SCANNER_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
-kubectl wait --for=condition=Ready pod/test-scanner-client -n default-tenant --timeout=30s >/dev/null 2>&1 || true
-sleep 2
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-scanner-client -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
 pe "kubectl logs test-scanner-client -n default-tenant"
 pe "kubectl logs deployment/cve-database-service -n services --tail=5"
 demo_cleanup pod test-scanner-client -n default-tenant
