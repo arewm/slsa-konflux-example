@@ -38,6 +38,8 @@ p "# =================================================================="
 p "# PRE-FLIGHT: Verifying Platform Prerequisites"
 p "# =================================================================="
 p "# Before starting, verify Kyverno admission policies, SPIRE identity server, and OIDC discovery:"
+echo -e "   ${CYAN}Konflux UI Application View:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app"
+echo ""
 pe "kubectl get clusterpolicies"
 pe "kubectl get pods -n spire -l app.kubernetes.io/instance=spire"
 pe "kubectl get pods,services -n kind-registry -l app=registry-oidc"
@@ -537,15 +539,139 @@ clear
 p "# =================================================================="
 p "# ACT 4: Managed Release Boundary (Dual-Gated Authority)"
 p "# =================================================================="
-p "# In managed-tenant, release signing requires BOTH:"
-p "#   1. PipelineRun-scoped validation from Kyverno"
-p "#   2. Precise SPIRE pod selector matching ONLY the attachment task"
-pe "kubectl get clusterspiffeid konflux-release-authority -o yaml"
+p "# In managed-tenant, ambient ServiceAccount authority is prohibited."
+p "# Release signing requires Model 2 Dual-Gating:"
+p "#   1. PipelineRun-scoped classification from Kyverno (label: trusted-pipeline-role=release-authority)"
+p "#   2. Precise SPIRE pod selector matching ONLY the attachment task (task=attach-summary-attestations)"
+pe "kubectl get clusterpolicy classify-release-authority -o yaml 2>/dev/null | yq '.spec.rules'"
+pe "kubectl get clusterspiffeid konflux-release-authority -o yaml 2>/dev/null | yq '.spec'"
 
-p "# Inspect the released container image OCI 1.1 referrers in the registry:"
-pe "curl -s -k -u konflux:6V99jCUvkV-VxycFp8Ixadp51oHBnRiD https://localhost:5001/v2/released-test-app/referrers/sha256:b27826d99fa895c302c327c58ca1d861b962b7cc0587efdc7911e3d770a13d85 | jq .manifests[].artifactType"
+p "# 1. Create an AppStudio Release Custom Resource in default-tenant:"
+echo -e "   ${CYAN}Release View in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app/releases"
+echo ""
+RELEASE_NAME=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Release
+metadata:
+  generateName: demo-release-
+  namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+spec:
+  releasePlan: test-app-release-plan
+  snapshot: demo-snapshot-release
+EOF
+)
+pe "kubectl get release ${RELEASE_NAME} -n default-tenant"
 
-p "# Query the Rekor transparency log dynamically using the released image digest:"
+p "# 2. Execute the Dual-Gated Managed Release Authority PipelineRun:"
+p "# The release pipeline executes in managed-tenant with access to the SPIFFE Release Authority."
+echo -e "   ${CYAN}PipelineRuns in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app/activity/pipelineruns"
+echo ""
+
+RELEASE_PR=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: demo-dual-gated-release-
+  namespace: managed-tenant
+  labels:
+    appstudio.openshift.io/application: test-app
+    appstudio.openshift.io/service: release
+    pipelines.appstudio.openshift.io/type: managed
+    tekton.dev/pipeline: slsa-e2e-release-dual-gated
+spec:
+  taskRunTemplate:
+    serviceAccountName: release-service-account
+  pipelineSpec:
+    tasks:
+    - name: early-verification-step
+      taskSpec:
+        steps:
+        - name: check-workload-api
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+          - |
+            echo "Early pipeline task running before authorization step..."
+    - name: attach-summary-attestations
+      runAfter:
+      - early-verification-step
+      taskSpec:
+        stepTemplate:
+          volumeMounts:
+          - mountPath: /spiffe-workload-api
+            name: spiffe-workload-api
+            readOnly: true
+          - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+            name: trusted-ca
+            readOnly: true
+            subPath: ca-bundle.crt
+        steps:
+        - name: wait-spire
+          image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
+          command: ["sleep", "5"]
+        - name: sign-release-attestation
+          image: quay.io/konflux-ci/task-runner:2.1.0@sha256:c34c933c269e2401bb042fe69e2999cf288331b6586d4f4eca9c845270d9b1f9
+          env:
+          - name: SPIFFE_ENDPOINT_SOCKET
+            value: /spiffe-workload-api/spire-agent.sock
+          - name: SIGSTORE_FULCIO_URL
+            value: http://fulcio-server.fulcio-system.svc.cluster.local
+          - name: SIGSTORE_REKOR_URL
+            value: http://rekor-server.rekor-system.svc.cluster.local
+          - name: SIGSTORE_TUF_URL
+            value: http://tuf-server.tuf-system.svc.cluster.local
+          - name: SSL_CERT_DIR
+            value: /etc/pki/tls/certs
+          command:
+          - /bin/bash
+          - -c
+          args:
+          - |
+            set -euo pipefail
+            echo "Initializing TUF root from local cluster..."
+            cosign initialize --mirror "${SIGSTORE_TUF_URL}" --root "${SIGSTORE_TUF_URL}/root.json" || true
+            echo '{"status": "PASSED", "policy": "dual-gated-release", "application": "test-app"}' > /tmp/vsa.json
+            echo "Invoking keyless Cosign attest with SPIFFE Release Authority Workload Identity..."
+            cosign attest \
+              --predicate /tmp/vsa.json \
+              --type https://slsa.dev/verification_summary/v1 \
+              --use-signing-config=false \
+              --fulcio-url="${SIGSTORE_FULCIO_URL}" \
+              --rekor-url="${SIGSTORE_REKOR_URL}" \
+              --yes \
+              registry-service.kind-registry/slsa-e2e-test:latest
+            echo "Keyless release attestation successfully signed and recorded into Rekor!"
+        volumes:
+        - csi:
+            driver: csi.spiffe.io
+            readOnly: true
+          name: spiffe-workload-api
+        - configMap:
+            items:
+            - key: ca-bundle.crt
+              path: ca-bundle.crt
+            name: trusted-ca
+          name: trusted-ca
+EOF
+)
+echo -e "   ${GREEN}Scheduled PipelineRun:${COLOR_RESET} ${RELEASE_PR}"
+echo -e "   ${CYAN}Track in Browser:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/test-app/activity/pipelineruns"
+echo ""
+
+p "# Wait for the dual-gated release authority pipeline to complete:"
+pe "kubectl wait --for=condition=Succeeded pipelinerun/${RELEASE_PR} -n managed-tenant --timeout=90s"
+
+p "# Inspect the keyless signing execution in the release pod:"
+pe "kubectl logs ${RELEASE_PR}-attach-summary-attestations-pod -n managed-tenant -c step-sign-release-attestation"
+
+p "# 3. Inspect the released container image OCI 1.1 referrers in the registry:"
+REG_USER=$(kubectl get secret regcred-internal-registry -n default-tenant -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths[].auth' | base64 -d)
+RELEASE_DIGEST=$(curl -s -k -u "${REG_USER}" -I -H "Accept: application/vnd.oci.image.index.v1+json" https://localhost:5001/v2/slsa-e2e-test/manifests/latest | grep -i docker-content-digest | awk '{print $2}' | tr -d '\r\n')
+pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/slsa-e2e-test/referrers/${RELEASE_DIGEST} | jq .manifests[].artifactType"
+
+p "# 4. Query the Rekor transparency log dynamically using the released image attestation:"
 kubectl delete job query-rekor-demo -n default >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: batch/v1
@@ -564,8 +690,6 @@ spec:
         - -c
         - |
           set -e
-          RELEASED_DIGEST=\"sha256:b27826d99fa895c302c327c58ca1d861b962b7cc0587efdc7911e3d770a13d85\"
-          # Query latest entry in Rekor log tree dynamically
           TREE_SIZE=\$(curl -s \"http://rekor-server.rekor-system.svc.cluster.local/api/v1/log\" | sed -n 's/.*\"treeSize\":\([0-9]*\).*/\\1/p')
           LATEST_INDEX=\$((TREE_SIZE - 1))
           echo \"Rekor current treeSize: \${TREE_SIZE}, querying latest logIndex: \${LATEST_INDEX}...\"
@@ -579,8 +703,9 @@ pe "kubectl logs job/query-rekor-demo | python3 -c \"
 import sys, json, base64, subprocess, tempfile
 
 line = sys.stdin.readline()
-print(line.strip())
-raw = sys.stdin.read()
+while line and not line.startswith('{'):
+    line = sys.stdin.readline()
+raw = line + sys.stdin.read()
 data = json.loads(raw)
 entry = list(data.values())[0]
 body = json.loads(base64.b64decode(entry['body']).decode())
@@ -603,6 +728,8 @@ if cert_b64:
         print(san.strip())
 \""
 demo_cleanup job query-rekor-demo -n default
+demo_cleanup release ${RELEASE_NAME} -n default-tenant
+demo_cleanup pipelinerun ${RELEASE_PR} -n managed-tenant
 
 echo ""
 echo -e "${GREEN}═════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}"
