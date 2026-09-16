@@ -23,6 +23,13 @@ PROMPT_TIMEOUT=0
 # don't show command number unless user specifies it
 SHOW_CMD_NUMS=false
 
+# Auto-detect non-TTY / CI environment:
+# If stdin is not a terminal or NO_WAIT is requested, disable waiting, typing delays, and screen clears
+if [[ ! -t 0 || "$NO_WAIT" == "true" || -n "$CI" || -n "$NON_INTERACTIVE" ]]; then
+  NO_WAIT=true
+  unset TYPE_SPEED
+  clear() { :; }
+fi
 
 # handy color vars for pretty prompts
 BLACK="\033[0;30m"
@@ -63,13 +70,13 @@ function usage() {
 # if $PROMPT_TIMEOUT > 0 this will be used as the max time for proceeding automatically
 ##
 function wait() {
-  if [[ "$NO_WAIT" == "true" ]]; then
+  if [[ "$NO_WAIT" == "true" || ! -t 0 ]]; then
     return 0
   fi
   if [[ "$PROMPT_TIMEOUT" == "0" ]]; then
-    read -rs
+    read -rs || return 0
   else
-    read -rst "$PROMPT_TIMEOUT"
+    read -rst "$PROMPT_TIMEOUT" || return 0
   fi
 }
 
@@ -81,39 +88,50 @@ function wait() {
 # usage: p "ls -l"
 #
 ##
+function type_out() {
+  local text="$1"
+  if [[ "$NO_WAIT" == "true" || -z "$TYPE_SPEED" || ! -t 0 ]]; then
+    echo -e "$DEMO_CMD_COLOR$text$COLOR_RESET"
+    return 0
+  fi
+
+  if command -v pv >/dev/null 2>&1; then
+    echo -en "$DEMO_CMD_COLOR$text$COLOR_RESET" | pv -qL $[$TYPE_SPEED+(-2 + RANDOM%5)]
+    echo ""
+  else
+    python3 -c "
+import sys, time
+text = sys.argv[1]
+color = sys.argv[2]
+reset = sys.argv[3]
+delay = min(0.02, 1.2 / max(len(text), 1))
+sys.stdout.write(color)
+for ch in text:
+    sys.stdout.write(ch)
+    sys.stdout.flush()
+    time.sleep(delay)
+sys.stdout.write(reset + '\n')
+sys.stdout.flush()
+" "$text" "$DEMO_CMD_COLOR" "$COLOR_RESET"
+  fi
+}
+
 function p() {
-  if [[ ${1:0:1} == "#" ]]; then
-    cmd=$DEMO_COMMENT_COLOR$1$COLOR_RESET
-  else
-    cmd=$DEMO_CMD_COLOR$1$COLOR_RESET
+  # Comments print immediately without prompting or waiting
+  if [[ -z "$1" || ${1:0:1} == "#" ]]; then
+    echo -e "$DEMO_COMMENT_COLOR$1$COLOR_RESET"
+    return 0
   fi
 
-  # render the prompt
-  x=$(PS1="$DEMO_PROMPT" "$BASH" --norc -i </dev/null 2>&1 | sed -n '${s/^\(.*\)exit$/\1/p;}')
-  
-  # show command number is selected
+  # Render prompt for simulated commands
+  local x="$DEMO_PROMPT"
   if $SHOW_CMD_NUMS; then
-   printf "[$((++C_NUM))] $x"
+    printf "[$((++C_NUM))] $x"
   else
-   printf "$x"
+    printf "$x"
   fi
 
-  # wait for the user to press a key before typing the command
-  if !($NO_WAIT); then
-    wait
-  fi
-
-  if [[ -z $TYPE_SPEED ]]; then
-    echo -en "$cmd"
-  else
-    echo -en "$cmd" | pv -qL $[$TYPE_SPEED+(-2 + RANDOM%5)];
-  fi
-
-  # wait for the user to press a key before moving on
-  if !($NO_WAIT); then
-    wait
-  fi
-  echo ""
+  type_out "$1"
 }
 
 ##
@@ -125,7 +143,11 @@ function p() {
 #
 ##
 function pe() {
-  # print the command
+  # Wait once per execution block before typing and running
+  if !($NO_WAIT); then
+    wait
+  fi
+
   p "$@"
 
   # execute the command
@@ -142,7 +164,12 @@ function pe() {
 ##
 function cmd() {
   # render the prompt
-  x=$(PS1="$DEMO_PROMPT" "$BASH" --norc -i </dev/null 2>&1 | sed -n '${s/^\(.*\)exit$/\1/p;}')
+  if [[ ! -t 0 || -z "$BASH" ]]; then
+    x="$DEMO_PROMPT"
+  else
+    x=$(PS1="$DEMO_PROMPT" "$BASH" --norc -i </dev/null 2>&1 | sed -n '${s/^\(.*\)exit$/\1/p;}')
+    [[ -z "$x" ]] && x="$DEMO_PROMPT"
+  fi
   printf "$x\033[0m"
   read command
   eval "${command}"
@@ -150,21 +177,9 @@ function cmd() {
 
 
 function check_pv() {
-  command -v pv >/dev/null 2>&1 || {
-
-    echo ""
-    echo -e "${RED}##############################################################"
-    echo "# HOLD IT!! I require pv but it's not installed.  Aborting." >&2;
-    echo -e "${RED}##############################################################"
-    echo ""
-    echo -e "${COLOR_RESET}Installing pv:"
-    echo ""
-    echo -e "${BLUE}Mac:${COLOR_RESET} $ brew install pv"
-    echo ""
-    echo -e "${BLUE}Other:${COLOR_RESET} http://www.ivarch.com/programs/pv.shtml"
-    echo -e "${COLOR_RESET}"
-    exit 1;
-  }
+  if ! command -v pv >/dev/null 2>&1; then
+    unset TYPE_SPEED
+  fi
 }
 
 check_pv
