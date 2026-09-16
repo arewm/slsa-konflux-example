@@ -27,9 +27,10 @@ This demonstration proves an end-to-end defense across the entire software suppl
 demo/
 ├── README.md                      # This guide
 ├── setup-demo.sh                  # Pre-flight setup: syncs Rekor/TUF, deploys OIDC Zot, CVE service, and demo-app
+├── serve-slides.sh                # Multi-port ttyd web terminal launcher for slide embeds (ports 7680-7684)
 ├── run-demo.sh                    # Interactive live demonstration script (Acts 0 through 4)
 ├── cleanup-demo.sh                # Synchronous, idempotent cleanup script
-├── demo-magic.sh                  # Terminal presentation helper (simulated typing & pauses)
+├── demo-magic.sh                  # Terminal presentation helper (simulated typing & clicker support)
 └── manifests/
     ├── snapshot.yaml              # AppStudio Snapshot manifest for demo-app releases
     ├── zot-oidc.yaml              # OIDC-authenticated Zot registry deployment & access policy
@@ -111,6 +112,79 @@ By default, demo resources are retained so they can be inspected in the Konflux 
 ```bash
 DEMO_CLEANUP=true ./demo/run-demo.sh
 ```
+
+---
+
+## Slide Integration & Presentation Mode
+
+This demo includes a multi-port slide server (`demo/serve-slides.sh`) designed for embedding live web terminals directly into browser-based slides (like **Remark.js**, **Slidev**, or **Reveal.js**) via `ttyd`:
+
+### 1. Predefined Act Ports
+
+| Port | Demo Target | Slide Section |
+|------|-------------|---------------|
+| **7681** | **Act 1** | Kyverno at the Gate & Separation of Duties |
+| **7682** | **Act 2** | Ambient Push Hijack vs. Task-Scoped OCI Push Gating |
+| **7683** | **Act 3** | Portable Secretless Service Access (CVE Database) |
+| **7684** | **Act 4** | Managed Release Boundary (Dual-Gated Authority) |
+| **7680** | **Full Arc** | Complete End-to-End Walkthrough (Acts 0 through 4) |
+
+### 2. Managing Slide Terminals
+
+To launch background `ttyd` servers on all ports before presenting:
+
+```bash
+./demo/serve-slides.sh start
+```
+
+Check port status at any time:
+
+```bash
+./demo/serve-slides.sh status
+```
+
+Stop all background instances:
+
+```bash
+./demo/serve-slides.sh stop
+```
+
+### 3. Progressive Enhancement in Slides
+
+When embedding in slides, use a dynamic check so viewers without a local cluster see a fallback card with a link to the demo guide:
+
+```html
+<div class="demo-slide-container" data-port="7681">
+  <!-- Fallback card when presenting offline or viewing slides on GitHub Pages -->
+  <div class="demo-offline-fallback">
+    <h4>🖥️ Live Demo: Act 1</h4>
+    <p>Kyverno Admission & Separation of Duties</p>
+    <code>./demo/run-demo.sh --act 1</code>
+  </div>
+
+  <!-- Injected dynamically if ttyd is listening -->
+  <div class="demo-terminal-frame" style="display: none;"></div>
+</div>
+
+<script>
+fetch("http://localhost:7681", { mode: "no-cors" })
+  .then(() => {
+    const container = document.querySelector('[data-port="7681"]');
+    container.querySelector(".demo-offline-fallback").style.display = "none";
+    const term = container.querySelector(".demo-terminal-frame");
+    term.style.display = "block";
+    term.innerHTML = '<iframe src="http://localhost:7681" style="width:100%;height:450px;border:none;"></iframe>';
+  })
+  .catch(() => {});
+</script>
+```
+
+### 4. Seamless Presenter Clicker Flow & "Falling Out"
+
+- **Clicker Keys Supported**: `demo/demo-magic.sh` listens for `[Enter]`, `[Space]`, `[Right Arrow]`, and `[PageDown]` (the standard hardware key sent by presentation remotes).
+- **Session Preservation**: When an act finishes, the process stays open in an interactive shell so the WebSocket connection never drops.
+- **Title Notification**: On act completion, the script outputs OSC escape sequence `\033]0;ACT_<N>_COMPLETE\007` to signal parent slide JavaScript to return keyboard focus to the presentation.
+- **Escape Key Fallback**: Pressing `[ESC]` immediately blurs the iframe and returns focus to the slide deck.
 
 ---
 

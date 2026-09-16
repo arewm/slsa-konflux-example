@@ -73,10 +73,15 @@ function wait() {
   if [[ "$NO_WAIT" == "true" || ! -t 0 ]]; then
     return 0
   fi
+  local key=""
   if [[ "$PROMPT_TIMEOUT" == "0" ]]; then
-    read -rs || return 0
+    read -rs -n 1 key || return 0
   else
-    read -rst "$PROMPT_TIMEOUT" || return 0
+    read -rst "$PROMPT_TIMEOUT" -n 1 key || return 0
+  fi
+  # If an escape sequence was initiated (e.g. Right Arrow or PageDown from a clicker), flush trailing bytes
+  if [[ "$key" == $'\x1b' ]]; then
+    read -rs -t 0.05 -n 4 _rest || true
   fi
 }
 
