@@ -10,7 +10,7 @@ spec:
   application: demo-app
   components:
   - name: demo-app
-    containerImage: registry-service.kind-registry/slsa-e2e-test:latest
+    containerImage: registry-service.kind-registry/slsa-e2e-test@sha256:d26182473661d456378eff150c5c68e2898c26fbaecd7981fb3f2030e96713d4
     source:
       git:
         revision: e23b07349111de53ec6ce2fc06c9a004ee56ed78
