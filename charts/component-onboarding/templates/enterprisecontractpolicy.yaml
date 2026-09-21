@@ -9,6 +9,10 @@ spec:
   description: SLSA policy for {{ $applicationName }}
 {{- if .Values.release.signing.publicKey }}
   publicKey: {{ .Values.release.signing.publicKey | quote }}
+{{- else }}
+  identity:
+    issuer: {{ .Values.release.signing.identity.issuer | default "https://kubernetes.default.svc" | quote }}
+    subject: {{ .Values.release.signing.identity.subject | default "https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-chains-controller" | quote }}
 {{- end }}
   sources:
     - name: Release Policies
