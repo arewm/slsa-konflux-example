@@ -179,12 +179,13 @@ fetch("http://localhost:7681", { mode: "no-cors" })
 </script>
 ```
 
-### 4. Seamless Presenter Clicker Flow & "Falling Out"
+### 4. Seamless Presenter Clicker Flow & Focus Recovery
 
-- **Clicker Keys Supported**: `demo/demo-magic.sh` listens for `[Enter]`, `[Space]`, `[Right Arrow]`, and `[PageDown]` (the standard hardware key sent by presentation remotes).
+- **Clicker Keys Supported in Demos**: While a demo act is running, `demo/demo-magic.sh` listens for `[Enter]`, `[Space]`, `[Right Arrow]`, and `[PageDown]` (the standard hardware key sent by presentation remotes).
 - **Session Preservation**: When an act finishes, the process stays open in an interactive shell so the WebSocket connection never drops.
-- **Title Notification**: On act completion, the script outputs OSC escape sequence `\033]0;ACT_<N>_COMPLETE\007` to signal parent slide JavaScript to return keyboard focus to the presentation.
-- **Escape Key Fallback**: Pressing `[ESC]` immediately blurs the iframe and returns focus to the slide deck.
+- **Escape Key Interception (`[Esc]`)**: Cross-origin iframes normally trap keyboard focus. `demo/serve-slides.sh` generates a slide-aware terminal index that intercepts `[Escape]` in the DOM capture phase, blurs the terminal, and posts `postMessage({ type: 'DEMO_ESCAPE' }, '*')` to the slide window, immediately returning focus to Remark.js.
+- **Act Completion Auto-Defocus**: On act completion, `run-demo.sh` outputs OSC escape sequence `\033]0;ACT_<N>_COMPLETE\007`. The terminal index observes this title mutation and automatically sends `DEMO_ACT_COMPLETE` to blur the terminal and return focus to the slide deck—allowing the very next clicker press to advance the slides.
+- **Visual Focus Indicator**: The terminal toolbar dynamically displays a green `SLIDES ACTIVE` status badge confirming keyboard control is restored to presentation navigation.
 
 ---
 
