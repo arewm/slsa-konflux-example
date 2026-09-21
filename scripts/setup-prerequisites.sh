@@ -48,7 +48,8 @@ kubectl patch konflux konflux --type=merge -p "{
 }"
 
 # Configure Tekton Chains to write provenance as Sigstore bundles via OCI 1.1 Referrers
-echo "Configuring Tekton Chains to use OCI 1.1 Referrers (sigstore-bundle format)..."
+# and enable keyless signing via Fulcio and Rekor
+echo "Configuring Tekton Chains for keyless signing and OCI 1.1 Referrers (sigstore-bundle format)..."
 kubectl patch tektonconfig config --type=merge -p '{
   "spec": {
     "chain": {
@@ -56,6 +57,13 @@ kubectl patch tektonconfig config --type=merge -p '{
         "configMaps": {
           "chains-config": {
             "data": {
+              "signers.x509.fulcio.enabled": "true",
+              "signers.x509.fulcio.address": "http://fulcio-server.fulcio-system.svc.cluster.local",
+              "signers.x509.fulcio.issuer": "https://kubernetes.default.svc",
+              "signers.x509.fulcio.provider": "k8s",
+              "signers.x509.fulcio.token.path": "/var/run/sigstore/cosign/oidc-token",
+              "signers.x509.tuf.mirror.url": "http://tuf-server.tuf-system.svc.cluster.local",
+              "signers.x509.rekor.address": "http://rekor-server.rekor-system.svc.cluster.local",
               "storage.oci.encoding-format": "sigstore-bundle"
             }
           }
@@ -64,6 +72,18 @@ kubectl patch tektonconfig config --type=merge -p '{
     }
   }
 }' 2>/dev/null || echo "Warning: Could not patch TektonConfig for Chains sigstore-bundle format."
+
+# Configure konflux-info/cluster-config for Conforma keyless parameter discovery
+echo "Configuring konflux-info/cluster-config for keyless Conforma policy verification..."
+kubectl patch configmap cluster-config -n konflux-info --type=merge -p '{
+  "data": {
+    "enableKeylessSigning": "true",
+    "defaultOIDCIssuer": "https://kubernetes.default.svc",
+    "tektonChainsIdentity": "https://kubernetes.io/namespaces/tekton-pipelines/serviceaccounts/tekton-chains-controller",
+    "rekorHost": "http://rekor-server.rekor-system.svc.cluster.local",
+    "tufMirror": "http://tuf-server.tuf-system.svc.cluster.local"
+  }
+}' 2>/dev/null || echo "Warning: Could not patch konflux-info/cluster-config ConfigMap."
 
 # Configure internal registry access for build and integration pipelines.
 # The common-secret label makes build-service auto-link the credential to
