@@ -32,7 +32,7 @@ kubectl delete taskrun attacker-unsigned-task demo-signed-task demo-sa-token-ins
 
 # 2. Delete test / attacker Pods in default-tenant
 echo "  - Deleting demo test/attacker pods in default-tenant..."
-kubectl delete pod rogue-ambient-push test-untrusted-client test-scanner-client -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
+kubectl delete pod rogue-ambient-push test-rogue-push test-builder-push test-untrusted-client test-scanner-client attacker-label-spoof -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
 
 # 3. Delete AppStudio Releases in default-tenant
 echo "  - Deleting demo Releases in default-tenant..."
@@ -41,38 +41,39 @@ kubectl delete release -n default-tenant -l appstudio.openshift.io/application=d
 # 4. Delete PipelineRuns in managed-tenant
 echo "  - Deleting demo release PipelineRuns in managed-tenant..."
 kubectl delete pipelinerun -n managed-tenant -l appstudio.openshift.io/application=demo-app --wait=true --ignore-not-found=true 2>/dev/null || true
+kubectl delete pvc -n managed-tenant -l appstudio.openshift.io/application=demo-app --wait=true --ignore-not-found=true 2>/dev/null || true
+kubectl delete pvc -n managed-tenant -l tekton.dev/pipeline=slsa-e2e-release-dual-gated --wait=true --ignore-not-found=true 2>/dev/null || true
 
 # 5. Delete Rekor query jobs in default namespace
 echo "  - Deleting query-rekor-demo jobs..."
 kubectl delete job query-rekor-demo -n default --wait=true --ignore-not-found=true 2>/dev/null || true
 
 # 6. Reset the registry image tag to the pristine baseline (undoing any Act 2 ambient push hijack)
-echo "  - Resetting slsa-e2e-test:latest in internal registry to baseline payload..."
+echo "  - Resetting slsa-e2e-test:latest in internal registry to baseline signed image..."
 REG_USER=$(kubectl get secret regcred-internal-registry -n default-tenant -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.auths[].auth' 2>/dev/null | base64 -d 2>/dev/null || true)
 if [ -n "${REG_USER}" ]; then
+  # Extract pinned verified digest from snapshot manifest
+  SNAPSHOT_DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' "${SCRIPT_DIR}/manifests/snapshot.yaml" | head -n1 || echo "sha256:5f1c994bf2a8a69bb5497c1bc3358f37c9952bf52dc109de2fc1307f080e12db")
   kubectl delete pod demo-registry-reset -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
   kubectl run demo-registry-reset --namespace=default-tenant \
-    --image=quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58 \
+    --image=quay.io/skopeo/stable:v1.14.2 \
     --restart=Never \
-    --env="SSL_CERT_DIR=/tekton-custom-certs" \
     --overrides='{
       "spec": {
         "volumes": [
-          {"name": "regcred", "secret": {"secretName": "regcred-internal-registry"}},
-          {"name": "trusted-ca", "configMap": {"name": "trusted-ca", "items": [{"key": "ca-bundle.crt", "path": "ca-bundle.crt"}]}}
+          {"name": "regcred", "secret": {"secretName": "regcred-internal-registry"}}
         ],
         "containers": [{
           "name": "demo-registry-reset",
-          "image": "quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58",
-          "command": ["/bin/bash", "-c", "set -e\nmkdir -p ~/.docker\ncp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json\necho \"LEGITIMATE PRODUCTION PAYLOAD v1.0.0\" > /tmp/payload.txt\ncd /tmp\noras push --insecure registry-service.kind-registry/slsa-e2e-test:latest --artifact-type application/vnd.konflux.test payload.txt:application/text\n"],
+          "image": "quay.io/skopeo/stable:v1.14.2",
+          "command": ["/bin/sh", "-c", "set -e\nmkdir -p ~/.docker\ncp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json\nskopeo copy --all --src-tls-verify=false --dest-tls-verify=false --authfile ~/.docker/config.json docker://registry-service.kind-registry/slsa-e2e-test@'$SNAPSHOT_DIGEST' docker://registry-service.kind-registry/slsa-e2e-test:latest\n"],
           "volumeMounts": [
-            {"name": "regcred", "mountPath": "/tekton/creds-secrets/regcred-internal-registry"},
-            {"name": "trusted-ca", "mountPath": "/tekton-custom-certs/ca-bundle.crt", "subPath": "ca-bundle.crt"}
+            {"name": "regcred", "mountPath": "/tekton/creds-secrets/regcred-internal-registry"}
           ]
         }]
       }
     }' >/dev/null 2>&1 || true
-  kubectl wait --for=condition=Complete pod/demo-registry-reset -n default-tenant --timeout=30s >/dev/null 2>&1 || true
+  kubectl wait --for=condition=Complete pod/demo-registry-reset -n default-tenant --timeout=45s >/dev/null 2>&1 || true
   kubectl delete pod demo-registry-reset -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
 fi
 

@@ -118,6 +118,27 @@ p "# Inspect Kyverno's task classification rules before admission:"
 p "# Notice: default rule sets 'trusted-task-role: dev'; pinned catalog bundles upgrade to 'prod':"
 pe "kubectl get clusterpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.rules'"
 
+p "# 0. Inspect and exercise the Pod label anti-spoofing policy:"
+pe "kubectl get clusterpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.rules'"
+p "# A rogue Pod cannot self-assign trusted-task-role: prod without a TaskRun owner reference."
+kubectl delete pod attacker-label-spoof -n default-tenant --wait=true >/dev/null 2>&1 || true
+pe "cat << 'EOF' | kubectl create -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: attacker-label-spoof
+  namespace: default-tenant
+  labels:
+    trusted-task-role: prod
+spec:
+  containers:
+  - name: rogue
+    image: alpine:3.20
+    command: [\"sleep\", \"30\"]
+EOF" || true
+p "Admission denied: prevent-pod-label-spoofing denied the request (trusted-task-role requires a TaskRun owner reference)."
+demo_cleanup pod attacker-label-spoof -n default-tenant
+
 p "# 1. Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
 p "# Expected: Kyverno admits the task but restricts it to the unprivileged 'dev' role."
 UNTRUSTED_TR=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
@@ -441,11 +462,15 @@ p "# Inspect the identity minted for the rogue task:"
 pe "python3 -c \"import sys, json, base64; p = '${ROGUE_JWT}'.split('.')[1]; p += '=' * (-len(p)%4); print('Subject:', json.loads(base64.urlsafe_b64decode(p))['sub'])\""
 
 p "# Attempt push handshake to the gated registry with the rogue identity:"
-pe "curl -s -k -i -X POST -H \"Authorization: Bearer ${ROGUE_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/ | head -n 1"
+kubectl delete pod test-rogue-push -n default-tenant --wait=true >/dev/null 2>&1 || true
+pe "kubectl run test-rogue-push -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -k -s -i -X POST -H \"Authorization: Bearer ${ROGUE_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/"
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-rogue-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
+pe "kubectl logs test-rogue-push -n default-tenant | head -n 5"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":403 || true"
+demo_cleanup pod test-rogue-push -n default-tenant
 demo_cleanup taskrun demo-rogue-push-attempt -n default-tenant
 
-p "# HTTP/2 403 Forbidden! The rogue task cannot overwrite the image tag."
+p "# HTTP/2 403 Forbidden! The rogue task cannot obtain push authorization."
 wait
 
 p "# 2. Legitimate Push on Gated Registry:"
@@ -480,8 +505,12 @@ p "# Inspect the identity minted for the vetted builder:"
 pe "python3 -c \"import sys, json, base64; p = '${BUILDER_JWT}'.split('.')[1]; p += '=' * (-len(p)%4); print('Subject:', json.loads(base64.urlsafe_b64decode(p))['sub'])\""
 
 p "# Inspect the in-pod push handshake result against the gated registry:"
-pe "curl -s -k -i -X POST -H \"Authorization: Bearer ${BUILDER_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/ | head -n 1"
+kubectl delete pod test-builder-push -n default-tenant --wait=true >/dev/null 2>&1 || true
+pe "kubectl run test-builder-push -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -k -s -i -X POST -H \"Authorization: Bearer ${BUILDER_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/"
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-builder-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
+pe "kubectl logs test-builder-push -n default-tenant | head -n 5"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":202 || true"
+demo_cleanup pod test-builder-push -n default-tenant
 demo_cleanup taskrun demo-builder-gated-push -n default-tenant
 
 p "# HTTP/2 202 Accepted! Push upload session created strictly via Workload Identity."
@@ -669,29 +698,69 @@ spec:
   taskRunTemplate:
     serviceAccountName: release-service-account
   pipelineSpec:
+    workspaces:
+    - name: shared-data
     tasks:
-    - name: early-verification-step
+    - name: verify-conforma
+      workspaces:
+      - name: shared-data
+        workspace: shared-data
       taskSpec:
+        workspaces:
+        - name: shared-data
         steps:
-        - name: check-workload-api
-          image: curlimages/curl:latest
-          command: ["/bin/sh", "-c"]
-          args:
-          - |
-            echo "Early pipeline task running before authorization step..."
+        - name: run-conforma
+          image: quay.io/conforma/cli:latest@sha256:2f5bed7fd51f678ea960aaf5bed033412b7d207a83bb1b02b108be5ca71a058d
+          env:
+          - name: HOME
+            value: /tmp
+          - name: DOCKER_CONFIG
+            value: /tmp/.docker
+          - name: SSL_CERT_DIR
+            value: /tekton-custom-certs
+          script: |
+            #!/bin/bash
+            set -euo pipefail
+            mkdir -p /tmp/.docker
+            cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson /tmp/.docker/config.json
+            echo "==> [verify-conforma] Initializing TUF root..."
+            ec sigstore initialize --mirror http://tuf-server.tuf-system.svc.cluster.local --root http://tuf-server.tuf-system.svc.cluster.local/root.json
+            echo "==> [verify-conforma] Fetching demo-app snapshot..."
+            kubectl get snapshot demo-app-snapshot -n default-tenant -o jsonpath='{.spec}' > /tmp/snapshot.json
+            echo "==> [verify-conforma] Fetching the exact immutable image digest from the snapshot..."
+            IMAGE_DIGEST=$(jq -r '.components[] | select(.containerImage != null) | .containerImage' /tmp/snapshot.json | head -n1)
+            if [[ "${IMAGE_DIGEST}" != registry-service.kind-registry/slsa-e2e-test@sha256:* ]]; then
+              echo "ERROR: snapshot image is not an immutable slsa-e2e-test digest: ${IMAGE_DIGEST}"
+              exit 1
+            fi
+            printf '%s' "${IMAGE_DIGEST}" > "$(workspaces.shared-data.path)/release-image"
+            echo "==> [verify-conforma] Evaluating EnterpriseContractPolicy against snapshot with keyless verification..."
+            ec validate image \
+              --images /tmp/snapshot.json \
+              --policy managed-tenant/demo-app-ec-policy \
+              --rekor-url http://rekor-server.rekor-system.svc.cluster.local \
+              --retry-max-retry 5 \
+              --retry-max-wait 5s \
+              --strict=true \
+              --show-successes \
+              --output "json=$(workspaces.shared-data.path)/report.json" \
+              --output "text=$(workspaces.shared-data.path)/report.txt" \
+              --output "vsa=$(workspaces.shared-data.path)/vsa.json"
+            echo "==> [verify-conforma] Policy check PASSED (0 violations); VSA is bound to ${IMAGE_DIGEST}."
     - name: attach-summary-attestations
       runAfter:
-      - early-verification-step
+      - verify-conforma
+      workspaces:
+      - name: shared-data
+        workspace: shared-data
       taskSpec:
+        workspaces:
+        - name: shared-data
         stepTemplate:
           volumeMounts:
           - mountPath: /spiffe-workload-api
             name: spiffe-workload-api
             readOnly: true
-          - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
-            name: trusted-ca
-            readOnly: true
-            subPath: ca-bundle.crt
         steps:
         - name: wait-spire
           image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
@@ -701,6 +770,10 @@ spec:
         - name: sign-release-attestation
           image: quay.io/konflux-ci/task-runner:2.1.0@sha256:c34c933c269e2401bb042fe69e2999cf288331b6586d4f4eca9c845270d9b1f9
           env:
+          - name: HOME
+            value: /tmp
+          - name: DOCKER_CONFIG
+            value: /tmp/.docker
           - name: SPIFFE_ENDPOINT_SOCKET
             value: /spiffe-workload-api/spire-agent.sock
           - name: SIGSTORE_FULCIO_URL
@@ -709,38 +782,48 @@ spec:
             value: http://rekor-server.rekor-system.svc.cluster.local
           - name: SIGSTORE_TUF_URL
             value: http://tuf-server.tuf-system.svc.cluster.local
-          - name: SSL_CERT_DIR
-            value: /etc/pki/tls/certs
           command:
           - /bin/bash
           - -c
           args:
           - |
             set -euo pipefail
-            echo "Initializing TUF root from local cluster..."
+            mkdir -p /tmp/.docker
+            cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson /tmp/.docker/config.json
+            echo "==> [attach-summary-attestations] Initializing TUF root from local cluster..."
             cosign initialize --mirror "${SIGSTORE_TUF_URL}" --root "${SIGSTORE_TUF_URL}/root.json" || true
-            echo '{"status": "PASSED", "policy": "dual-gated-release", "application": "demo-app"}' > /tmp/vsa.json
-            echo "Invoking keyless Cosign attest with SPIFFE Release Authority Workload Identity..."
+            
+            VSA_FILE="$(workspaces.shared-data.path)/vsa.json"
+            DEST_IMAGE="$(cat "$(workspaces.shared-data.path)/release-image")"
+            if [[ ! -f "$VSA_FILE" || "$DEST_IMAGE" != registry-service.kind-registry/slsa-e2e-test@sha256:* ]]; then
+              echo "ERROR: immutable VSA or release image is missing. Policy check must precede attestation."
+              exit 1
+            fi
+            
+            echo "==> [attach-summary-attestations] Invoking keyless Cosign attest with SPIFFE Release Authority..."
             cosign attest \
-              --predicate /tmp/vsa.json \
+              --predicate "$VSA_FILE" \
               --type https://slsa.dev/verification_summary/v1 \
               --use-signing-config=false \
               --fulcio-url="${SIGSTORE_FULCIO_URL}" \
               --rekor-url="${SIGSTORE_REKOR_URL}" \
               --yes \
-              registry-service.kind-registry/slsa-e2e-test:latest
-            echo "Keyless release attestation successfully signed and recorded into Rekor!"
+              "$DEST_IMAGE"
+            echo "==> [attach-summary-attestations] Keyless release attestation successfully signed and recorded into Rekor!"
         volumes:
         - csi:
             driver: csi.spiffe.io
             readOnly: true
           name: spiffe-workload-api
-        - configMap:
-            items:
-            - key: ca-bundle.crt
-              path: ca-bundle.crt
-            name: trusted-ca
-          name: trusted-ca
+  workspaces:
+  - name: shared-data
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Mi
 EOF
 )
 echo -e "   ${GREEN}Scheduled PipelineRun:${COLOR_RESET} ${RELEASE_PR}"
@@ -760,7 +843,7 @@ pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/slsa-e2e-test/referr
 
 p "# 4. Query the Rekor transparency log dynamically using the released image attestation:"
 kubectl delete job query-rekor-demo -n default --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+cat << 'EOF' | sed "s|__DIGEST__|${RELEASE_DIGEST}|g" | kubectl apply -f -
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -778,14 +861,15 @@ spec:
         - /bin/sh
         - -c
         - |
-          set -e
-          TREE_SIZE=\$(curl -s \"http://rekor-server.rekor-system.svc.cluster.local/api/v1/log\" | sed -n 's/.*\"treeSize\":\([0-9]*\).*/\\1/p')
-          LATEST_INDEX=\$((TREE_SIZE - 1))
-          echo \"Rekor current treeSize: \${TREE_SIZE}, querying latest logIndex: \${LATEST_INDEX}...\"
-          curl -s \"http://rekor-server.rekor-system.svc.cluster.local/api/v1/log/entries?logIndex=\${LATEST_INDEX}\"
+          set -eu
+          HASH="__DIGEST__"
+          echo "Searching Rekor index for artifact hash ${HASH}..."
+          UUID=$(curl -fsS -X POST -H 'Content-Type: application/json' -d "{\"hash\":\"${HASH}\"}" http://rekor-server.rekor-system.svc.cluster.local/api/v1/index/retrieve | grep -oE '[a-f0-9]{64,}' | head -n1)
+          if [ -z "${UUID}" ]; then echo "ERROR: no Rekor entry found for ${HASH}"; exit 1; fi
+          echo "Found matching Rekor entry UUID: ${UUID}"
+          curl -fsS "http://rekor-server.rekor-system.svc.cluster.local/api/v1/log/entries/${UUID}"
       restartPolicy: Never
-EOF"
-
+EOF
 kubectl wait --for=condition=Complete job/query-rekor-demo -n default --timeout=30s >/dev/null 2>&1 || true
 
 pe "kubectl logs job/query-rekor-demo | python3 -c \"
@@ -819,6 +903,7 @@ if cert_b64:
 demo_cleanup job query-rekor-demo -n default
 demo_cleanup release ${RELEASE_NAME} -n default-tenant
 demo_cleanup pipelinerun ${RELEASE_PR} -n managed-tenant
+demo_cleanup pvc -n managed-tenant -l tekton.dev/pipelineRun=${RELEASE_PR}
 
 echo ""
 echo -e "${GREEN}═════════════════════════════════════════════════════════════════════════════════${COLOR_RESET}"
