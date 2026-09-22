@@ -48,6 +48,14 @@ Outstanding work for the SLSA Konflux example project, organized by priority.
 - [x] Add `volatileConfig` support to component-onboarding chart template
 - [x] Add hermetic build annotation support to Component template (`buildPipeline` field)
 - [x] Investigate proper mechanism for custom pipeline configuration (issue #6673, PR #6678 adds operator-level `pipelineConfig`)
+- [x] Kyverno admission policy chart (`charts/admission-policy/`) with bundle signature checking
+- [x] SPIFFE/SPIRE workload identity chart (`charts/spiffe-spire/`) with Fulcio OIDC integration
+- [x] PipelineRun-scoped release dual-gating (Model 2) with `attach-summary-attestations` and keyless Rekor signing
+- [x] Multi-arch upstream Zot registry with OIDC Bearer push gating
+- [x] Secretless mock CVE database service with SPIRE JWKS verification
+- [x] Separation of duties Rego policy enforcement (`demo/manifests/separation_of_duties.rego`)
+- [x] Interactive 4-act live demonstration script (`demo/run-demo.sh`) and slide server (`demo/serve-slides.sh`)
+- [x] Workload identity documentation and taxonomy (`docs/task-workload-identity-patterns.md`)
 
 ---
 

@@ -117,34 +117,46 @@ Konflux separates builds and releases into distinct trust boundaries to prevent 
 
 Builds run in an unprivileged tenant namespace where signing keys are absent. After a build completes, Tekton Chains generates SLSA provenance and signs the artifacts. Integration tests validate the build against policies. When you merge to the main branch, the release pipeline runs in a privileged managed namespace where Conforma performs final policy validation before promoting images to the release registry.
 
+## KubeCon NA 2026: "Your CI's Mistaken Identity"
+
+This branch (`kubecon-na-2026-your-cis-mistaken-identity`) introduces **task-scoped cryptographic workload identities** using Tekton, Kyverno, and SPIFFE/SPIRE. It moves pipeline security beyond coarse-grained ServiceAccount permissions to enforce separation of duties, secretless APIs, and task-scoped OCI push gating.
+
+- **[Live Demonstration Guide](demo/README.md)**: Interactive terminal walkthrough (Acts 0 through 4), browser slides integration (`ttyd` on ports 7680–7684), clicker support, and setup scripts.
+- **[CI Workload Identity Patterns](docs/task-workload-identity-patterns.md)**: Comprehensive taxonomy of the 5 classes of workload identity use cases (attestation signing, OCI push gating, secretless service access, cloud IAM federation, and release boundary capability tokens).
+- **[Dual-Gated Release Guide](docs/dual-gated-release-guide.md)**: Architectural analysis and runbook for Model 2 PipelineRun-scoped release dual-gating.
+
 ## Helm Charts
 
-This repository provides two helm charts:
+This repository provides four Helm charts:
 
-**platform-config** installs once per cluster to establish trust boundaries, signing keys, and policies. It creates the EnterpriseContractPolicy for SLSA3 validation, RoleBindings for admin access, ServiceAccounts for release pipeline execution, and signing keys for release attestation signing.
+1. **platform-config** installs once per cluster to establish trust boundaries, signing keys, and policies. It creates the EnterpriseContractPolicy for SLSA3 validation, RoleBindings for admin access, and ServiceAccounts for release pipeline execution.
+   ```bash
+   helm upgrade --install platform ./charts/platform-config
+   ```
+2. **admission-policy** deploys Kyverno ClusterPolicies for admission-time bundle signature verification, digest pinning checks, role classification (`dev` vs. `prod`), and Pod label spoofing prevention.
+   ```bash
+   helm upgrade --install admission-policy ./charts/admission-policy
+   ```
+3. **spiffe-spire** deploys the SPIRE identity infrastructure (Server, Agent DaemonSet, SPIFFE CSI driver, OIDC Discovery Provider) and configures `ClusterSPIFFEID` custom resources for task-scoped SVID minting.
+   ```bash
+   helm upgrade --install spiffe-spire ./charts/spiffe-spire
+   ```
+4. **component-onboarding** installs once per component to create the application, integration tests, and release plan.
+   ```bash
+   export FORK_ORG="ORGANIZATION"
+   helm upgrade --install festoji ./charts/component-onboarding \
+     --set componentName=festoji \
+     --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
+   ```
 
-```bash
-helm upgrade --install platform ./charts/platform-config
-```
-
-**component-onboarding** installs once per component to create the application, integration tests, and release plan.
-
-```bash
-export FORK_ORG="ORGANIZATION"
-helm upgrade --install festoji ./charts/component-onboarding \
-  --set componentName=festoji \
-  --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
-```
-
-Both charts operate across two namespaces:
-
-- `default-tenant`: The unprivileged tenant namespace where builds occur (created by the Konflux operator)
-- `managed-tenant`: The privileged managed namespace where releases are validated and signed (created by the prerequisites script)
-
-Namespace values default to `default-tenant` and `managed-tenant`. If you override them, values must match between platform-config and component-onboarding.
+All charts operate across two primary namespaces:
+- `default-tenant`: The unprivileged tenant namespace where builds occur (created by the Konflux operator).
+- `managed-tenant`: The privileged managed namespace where releases are validated and signed (created by the prerequisites script).
 
 See the chart `values.yaml` files for all configuration options:
 - [`charts/platform-config/values.yaml`](charts/platform-config/values.yaml)
+- [`charts/admission-policy/values.yaml`](charts/admission-policy/values.yaml)
+- [`charts/spiffe-spire/values.yaml`](charts/spiffe-spire/values.yaml)
 - [`charts/component-onboarding/values.yaml`](charts/component-onboarding/values.yaml)
 
 ## Tips
@@ -170,3 +182,6 @@ For more troubleshooting, see [Troubleshooting Guide](https://konflux-ci.dev/kon
 - [Conforma Policy Engine](https://conforma.dev) - Policy validation and enforcement
 - [Tekton Chains](https://tekton.dev/docs/chains/) - Artifact signing and provenance
 - [Trusting Artifacts](docs/trusting-artifacts.md) - Threat model for build trust
+- [CI Workload Identity Patterns](docs/task-workload-identity-patterns.md) - Workload identity use case taxonomy
+- [Dual-Gated Release Guide](docs/dual-gated-release-guide.md) - Model 2 managed release guide
+- [KubeCon Demo Guide](demo/README.md) - Live demonstration arc and presentation runner
