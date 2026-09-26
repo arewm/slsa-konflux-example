@@ -2,114 +2,105 @@
 
 ## The Core Problem: Chains Signs Anything
 
-[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys separate from build execution.
+[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys completely out of build containers.
 
-The tradeoff is that Chains signs whatever artifacts tasks claim to produce. It does not verify whether the task is trustworthy, whether the artifact was actually built in this pipeline, or whether a malicious task swapped in a pre-built image.
+The tradeoff is that Chains signs whatever artifacts tasks claim to produce. It doesn't check whether the task is trustworthy, whether the artifact was actually built from the claimed source, or whether a malicious task simply pulled a pre-built image from an attacker's registry and type-hinted it as a build output.
 
-Consider what happens when a malicious task enters the pipeline. It claims to build a container image from source, but instead pulls a pre-compromised image from an attacker's registry. It uses Tekton [type hinting](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting) to report this as a "built" artifact. Chains sees a completed task, generates signed SLSA provenance, and now you have cryptographically valid provenance for an artifact that was never actually built from the claimed source.
+Chains sees a completed task, generates signed SLSA provenance, and signs it. You end up with cryptographically valid provenance for an artifact that was never built from the claimed source.
 
-Signing alone does not solve supply chain security. We need to verify what was signed, who signed it, and whether artifacts remained intact throughout execution.
-
----
-
-## Shift-Left Trust: Moving Beyond Retroactive Evaluation
-
-Traditional pipeline security models evaluate task trust **retroactively**. Conforma or Enterprise Contract inspects the build provenance *after* the pipeline finishes to check if task bundles were digest-pinned and pulled from an approved catalog.
-
-That works for blocking release promotion, but retroactive evaluation leaves two real gaps:
-- **Untrusted code still runs**: An unauthorized or malicious task runs inside your cluster with full network and compute access before policy evaluation ever inspects it.
-- **Ambient authority is unconstrained**: During execution, the task shares the same ServiceAccount and ambient secrets as legitimate tasks.
-
-### Moving Verification to Admission
-
-To close those gaps, we shift verification left to admission time:
-
-1. **Kyverno Interception**: When a `TaskRun` is submitted, Kyverno admission policies intercept the request.
-2. **Bundle Verification**: The policy verifies that the task definition is pinned to an immutable digest (`@sha256:...`), matches an approved catalog repository pattern, and carries a valid Cosign cryptographic signature.
-3. **Role Classification**: Tasks that pass verification receive `trusted-task-role: prod`. Inline, unpinned, or unsigned tasks receive `trusted-task-role: dev`.
-4. **Workload Identity (SPIRE)**: The verified pod label is evaluated by SPIRE to issue a fine-grained, task-scoped workload identity (`spiffe://konflux-ci.dev/trusted/...` vs. `.../dev/...`).
-
-This guarantees that trust is established *before* the container starts executing. Downstream verifiers and external services can check the workload's cryptographic identity directly rather than re-evaluating build evidence from scratch.
-
-> For a full breakdown of how task-scoped workload identity enables separation of duties, secretless APIs, and push gating, see **[CI Workload Identity Patterns](task-workload-identity-patterns.md)**.
+Signing alone does not solve supply chain security. We need to verify what was signed, who signed it, and whether intermediate artifacts remained intact throughout execution.
 
 ---
 
-## Task Trust: Provenance & Policy Gating
+## Task Trust
 
-In addition to admission-time classification, Konflux uses [Conforma](https://conforma.dev) to verify that every task in a build came from an approved source before artifacts can be released.
+The first line of defense is ensuring that tasks in the build pipeline come from approved sources.
 
-Conforma's [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package enforces three requirements:
-- Tasks must reference digest-pinned bundles, not mutable tags.
-- Those bundles must appear in an approved trusted task list.
-- Any task that a policy declares as required must itself be trusted.
+In Konflux, [Conforma](https://conforma.dev) evaluates task trust retroactively after the build finishes. Its [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package checks three things against the build provenance:
+
+- Tasks must reference digest-pinned bundles (`@sha256:...`), not mutable tags
+- Those bundles must appear in an approved trusted task list
+- Any task that policy declares as required must itself be trusted
+
+If an attacker injects an unauthorized task or points to an unpinned tag, Conforma catches it during policy evaluation and blocks release.
 
 ---
 
-## Artifact Trust: Why PVCs Are Not Enough
+## Artifact Trust: Why Task Trust Isn't Sufficient with PVCs
 
-Containers in a pipeline are isolated from each other, but shared volumes tell a different story. When tasks pass data through PVCs, any task with access to the volume can read or modify artifacts left by previous tasks. A single malicious task can tamper with everything. This forces an all-or-nothing trust model: either every task in the pipeline is trusted, or none of the output can be trusted.
+Task trust alone is not enough if your tasks share a volume.
 
-That model works, but it has a real cost. Centralized pipeline ownership means every change, even adding a linter, must go through a trust review process. This tension between security and developer autonomy is why Konflux uses [Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html) instead of PVCs.
+Containers in a Kubernetes pod are isolated from each other, but shared PersistentVolumeClaims (PVCs) break that isolation. When pipeline tasks pass data through a PVC, any task mounted to that volume can read or overwrite files left behind by previous tasks.
 
-### Content-Addressable OCI Artifact Passing
+That forces an all-or-nothing trust model: either *every* task in the pipeline is fully trusted, or *none* of the output can be trusted.
 
-Trusted Artifacts store intermediate data as immutable OCI images, addressed by content digest. Rather than writing to a shared filesystem, each task's output becomes the next task's input through explicit parameter chaining:
+This creates real friction between security teams and developers. If a developer wants to add a custom linter, an experimental test runner, or an inline script, centralized pipeline ownership means that change has to go through a formal catalog review... just to run a linter.
 
-1. Task A produces an output archive and pushes it to an OCI registry (or local cache) addressed by its cryptographic SHA256 digest.
-2. Task B receives the explicit digest as a Tekton parameter and unpacks the archive.
-3. Any modification to intermediate files produces a different digest, immediately breaking the pipeline chain.
+### Content-Addressable OCI Artifacts
 
-This scopes trust narrowly. Because there is no shared volume, untrusted tasks cannot inspect or modify artifacts they never receive. Developers can add custom or unprivileged tasks without compromising the integrity of the core build output.
+Konflux breaks that all-or-nothing dependency using [Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html) instead of PVCs.
+
+Rather than writing to a shared filesystem, tasks package intermediate state into OCI image layers addressed by cryptographic content digest (`sha256:...`). Each task's output is passed to the next task through explicit parameter chaining:
+
+1. Task A packages its build outputs, pushes an OCI artifact to storage, and emits the immutable digest.
+2. Task B receives that digest as an explicit parameter and unpacks it.
+3. If an intermediate file is modified, the digest changes, breaking the chain and failing the build.
+
+Because there is no shared volume, untrusted tasks cannot touch artifacts they were never given. Developers can add custom tasks to their pipelines without undermining trust in the core build output.
 
 ---
 
 ## How This Achieves SLSA Build Level 3
 
-The properties above — task trust verification, artifact immutability, admission-time workload identity, and signing key isolation — form the building blocks of [SLSA Build Level 3](https://slsa.dev/spec/v1.1/requirements):
+Combining task trust, artifact immutability, isolated signing, and ephemeral pods satisfies the requirements for [SLSA Build Level 3](https://slsa.dev/spec/v1.1/requirements):
 
-- **Hardened Ephemeral Builds**: Each build runs in an isolated, ephemeral Kubernetes pod that does not share state or filesystems with other builds.
+- **Hardened Ephemeral Builds**: Builds run in isolated Kubernetes pods that are torn down after completion. No persistent disk or process space is shared across builds.
 - **Isolated Signing (Build vs. Release Boundary)**: Build execution runs in an unprivileged tenant namespace (`default-tenant`). Provenance signing is performed by Tekton Chains in an observer namespace. Release attestation signing occurs strictly within the platform-managed namespace (`managed-tenant`). Builds cannot access release signing material.
-- **Trusted Task Verification**: Kyverno admission and Conforma policy rules verify that all pipeline tasks originate from approved, signed, digest-pinned catalogs.
+- **Trusted Task Verification**: Conforma policy verifies that all pipeline tasks originate from approved, signed, digest-pinned catalogs.
 - **Tamper-Resistant Intermediate Artifacts**: Content-addressable OCI storage prevents inter-task data poisoning on shared storage volumes.
+
+An attacker who compromises a single build cannot affect other builds, cannot sign arbitrary artifacts, and cannot tamper with intermediate data without detection.
 
 ---
 
 ## Consumer Trust: The VSA as Trust Anchor
 
-Build provenance from Tekton Chains is signed with the build platform's identity — an ephemeral OIDC certificate from Fulcio, or a platform-managed keypair. A consumer who wants to verify the build provenance directly must know and trust that identity, which can change when the platform is upgraded, migrated, or replaced.
+Build provenance from Tekton Chains is signed with the build platform's identity... an ephemeral OIDC certificate from Fulcio or an internal keypair. A consumer verifying that provenance directly would have to understand the build platform's internals, track key rotations, and reproduce 100+ policy rules.
 
 The **Verification Summary Attestation (VSA)** solves this through trust delegation:
-1. The build pipeline runs in `default-tenant`, producing container images, SBOMs, and Tekton Chains provenance.
-2. Upon promotion, the release pipeline runs in `managed-tenant`.
-3. The `verify-conforma` task evaluates Enterprise Contract policies against the image and its attestations (checking task trust, digest pinning, CVEs, and SLSA requirements).
-4. If policy evaluation passes, the release pipeline distills the conclusions into a signed VSA document:
+
+1. The build pipeline runs in `default-tenant`, producing images and Chains provenance.
+2. The release pipeline runs in `managed-tenant`.
+3. The `verify-conforma` task evaluates Enterprise Contract policies against the image and its attestations.
+4. If verification passes, the release pipeline distills the conclusions into a signed VSA:
    - Claims: `verificationResult: PASSED`, `verifiedLevels: [SLSA_BUILD_LEVEL_3]`.
-   - Signer: The release platform identity (a stable keypair or a keyless Fulcio certificate with release authority SAN).
-5. Consumers verify **one signature** on the VSA against the trusted release platform identity without needing to re-evaluate 100+ raw policy rules or inspect raw Chains provenance.
-
-### The Ambient Release Authority Trap & Dual-Gating
-
-In standard release pipelines, binding release authority to a Kubernetes ServiceAccount introduces an ambient authority trap: any task in `managed-tenant` could sign a VSA prematurely.
-
-To secure this boundary:
-- **Model 2 (Dual-Gated Authority — Implemented)**: Kyverno admission and SPIRE enforce that only the final attestation attachment task (`attach-summary-attestations`), running inside the authorized release pipeline (`slsa-e2e-release-dual-gated`), receives the release authority SPIFFE identity. Early tasks possess zero signing identity.
-- **Model 3 (Capability Gating — Future Specification)**: Passing `verify-conforma` mints an ephemeral, cryptographically signed policy clearance token tied to the image digest, which must be presented to Fulcio to obtain a release signing certificate.
-
-> For the implementation guide on Model 2 release gating, see **[Dual-Gated Release Guide](dual-gated-release-guide.md)**.
+   - Signer: The release platform identity.
+5. Consumers verify a single signature on the VSA against the release platform identity. They don't need to parse the raw build chain or understand Tekton Chains internals.
 
 ---
 
-## Documentation Index
+## Shifting Trust Left: From Retroactive Policies to Task Identity
 
-| Guide | Description |
-| :--- | :--- |
-| **[Trusting Artifacts](trusting-artifacts.md)** (This Document) | Threat model, OCI Trusted Artifacts, SLSA Build L3, and VSA trust delegation. |
-| **[CI Workload Identity Patterns](task-workload-identity-patterns.md)** | The 5 classes of workload identity (push gating, secretless APIs, cloud IAM, separation of duties). |
-| **[Dual-Gated Release Guide](dual-gated-release-guide.md)** | Runbook and verification commands for Model 2 managed release authority. |
-| **[KubeCon Demo Guide](../demo/README.md)** | Live demonstration guide for KubeCon NA 2026, including slide terminals and setup scripts. |
-| **[Part 1: Build and Release](part1-build-and-release.md)** | Walkthrough of onboarding Festoji and achieving SLSA Build L3. |
-| **[Part 2: Source Track & Hermetic Builds](part2-source-and-vulnerabilities.md)** | Guide on source verification, hermetic builds, and CVE management. |
+In the baseline model, task trust is calculated *retroactively*. Conforma evaluates whether tasks were trusted only after the pipeline completes.
+
+That works fine for gating releases, but it has limits:
+- Untrusted code still runs to completion inside the cluster before anything inspects it.
+- Outside services (registries, internal APIs) cannot easily know whether a running task is trusted without running a full Conforma policy evaluation themselves.
+
+Instead of waiting for a downstream policy engine to evaluate task trust, we can shift that calculation left to **admission time**.
+
+When a `TaskRun` is submitted, an admission controller (Kyverno) verifies that the task bundle is digest-pinned and signed by an approved catalog key *before* the pod is scheduled. Tasks that pass receive a production role; untrusted or inline tasks receive a dev role. SPIRE turns those verified labels into cryptographic workload identities (SPIFFE SVIDs).
+
+This individualizes trust down to specific tasks:
+- **Separation of duties**: Scanners sign vulnerability reports, builders sign SBOMs. A builder cannot sign off on a vulnerability scan.
+- **Push gating without static secrets**: Registries (like Zot) accept SPIFFE OIDC Bearer tokens, permitting pushes only from vetted builder identities and blocking dev tasks with `403 Forbidden`.
+- **Secretless service access**: Internal services validate callers directly against SPIRE's JWKS endpoint without distributing static tokens into tenant namespaces.
+- **Dual-gated release authority**: Managed release pipelines prevent ambient authority from signing VSAs before policy evaluation passes.
+
+For the full taxonomy of workload identity patterns and concrete implementations, see:
+- **[CI Workload Identity Patterns](task-workload-identity-patterns.md)** — The 5 classes of workload identity use cases.
+- **[Dual-Gated Release Guide](dual-gated-release-guide.md)** — PipelineRun-scoped release authority in `managed-tenant`.
+- **[Live Demonstration Guide](../demo/README.md)** — Interactive 4-act demonstration for KubeCon NA 2026.
 
 ---
 
