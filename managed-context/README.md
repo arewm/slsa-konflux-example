@@ -91,7 +91,7 @@ The hardened release pipeline demonstrating **PipelineRun-Scoped Dual-Gating**.
 - SPIRE's `konflux-release-authority` ClusterSPIFFEID matches **both** `trusted-pipeline-role: release-authority` and `tekton.dev/pipelineTask: attach-summary-attestations`.
 - Early tasks (`collect-data`, `apply-mapping`, `verify-conforma`) receive **no release signing identity**, eliminating the ambient release authority trap.
 
-> For architectural details, see **[Dual-Gated Release Guide](../docs/dual-gated-release-guide.md)** and **[CI Workload Identity Patterns](../docs/task-workload-identity-patterns.md)**.
+> For architectural details, see **[Dual-Gated Release Guide](../docs/reference/dual-gated-release.md)** and **[CI Workload Identity Patterns](../docs/reference/workload-identity-patterns.md)**.
 
 ---
 

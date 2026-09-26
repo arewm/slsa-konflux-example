@@ -54,7 +54,7 @@ SLSA Build Level 3 requires isolated builds, inaccessible signing keys, and a bu
 - **Namespace separation:** Builds run in the tenant namespace (`default-tenant`), while signing keys exist only in the managed namespace (`managed-tenant`). Kubernetes RBAC prevents tenant workloads from reading managed-namespace secrets.
 - **Trusted tasks:** Conforma's `trusted_tasks` package verifies that pipeline tasks come from approved Tekton bundles. At release time, Conforma checks each task in the provenance against the approved bundle list.
 
-Together, these controls provide the isolation, non-falsifiable provenance, and hermetic-build properties required by SLSA Build Level 3. For the detailed threat model, see [Trusting Artifacts](trusting-artifacts.md).
+Together, these controls provide the isolation, non-falsifiable provenance, and hermetic-build properties required by SLSA Build Level 3. For the detailed threat model, see [Trusting Artifacts](../reference/trusting-artifacts.md).
 
 ## Build Pipeline
 

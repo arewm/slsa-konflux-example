@@ -101,11 +101,11 @@ This individualizes trust down to specific tasks:
 
 ## Related Documentation
 
-- **[CI Workload Identity Patterns](task-workload-identity-patterns.md)** — The 5 classes of workload identity use cases.
-- **[Dual-Gated Release Guide](dual-gated-release-guide.md)** — PipelineRun-scoped release authority in `managed-tenant`.
-- **[Live Demonstration Guide](../demo/README.md)** — Interactive 4-act demonstration for KubeCon NA 2026.
-- **[Part 1: Build and Release](part1-build-and-release.md)** — Walkthrough of onboarding Festoji and achieving SLSA Build L3.
-- **[Part 2: Source Track & Hermetic Builds](part2-source-and-vulnerabilities.md)** — Guide on source verification, hermetic builds, and CVE management.
+- **[CI Workload Identity Patterns](workload-identity-patterns.md)** — The 5 classes of workload identity use cases.
+- **[Dual-Gated Release Guide](dual-gated-release.md)** — PipelineRun-scoped release authority in `managed-tenant`.
+- **[Live Demonstration Guide](../../demo/README.md)** — Interactive 4-act demonstration for KubeCon NA 2026.
+- **[Part 1: Build and Release](../tutorials/part1-build-and-release.md)** — Walkthrough of onboarding Festoji and achieving SLSA Build L3.
+- **[Part 2: Source Track & Hermetic Builds](../tutorials/part2-source-and-vulnerabilities.md)** — Guide on source verification, hermetic builds, and CVE management.
 
 ---
 
