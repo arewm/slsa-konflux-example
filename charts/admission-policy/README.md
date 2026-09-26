@@ -15,9 +15,11 @@ This Helm chart deploys Kyverno ClusterPolicies for Tekton TaskRun and PipelineR
    - Prevents tenant workloads or rogue pods from self-declaring a trusted role.
 
 3. **`verify-bundle-signatures`:**
-   - Requires patched Kyverno controller (with `filter` support on `imageExtractors`).
-   - Uses `type: SigstoreBundle` and `imageExtractors` targeting `/spec/taskRef/params/*` (filtered by `bundle`) to locate the OCI task bundle reference.
-   - Validates Cosign / Sigstore bundle signatures against configured public keys before admission.
+   - Enforces Sigstore / Cosign bundle signatures against configured public keys before admission.
+   - **`ivpol` mode (default)**: Uses `ImageValidatingPolicy` (`policies.kyverno.io/v1beta1`) with CEL-based image extraction (`spec.images`). Compatible with stock Kyverno v1.16/v1.17+ on Konflux clusters without requiring controller patches or ConfigMap restart jobs.
+   - **`clusterpolicy` mode (legacy)**: Uses `ClusterPolicy` (`kyverno.io/v1`) with `verifyImages` and `imageExtractors`. Requires Kyverno >= 1.19.2 (or a patched controller supporting `filter` in `imageExtractors`) and runs `kyverno-configmap-patch-job`.
+   - **`both` mode**: Deploys both policies side-by-side for benchmarking/testing.
+   - **`none` mode**: Skips signature verification (only classification is applied).
 
 4. **`classify-release-authority`:**
    - Evaluates `TaskRun` creations in the `managed-tenant` namespace.
