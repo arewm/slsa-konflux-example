@@ -192,7 +192,7 @@ fetch("http://localhost:7681", { mode: "no-cors" })
 ## Walkthrough of the Acts
 
 ### Act 0: Pre-Flight Verification & Idempotent Baseline
-- Verifies Kyverno `ClusterPolicy` resources (`classify-taskrun`, `verify-bundle-signatures`, `prevent-pod-label-spoofing`, `classify-release-authority`).
+- Verifies Kyverno admission policies (`classify-taskrun`, `verify-bundle-signatures` [ImageValidatingPolicy], `prevent-pod-label-spoofing`, `classify-release-authority`).
 - Confirms SPIRE pods and OIDC discovery endpoints are healthy.
 - Displays clickable browser links to monitor the application in the Konflux UI (`https://localhost:9443`).
 
