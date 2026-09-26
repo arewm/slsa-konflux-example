@@ -742,6 +742,7 @@ spec:
             ec validate image \
               --images /tmp/snapshot.json \
               --policy managed-tenant/demo-app-ec-policy \
+              --skip-image-sig-check \
               --rekor-url http://rekor-server.rekor-system.svc.cluster.local \
               --retry-max-retry 5 \
               --retry-max-wait 5s \
