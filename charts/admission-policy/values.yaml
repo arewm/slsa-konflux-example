@@ -1,3 +1,12 @@
+# Verification engine to enforce bundle signatures:
+# - "ivpol": Uses ImageValidatingPolicy (policies.kyverno.io/v1beta1).
+#   CEL-based, works on stock Kyverno (v1.16/v1.17+) without controller patches or ConfigMap restart.
+# - "clusterpolicy": Uses legacy ClusterPolicy verifyImages (kyverno.io/v1).
+#   Requires Kyverno >=1.19.2 (or patched controller with PR #16269) and runs the cm/kyverno patch job.
+# - "both": Deploys both policies simultaneously (for testing/benchmarking on patched clusters).
+# - "none": Disables admission signature verification (only classification is applied).
+verificationMode: "ivpol"
+
 # Trusted bundle patterns with signing keys.
 # Each entry is matched as a glob prefix against the TaskRun bundle reference.
 # Leave signingKeys empty to configure the pattern without verification

@@ -98,6 +98,7 @@ kubectl patch tektonconfig config --type=merge -p '{
               "signers.x509.fulcio.token.path": "/var/run/sigstore/cosign/oidc-token",
               "signers.x509.tuf.mirror.url": "http://tuf-server.tuf-system.svc.cluster.local",
               "signers.x509.rekor.address": "http://rekor-server.rekor-system.svc.cluster.local",
+              "artifacts.oci.signer": "none",
               "storage.oci.encoding-format": "sigstore-bundle"
             }
           }

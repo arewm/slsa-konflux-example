@@ -1,13 +1,13 @@
-{{- if .Values.trustedBundles }}
+{{- if and .Values.trustedBundles (or (eq .Values.verificationMode "clusterpolicy") (eq .Values.verificationMode "both")) }}
 ---
 # Blocks TaskRuns referencing trusted bundle patterns that lack a valid signature.
-# Requires the patched Kyverno build (fix/imageextractor-combined) for:
-#   - filter field in imageExtractors (to isolate the bundle param from other params)
-#   - SigstoreBundle static key support (to verify keypair-signed OCI referrer bundles)
+# Legacy ClusterPolicy pattern requiring:
+#   - Patched Kyverno controller (or Kyverno >= 1.19.2) with filter support in imageExtractors
+#   - kyverno-configmap-patch-job to register imageExtractors in cm/kyverno
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: verify-bundle-signatures
+  name: {{ if eq .Values.verificationMode "both" }}verify-bundle-signatures-cpol{{ else }}verify-bundle-signatures{{ end }}
 spec:
   failurePolicy: Fail
   validationFailureAction: Enforce

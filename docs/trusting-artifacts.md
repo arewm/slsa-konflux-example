@@ -10,6 +10,8 @@ The tradeoff is on the artifact output side: Chains signs whatever artifacts tas
 
 Chains sees a completed task, reads the type-hinted result, and generates signed SLSA provenance. You end up with a cryptographically valid provenance record for an artifact that was never built from the claimed source.
 
+Upstream Tekton Chains recognizes this gap: through `artifacts.oci.signer: "none"` (originally tracked in issue [#1346](https://github.com/tektoncd/chains/issues/1346)), operators can explicitly disable OCI image signing while preserving in-toto SLSA provenance generation. This prevents Chains from producing misleading cryptographic signatures on unverified container outputs, leaving artifact promotion and release signing to verified gates.
+
 Signing alone does not solve supply chain security. Chains gives us reliable execution provenance, but we still need to verify what was signed, who was authorized to sign it, and whether intermediate artifacts remained intact.
 
 ---
