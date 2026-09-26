@@ -98,7 +98,7 @@ p "# Before starting, verify Kyverno admission policies, SPIRE identity server, 
 
 echo -e "   ${CYAN}Konflux UI Application View:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app"
 echo ""
-pe "kubectl get clusterpolicies"
+pe "kubectl get clusterpolicies,imagevalidatingpolicies 2>/dev/null || kubectl get clusterpolicies"
 pe "kubectl get pods -n spire -l app.kubernetes.io/instance=spire"
 pe "kubectl get pods,services -n kind-registry -l app=registry-oidc"
 pe "kubectl get pods,services -n services -l app=cve-database-service"
@@ -183,7 +183,11 @@ p "# (registry-service.kind-registry/tekton-catalog/*) without a valid platform 
 p "# is an admission-blocking violation enforced by verify-bundle-signatures:"
 p "#"
 p "# Inspect the bundle signature enforcement policy:"
-pe "kubectl get clusterpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.rules[] | {\"rule\": .name, \"match\": .match, \"verifyImages\": .verifyImages}'"
+if kubectl get imagevalidatingpolicy verify-bundle-signatures >/dev/null 2>&1; then
+  pe "kubectl get imagevalidatingpolicy verify-bundle-signatures -o yaml | yq '{\"name\": .metadata.name, \"images\": .spec.images, \"validations\": .spec.validations}'"
+else
+  pe "kubectl get clusterpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.rules[] | {\"rule\": .name, \"match\": .match, \"verifyImages\": .verifyImages}'"
+fi
 
 kubectl delete taskrun attacker-unsigned-task -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f - || true
