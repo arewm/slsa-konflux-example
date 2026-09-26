@@ -2,27 +2,29 @@
 
 ## The Core Problem: Chains Signs Anything
 
-[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys completely out of build containers.
+[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys completely out of build containers—the payload doesn't sign itself.
 
-The tradeoff is that Chains signs whatever artifacts tasks claim to produce. It doesn't check whether the task is trustworthy, whether the artifact was actually built from the claimed source, or whether a malicious task simply pulled a pre-built image from an attacker's registry and type-hinted it as a build output.
+Because Chains watches the Kubernetes control plane from an observer namespace, **we can trust Chains for provenance**. A running task cannot forge Chains' view of what ran: Chains faithfully records the exact TaskRuns executed, the bundle references invoked, the git commit, parameters passed, and timestamps.
 
-Chains sees a completed task, generates signed SLSA provenance, and signs it. You end up with cryptographically valid provenance for an artifact that was never built from the claimed source.
+The tradeoff is on the artifact output side: Chains signs whatever artifacts tasks claim to produce. It doesn't know whether a task is trustworthy, whether the artifact was actually built from the claimed source, or whether a malicious task simply pulled a pre-built image from an attacker's registry and used Tekton [type hinting](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting) to report it as a build output.
 
-Signing alone does not solve supply chain security. We need to verify what was signed, who signed it, and whether intermediate artifacts remained intact throughout execution.
+Chains sees a completed task, reads the type-hinted result, and generates signed SLSA provenance. You end up with a cryptographically valid provenance record for an artifact that was never built from the claimed source.
+
+Signing alone does not solve supply chain security. Chains gives us reliable execution provenance, but we still need to verify what was signed, who was authorized to sign it, and whether intermediate artifacts remained intact.
 
 ---
 
-## Task Trust
+## Task Trust: Leveraging Chains Provenance
 
-The first line of defense is ensuring that tasks in the build pipeline come from approved sources.
+Because we *can* trust Chains' provenance to accurately record which tasks executed, we can evaluate task trust against that record.
 
-In Konflux, [Conforma](https://conforma.dev) evaluates task trust retroactively after the build finishes. Its [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package checks three things against the build provenance:
+The first line of defense is ensuring that every task in the pipeline came from an approved source. In Konflux, [Conforma](https://conforma.dev) evaluates task trust retroactively after the build finishes. Its [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package checks three things against the Chains-signed provenance:
 
 - Tasks must reference digest-pinned bundles (`@sha256:...`), not mutable tags
 - Those bundles must appear in an approved trusted task list
 - Any task that policy declares as required must itself be trusted
 
-If an attacker injects an unauthorized task or points to an unpinned tag, Conforma catches it during policy evaluation and blocks release.
+If an attacker injects an unauthorized task or points to an unpinned tag, Chains records that task reference in the provenance. Conforma catches it during policy evaluation and blocks release.
 
 ---
 
