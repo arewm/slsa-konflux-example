@@ -1,147 +1,114 @@
 # SLSA End-to-End Example (Konflux style)
 
-This repository demonstrates how to achieve end-to-end SLSA (Supply-chain Levels for Software Artifacts) compliance using [Konflux](https://konflux-ci.dev).
-It is created in response to the SLSA [request for examples](https://slsa.dev/blog/2025/07/slsa-e2e).
-
-If you are not familiar with Konflux, it is an open source, cloud-native software factory focused on software supply chain security. Developers need flexibility to build software quickly; security teams need controls to prevent supply chain attacks. Konflux hardens the platform to achieve SLSA Build L3 by default, giving developers flexibility to build what they need while ensuring security requirements are met before artifacts leave their control.
+This repository demonstrates end-to-end SLSA (Supply-chain Levels for Software Artifacts) compliance using [Konflux](https://konflux-ci.dev), Tekton, Kyverno, and SPIFFE/SPIRE. It hardens build platforms to achieve SLSA Build Level 3 by default while eliminating ambient authority across the pipeline.
 
 ### SLSA E2E Stage Coverage
 
 | Stage | Coverage | SLSA Level | Key Components |
-|-------|----------|------------|----------------|
+|---|---|---|---|
 | Source | Covered | L2-L3 (via source-tool) | `verify-source` task, `slsa_source_verification.rego` |
 | Build | Covered | L3 (Tekton Chains) | `slsa-e2e-oci-ta` pipeline, pod isolation, namespace separation |
-| Verification | Covered | Conforma + custom policies | `verify-conforma`, `attach-vsa`, `rule_data.yml` |
+| Verification | Covered | Conforma policy evaluation | `verify-conforma`, `rule_data.yml` |
 | Publication | Covered | Pipeline-gated | `push-snapshot` gated by `verify-conforma` |
 | Use | Covered | OCI-native VSA distribution | `cosign verify-attestation` |
 
-## Walkthroughs
+---
 
-The repository is organized into two walkthroughs that build on each other:
+## Documentation Roadmap
 
-**[Part 1: Build and Release](docs/part1-build-and-release.md)** covers the fundamentals using Festoji as a simple example component. You will onboard a component, understand how Konflux achieves SLSA Build L3, inspect build artifacts (SBOM, provenance, signatures), run integration tests, release with policy enforcement, and verify artifacts as a consumer.
+The documentation is organized into hands-on tutorials and technical reference guides:
 
-**[Part 2: Source Track, Vulnerability Management, and Hermetic Builds](docs/part2-source-and-vulnerabilities.md)** introduces advanced topics using source-test-repo as an example. It covers SLSA Source Track L3 via source-tool enrollment, per-application Conforma policies, CVE management (leeway, per-CVE exceptions, volatile configuration), and hermetic builds for reproducibility.
+### Hands-On Tutorials
+- **[Part 1: Build and Release](docs/tutorials/part1-build-and-release.md)**: Onboard Festoji, build containers with pod isolation, inspect OCI 1.1 referrers (SBOM, provenance, signatures), and verify releases as a consumer.
+- **[Part 2: Source Track, Vulnerability Management, and Hermetic Builds](docs/tutorials/part2-source-and-vulnerabilities.md)**: Advanced controls with `source-test-repo`: Source Level 3 via `source-tool`, per-application Conforma policies, CVE leeway, and hermetic builds.
 
-For the threat model behind trusted tasks, artifact immutability, and signing key isolation, see [Trusting Artifacts](docs/trusting-artifacts.md).
+### Technical Reference & Threat Models
+- **[Trusting Artifacts: Architecture & Threat Model](docs/reference/trusting-artifacts.md)**: Why Tekton Chains signs unverified outputs, why PersistentVolumeClaims undermine task trust, how OCI Trusted Artifacts enforce immutability, and how Verification Summary Attestations (VSAs) delegate consumer trust.
+- **[CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md)**: Taxonomy of five production patterns: separation of duties in attestation signing, federated OCI push gating, secretless internal APIs, cloud IAM federation, and release boundary capability gating.
+- **[Dual-Gated Release Authority Guide](docs/reference/dual-gated-release.md)**: Implementation runbook for Model 2 release gating in `managed-tenant`.
+- **[Documentation Index](docs/README.md)**: Complete guide directory.
 
-## Pre-requisites
+---
 
-All commands in this guide assume you are in the root directory of the slsa-konflux-example repository unless otherwise specified.
+## KubeCon NA 2026: "Your CI's Mistaken Identity"
 
-To explore SLSA with Konflux, you need a running instance. The simplest way is the [konflux-ci](https://github.com/konflux-ci/konflux-ci) deployment script:
+This branch (`kubecon-na-2026-your-cis-mistaken-identity`) introduces **task-scoped cryptographic workload identities** using Tekton, Kyverno, and SPIFFE/SPIRE. It replaces shared ServiceAccount ambient authority with verified, role-scoped machine identities.
+
+- **[Live Demonstration Guide](demo/README.md)**: Interactive terminal walkthrough (Acts 0 through 4), browser slides integration (`ttyd` on ports 7680–7684), clicker support, and setup scripts.
+- **[CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md)**: The 5 production workload identity patterns.
+- **[Dual-Gated Release Guide](docs/reference/dual-gated-release.md)**: Model 2 PipelineRun-scoped release dual-gating.
+
+---
+
+## Prerequisites
+
+Commands in this repository assume execution from the repository root.
+
+Deploy Konflux locally using the official installer:
 
 ```bash
-# Clone the konflux-ci repository (pinned to tested release)
+# Clone the konflux-ci repository (pinned to tested release v0.2.2)
 export KONFLUX_VERSION=v0.2.2
 git clone --branch "${KONFLUX_VERSION}" https://github.com/konflux-ci/konflux-ci.git
 cd konflux-ci
 
-# The Konflux operator now requires a configuration file
 cp scripts/deploy-local.env.template scripts/deploy-local.env
-# Edit deploy-local.env with your GitHub App credentials
-# See: https://konflux-ci.dev/konflux-ci/docs/guides/github-secrets/ for GitHub App setup, or
-# https://pipelinesascode.com/docs/providers/github-app/ for Pipelines as Code documentation
+# Configure deploy-local.env with GitHub App credentials
 
-# Deploy Konflux operator (pinned to the same release)
 OPERATOR_INSTALL_METHOD=release OPERATOR_RELEASE="${KONFLUX_VERSION}" \
   ./scripts/deploy-local.sh
 ```
 
-**Tested with:** konflux-ci/konflux-ci v0.2.2
-
-This script creates a Kind cluster, deploys the Konflux operator, creates the `default-tenant` namespace with demo users (user1@konflux.dev, user2@konflux.dev), and configures webhooks for Pipelines as Code.
-
-After deploying the operator, install the Sigstore stack (Fulcio, Rekor, CT Log, TUF). This configures Tekton Chains for keyless signing and registers the in-cluster Sigstore services with the Konflux CR:
+Deploy the in-cluster Sigstore stack (Fulcio, Rekor, CT Log, TUF):
 
 ```bash
-# Still in the konflux-ci directory
+# On amd64 hosts:
 ./integrations/sigstore/install.sh
+
+# On arm64 hosts (Apple Silicon, AWS Graviton):
+./integrations/sigstore/install.sh \
+  --extra-values-file /path/to/slsa-konflux-example/integrations/sigstore/values-arm64.yaml
 ```
 
-> **arm64 hosts (Apple Silicon, AWS Graviton, etc.):** the scaffold chart pins amd64-only images that crash or OOMKill under QEMU emulation (note that while scaffold v0.6.115+ resolved the `copySecretJob` image upstream in sigstore/helm-charts#1234, Trillian MySQL still requires an arm64-native substitute). Pass the overlay from this repository to substitute arm64-native images:
->
-> ```bash
-> ./integrations/sigstore/install.sh \
->   --extra-values-file /path/to/slsa-konflux-example/integrations/sigstore/values-arm64.yaml
-> ```
-
-Then run the prerequisites script from this repository:
+Run the repository prerequisites script:
 
 ```bash
 cd /path/to/slsa-konflux-example
 ./scripts/setup-prerequisites.sh
 ```
 
-The prerequisites script prepares the cluster for the SLSA walkthrough:
+The prerequisites script:
+- Creates the `managed-tenant` namespace for release operations.
+- Configures the Konflux operator to use the custom SLSA pipeline (`slsa-e2e-oci-ta`).
+- Configures Tekton Chains for OCI 1.1 Referrers (`sigstore-bundle` format) and keyless Fulcio/Rekor signing.
+- Distributes internal registry credentials to build and release ServiceAccounts.
 
-- Creates the `managed-tenant` namespace for privileged release operations
-- Configures the Konflux operator to use the custom SLSA pipeline via the `Konflux` CR's `pipelineConfig` field
-- Labels the internal registry credential (`regcred-internal-registry`) so build-service auto-links it to every component's build pipeline ServiceAccount
-- Copies registry credentials to `managed-tenant` and links them to the integration and release pipeline ServiceAccounts
+### Required CLI Tools
+Install: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl), [cosign](https://github.com/sigstore/cosign), [helm](https://helm.sh/), [tkn](https://github.com/tektoncd/cli), [jq](https://jqlang.github.io/jq/), [yq](https://github.com/mikefarah/yq), [skopeo](https://github.com/containers/skopeo), [oras](https://oras.land/), and [podman](https://podman.io/).
 
-**Note**: The pre-built pipeline bundle and task bundles in `quay.io/slsa-konflux-example` are public and require no authentication. The `hack/build-pipeline.sh` script is for advanced users who want to customize and push to their own registry. After rebuilding, re-run `./scripts/setup-prerequisites.sh` to update the Konflux CR with the new bundle reference.
+### Accessing Endpoints
+- **Konflux Web UI**: `https://localhost:9443` (Log in with `user1@konflux.dev` / `password` for `default-tenant`, or `user2@konflux.dev` / `password` for `managed-tenant`).
+- **Internal Kind Registry**: `localhost:5001` (external) or `registry-service.kind-registry.svc.cluster.local` (in-cluster).
 
-For detailed deployment options, see the [Local Installation Guide](https://konflux-ci.dev/konflux-ci/docs/installation/install-local/).
-
-### Required Tools
-
-Install these CLI tools for the demo: [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) for cluster interaction, [cosign](https://github.com/sigstore/cosign?tab=readme-ov-file#installation) for inspecting OCI artifact attestations, [helm](https://github.com/helm/helm?tab=readme-ov-file#install) for deploying resources to the Kind cluster, [tkn](https://github.com/tektoncd/cli?tab=readme-ov-file#installing-tkn) for viewing Tekton pipelines, [jq](https://jqlang.github.io/jq/download/) for parsing JSON, and optionally [gh](https://cli.github.com/) for GitHub CLI operations, [yq](https://github.com/mikefarah/yq) for YAML manipulation (needed for Part 2 hermetic builds), [skopeo](https://github.com/containers/skopeo/blob/main/install.md) for inspecting manifests, [crane](https://github.com/google/go-containerregistry/blob/main/cmd/crane/README.md), [oras](https://oras.land/docs/installation), and [podman](https://podman.io/getting-started/installation) as alternatives for container operations.
-
-**NOTE:** Save your Pipelines as Code GitHub App URL after creating it. You need it to configure your repository.
-
-### Demo Authentication
-
-The Konflux operator automatically configures demo users:
-
-- **user1@konflux.dev** / `password` - Admin access to `default-tenant`
-- **user2@konflux.dev** / `password` - Admin access to `managed-tenant`
-
-**WARNING:** These are insecure demo credentials for testing only. For production deployments, configure proper authentication using the [Local Installation Guide](https://konflux-ci.dev/konflux-ci/docs/installation/install-local/).
-
-### Accessing the Konflux UI
-
-After you deploy Konflux, view pipeline runs and builds in the Konflux web UI at https://localhost:9443
-
-### Accessing the Kind Cluster Registry
-
-This demo uses the internal Kind registry by default. For complete registry configuration options (including external registries like Quay.io), see [Registry Configuration](https://konflux-ci.dev/konflux-ci/docs/guides/registry-configuration/).
-
-The internal registry is accessible at:
-- From host: `localhost:5001`
-- Within cluster: `registry-service.kind-registry.svc.cluster.local`
-
-## Workflow Overview
-
-Konflux separates builds and releases into distinct trust boundaries to prevent unauthorized artifact signing (see [Trusting Artifacts](docs/trusting-artifacts.md) for the threat model). When you onboard a component, build-service creates a pull request in your repository with Tekton pipeline definitions. Merging that PR enables the automated workflow.
-
-Builds run in an unprivileged tenant namespace where signing keys are absent. After a build completes, Tekton Chains generates SLSA provenance and signs the artifacts. Integration tests validate the build against policies. When you merge to the main branch, the release pipeline runs in a privileged managed namespace where Conforma performs final policy validation before promoting images to the release registry.
-
-## KubeCon NA 2026: "Your CI's Mistaken Identity"
-
-This branch (`kubecon-na-2026-your-cis-mistaken-identity`) introduces **task-scoped cryptographic workload identities** using Tekton, Kyverno, and SPIFFE/SPIRE. It moves pipeline security beyond coarse-grained ServiceAccount permissions to enforce separation of duties, secretless APIs, and task-scoped OCI push gating.
-
-- **[Live Demonstration Guide](demo/README.md)**: Interactive terminal walkthrough (Acts 0 through 4), browser slides integration (`ttyd` on ports 7680–7684), clicker support, and setup scripts.
-- **[CI Workload Identity Patterns](docs/task-workload-identity-patterns.md)**: Comprehensive taxonomy of the 5 classes of workload identity use cases (attestation signing, OCI push gating, secretless service access, cloud IAM federation, and release boundary capability tokens).
-- **[Dual-Gated Release Guide](docs/dual-gated-release-guide.md)**: Architectural analysis and runbook for Model 2 PipelineRun-scoped release dual-gating.
+---
 
 ## Helm Charts
 
 This repository provides four Helm charts:
 
-1. **platform-config** installs once per cluster to establish trust boundaries, signing keys, and policies. It creates the EnterpriseContractPolicy for SLSA3 validation, RoleBindings for admin access, and ServiceAccounts for release pipeline execution.
+1. **`platform-config`**: Establishes cluster-wide trust boundaries, EnterpriseContractPolicies, and release ServiceAccounts.
    ```bash
    helm upgrade --install platform ./charts/platform-config
    ```
-2. **admission-policy** deploys Kyverno ClusterPolicies for admission-time bundle signature verification, digest pinning checks, role classification (`dev` vs. `prod`), and Pod label spoofing prevention.
+2. **`admission-policy`**: Deploys Kyverno policies for admission-time bundle signature checking, digest pinning enforcement, role labeling (`dev` vs. `prod`), and pod label spoofing prevention.
    ```bash
    helm upgrade --install admission-policy ./charts/admission-policy
    ```
-3. **spiffe-spire** deploys the SPIRE identity infrastructure (Server, Agent DaemonSet, SPIFFE CSI driver, OIDC Discovery Provider) and configures `ClusterSPIFFEID` custom resources for task-scoped SVID minting.
+3. **`spiffe-spire`**: Deploys SPIRE identity infrastructure (Server, Agent DaemonSet, SPIFFE CSI driver, OIDC Discovery Provider) and configures `ClusterSPIFFEID` custom resources.
    ```bash
    helm upgrade --install spiffe-spire ./charts/spiffe-spire
    ```
-4. **component-onboarding** installs once per component to create the application, integration tests, and release plan.
+4. **`component-onboarding`**: Onboards an application component, creating Application, Component, IntegrationTestScenario, and ReleasePlan resources.
    ```bash
    export FORK_ORG="ORGANIZATION"
    helm upgrade --install festoji ./charts/component-onboarding \
@@ -149,39 +116,32 @@ This repository provides four Helm charts:
      --set gitRepoUrl=https://github.com/${FORK_ORG}/festoji
    ```
 
-All charts operate across two primary namespaces:
-- `default-tenant`: The unprivileged tenant namespace where builds occur (created by the Konflux operator).
-- `managed-tenant`: The privileged managed namespace where releases are validated and signed (created by the prerequisites script).
-
-See the chart `values.yaml` files for all configuration options:
+Chart configurations are detailed in:
 - [`charts/platform-config/values.yaml`](charts/platform-config/values.yaml)
 - [`charts/admission-policy/values.yaml`](charts/admission-policy/values.yaml)
 - [`charts/spiffe-spire/values.yaml`](charts/spiffe-spire/values.yaml)
 - [`charts/component-onboarding/values.yaml`](charts/component-onboarding/values.yaml)
 
-## Tips
+---
 
-**Recovering kubeconfig:** If you lose your kubeconfig connection to the Kind cluster:
-```bash
-kind export kubeconfig -n konflux
-```
+## Troubleshooting
 
-**Freeing cluster resources:** Kind clusters have limited resources. Completed and failed PipelineRuns retain pods and volume claims that consume memory. If tasks fail with `ExceededNodeResources`, clean up old runs:
-```bash
-# Delete completed/failed PipelineRuns in both namespaces
-kubectl delete pipelineruns -n default-tenant --field-selector=status.conditions[0].reason!=Running
-kubectl delete pipelineruns -n managed-tenant --field-selector=status.conditions[0].reason!=Running
-```
+- **Recover kubeconfig**:
+  ```bash
+  kind export kubeconfig -n konflux
+  ```
+- **Free cluster resources**: Completed and failed PipelineRuns retain pods and PVCs:
+  ```bash
+  kubectl delete pipelineruns -n default-tenant --field-selector=status.conditions[0].reason!=Running
+  kubectl delete pipelineruns -n managed-tenant --field-selector=status.conditions[0].reason!=Running
+  ```
 
-For more troubleshooting, see [Troubleshooting Guide](https://konflux-ci.dev/konflux-ci/docs/troubleshooting/).
+---
 
 ## Additional Resources
 
-- [Konflux Documentation](https://konflux-ci.dev/docs/) - Complete platform documentation
-- [SLSA Specification](https://slsa.dev/spec/) - Supply-chain security framework
-- [Conforma Policy Engine](https://conforma.dev) - Policy validation and enforcement
-- [Tekton Chains](https://tekton.dev/docs/chains/) - Artifact signing and provenance
-- [Trusting Artifacts](docs/trusting-artifacts.md) - Threat model for build trust
-- [CI Workload Identity Patterns](docs/task-workload-identity-patterns.md) - Workload identity use case taxonomy
-- [Dual-Gated Release Guide](docs/dual-gated-release-guide.md) - Model 2 managed release guide
-- [KubeCon Demo Guide](demo/README.md) - Live demonstration arc and presentation runner
+- [Konflux Platform Documentation](https://konflux-ci.dev/docs/)
+- [SLSA Specification v1.1](https://slsa.dev/spec/)
+- [Conforma Policy Engine](https://conforma.dev)
+- [Tekton Chains Documentation](https://tekton.dev/docs/chains/)
+- [Documentation Index](docs/README.md)

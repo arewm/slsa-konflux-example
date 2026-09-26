@@ -431,6 +431,6 @@ The VSA confirms `SLSA_BUILD_LEVEL_3` and `SLSA_SOURCE_LEVEL_3`.
 ## Related Documentation
 
 - **[Part 1: Build and Release](part1-build-and-release.md)**: Onboarding basics, build isolation, and SLSA Build L3 fundamentals.
-- **[Trusting Artifacts](trusting-artifacts.md)**: Threat model for task trust, OCI Trusted Artifacts, and signing key separation.
-- **[CI Workload Identity Patterns](task-workload-identity-patterns.md)**: The 5 classes of workload identity use cases.
-- **[Dual-Gated Release Guide](dual-gated-release-guide.md)**: Model 2 release gating in `managed-tenant`.
+- **[Trusting Artifacts](../reference/trusting-artifacts.md)**: Threat model for task trust, OCI Trusted Artifacts, and signing key separation.
+- **[CI Workload Identity Patterns](../reference/workload-identity-patterns.md)**: The 5 classes of workload identity use cases.
+- **[Dual-Gated Release Guide](../reference/dual-gated-release.md)**: Model 2 release gating in `managed-tenant`.

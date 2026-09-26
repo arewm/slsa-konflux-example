@@ -320,4 +320,4 @@ To run the interactive presentation demo:
 ./demo/run-demo.sh
 ```
 
-For slide terminal integration via `ttyd`, see **[KubeCon Demo Guide](../demo/README.md)** and **[Dual-Gated Release Guide](dual-gated-release-guide.md)**.
+For slide terminal integration via `ttyd`, see **[KubeCon Demo Guide](../../demo/README.md)** and **[Dual-Gated Release Guide](dual-gated-release.md)**.
