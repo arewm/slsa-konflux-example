@@ -7,9 +7,9 @@
 # open upon act completion so connections never drop.
 #
 # Port Mapping:
-#   7681 -> Act 1: Admission & Separation of Duties Attestations
-#   7682 -> Act 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating
-#   7683 -> Act 3: Portable Secretless Service Access (CVE Database)
+#   7681 -> Act 1: The Breakdown (Ambient Authority & Secret Hijack)
+#   7682 -> Act 2: Task Admission & Cryptographic Identity
+#   7683 -> Act 3: Same-Namespace API Gating & Separation of Duties
 #   7684 -> Act 4: Managed Release Boundary (Dual-Gated Authority)
 #   7680 -> Full Arc (Acts 0 - 4 end-to-end)
 # ==============================================================================
@@ -173,9 +173,9 @@ start_instances() {
 
   declare -A ACT_DESCS=(
     [0]="Full Demo Arc (Acts 0 - 4)"
-    [1]="Act 1: Admission & Separation of Duties"
-    [2]="Act 2: Ambient Hijack vs. OCI Gating"
-    [3]="Act 3: Secretless Service Access"
+    [1]="Act 1: The Breakdown (Ambient Authority)"
+    [2]="Act 2: Task Admission & Identity"
+    [3]="Act 3: Same-Namespace API Gating"
     [4]="Act 4: Dual-Gated Release Authority"
   )
 
