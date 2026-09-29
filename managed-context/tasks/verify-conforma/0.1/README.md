@@ -56,7 +56,20 @@ params:
     value: "local@/var/workdir/vsa"  # Where to store VSA
 ```
 
-## Parameters
+## Sigstore/TUF initialization
+
+When `TUF_MIRROR` is provided, the task initializes Conforma's Sigstore client before validation. The demo uses the TUF mirror's `root.json` to bootstrap trust, then uses the configured service URLs for validation.
+
+A private or locally deployed Sigstore/TUF mirror may print a warning similar to:
+
+```text
+Could not fetch signing_config.json from the TUF mirror
+(target "signing_config.v0.2.json" not found)
+```
+
+This warning means that the mirror does not publish the optional Sigstore signing-configuration target. It does not mean that TUF initialization or signature verification failed. When explicit Fulcio/Rekor service URLs are configured, the client can continue using those URLs; successful validation is reported separately in the Conforma result.
+
+For a production deployment, the warning should be evaluated as a trust-configuration gap rather than suppressed blindly. The mirror can publish the appropriate signing-configuration target, or the deployment can provide an explicit signing configuration through its installation/configuration mechanism. The initial TUF root should also be bootstrapped from a versioned root such as `1.root.json` with an independently distributed checksum; subsequent TUF root rotations can then be followed through the normal TUF chain.
 
 ### Core Parameters
 
