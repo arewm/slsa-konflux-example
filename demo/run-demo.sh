@@ -7,6 +7,16 @@ source "${DIR}/demo-magic.sh"
 
 DEMO_PROMPT="${CYAN}kubecon@konflux-ci${COLOR_RESET}:${BLUE}~/demo${COLOR_RESET}$ "
 
+# Act 2 catalog bundle refs. The digests are content-addressed but NOT stable
+# across tkn versions, so they are recorded per cluster by
+# demo/push-demo-catalog-bundles.sh (called from setup-demo.sh) instead of
+# being hardcoded here.
+CATALOG_BUNDLE_REF_FILE="${DIR}/manifests/catalog-bundle-ref"
+if [ -f "${CATALOG_BUNDLE_REF_FILE}" ]; then
+  # shellcheck disable=SC1090
+  source "${CATALOG_BUNDLE_REF_FILE}"
+fi
+
 # Parse command-line arguments
 SELECTED_ACT="all"
 DEMO_ARGS=()
@@ -47,6 +57,19 @@ finish_act() {
 # Set DEMO_CLEANUP=true to delete resources immediately after each scene;
 # by default (false), resources are left intact on the cluster for UI inspection and post-demo auditing.
 DEMO_CLEANUP="${DEMO_CLEANUP:-false}"
+
+# Retry a kubectl create on transient admission-webhook timeouts (Kyverno
+# signature verification can exceed the webhook timeout on a cold cache).
+kubectl_create_retry() {
+  local attempt payload
+  payload=$(cat)  # buffer stdin: retries cannot re-read a pipe
+  for attempt in 1 2 3; do
+    if printf '%s' "${payload}" | kubectl create -f - "$@"; then return 0; fi
+    echo "    [retry ${attempt}/3] admission webhook slow; waiting 20s..."
+    sleep 20
+  done
+  return 1
+}
 
 demo_cleanup() {
   if [[ "${DEMO_CLEANUP}" == "true" ]]; then
@@ -230,7 +253,8 @@ spec:
   restartPolicy: Never
 EOF"
 
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 3
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=180s >/dev/null 2>&1 || true
+for i in $(seq 1 30); do kubectl logs rogue-ambient-push -n default-tenant >/dev/null 2>&1 || { sleep 5; continue; }; break; done
 pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
 demo_cleanup pod rogue-ambient-push -n default-tenant
 
@@ -245,6 +269,15 @@ fi
 # ACT 2: TASK ADMISSION & CRYPTOGRAPHIC IDENTITY (KYVERNO & SPIRE)
 # ==============================================================================
 if should_run_act 2; then
+# Act 2 needs the demo catalog bundles (pushed+signed per cluster by
+# demo/push-demo-catalog-bundles.sh via setup-demo.sh).
+if [ -z "${CATALOG_TASK_BUNDLE:-}" ] || [ -z "${UNSIGNED_TASK_BUNDLE:-}" ]; then
+  echo "Error: ${CATALOG_BUNDLE_REF_FILE} is missing CATALOG_TASK_BUNDLE/UNSIGNED_TASK_BUNDLE."
+  echo "Run demo/push-demo-catalog-bundles.sh (or demo/setup-demo.sh) first."
+  exit 1
+fi
+# shellcheck disable=SC1090
+. "${CATALOG_BUNDLE_REF_FILE}"
 p "# =================================================================="
 p "# ACT 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)"
 p "# =================================================================="
@@ -256,7 +289,7 @@ p "# 0. Inspect and exercise the Pod label anti-spoofing policy:"
 pe "kubectl get clusterpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.rules'"
 p "# A rogue Pod cannot self-assign trusted-task-role: prod without a TaskRun owner reference."
 kubectl delete pod attacker-label-spoof -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl create -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: v1
 kind: Pod
 metadata:
@@ -275,7 +308,7 @@ demo_cleanup pod attacker-label-spoof -n default-tenant
 
 p "# 1. Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
 p "# Expected: Kyverno admits the task but restricts it to the unprivileged 'dev' role."
-UNTRUSTED_TR=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
+UNTRUSTED_TR=$(cat << 'EOF' | kubectl_create_retry -o jsonpath='{.metadata.name}'
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -339,7 +372,7 @@ spec:
     resolver: bundles
     params:
     - name: bundle
-      value: registry-service.kind-registry/tekton-catalog/demo-unsigned-task@sha256:ce74927e3dabe057fd1a5647b29e394e34bd371f886ef8af7da1d34639209d5b
+      value: ${UNSIGNED_TASK_BUNDLE}
     - name: name
       value: demo-catalog-task
     - name: kind
@@ -352,7 +385,7 @@ wait
 p "# 3. Now submit a cryptographically signed, pinned catalog task bundle (signed with Cosign):"
 p "# Expected: Kyverno verifies the Sigstore bundle signature and promotes the role to 'prod'."
 kubectl delete taskrun demo-signed-task -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl create -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -367,7 +400,7 @@ spec:
     resolver: bundles
     params:
     - name: bundle
-      value: registry-service.kind-registry/tekton-catalog/demo-catalog-task@sha256:ce74927e3dabe057fd1a5647b29e394e34bd371f886ef8af7da1d34639209d5b
+      value: ${CATALOG_TASK_BUNDLE}
     - name: name
       value: demo-catalog-task
     - name: kind
@@ -495,7 +528,7 @@ spec:
     resolver: bundles
     params:
     - name: bundle
-      value: registry-service.kind-registry/tekton-catalog/buildah-oci-ta@sha256:aa9e8d2adcd43db81815560cf268a56e9e951b0417c4826081ac4cd51a542c6c
+      value: ${BUILDAH_TASK_BUNDLE}
     - name: name
       value: buildah-oci-ta
     - name: kind
@@ -541,6 +574,7 @@ metadata:
   labels:
     appstudio.openshift.io/application: demo-app
     appstudio.openshift.io/component: demo-app
+    tekton.dev/task: dev-experiment
     app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskSpec:
@@ -612,13 +646,14 @@ metadata:
   labels:
     appstudio.openshift.io/application: demo-app
     appstudio.openshift.io/component: demo-app
+    tekton.dev/task: trivy-sbom-scan
     app.kubernetes.io/part-of: kubecon-demo
 spec:
   taskRef:
     resolver: bundles
     params:
     - name: bundle
-      value: registry-service.kind-registry/tekton-catalog/trivy-sbom-scan@sha256:54b0dfdbb45355264f130c9ad6a9be91f2104ab56c8aa895f4bb8894248874db
+      value: ${TRIVY_TASK_BUNDLE}
     - name: name
       value: trivy-sbom-scan
     - name: kind
@@ -681,7 +716,7 @@ p "# 0b. The release boundary is now HARDENED with fail-closed label guards:"
 p "#   guard-managed-labels  — only the release-service controller may set the managed markers"
 p "#   guard-task-labels     — only the Tekton controller may set tekton.dev/* labels on TaskRuns"
 p "#   validate-role-labels  — trust labels must survive a recompute of their classification"
-pe "kubectl get clusterpolicy guard-managed-labels,guard-task-labels,validate-role-labels"
+pe "kubectl get clusterpolicy guard-managed-labels guard-task-labels validate-role-labels 2>/dev/null || kubectl get clusterpolicies -o name | grep -E 'guard|validate-role'"
 
 p "# THE ROGUE PIPELINE ATTACK:"
 p "# An attacker (us, as admin) tries to hand-craft a 'managed' release PipelineRun"
@@ -713,7 +748,7 @@ wait
 p "# 1. Create an AppStudio Release Custom Resource in default-tenant:"
 echo -e "   ${CYAN}Release View in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/releases"
 echo ""
-RELEASE_NAME=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
+RELEASE_NAME=$(cat << 'EOF' | kubectl_create_retry -o jsonpath='{.metadata.name}'
 apiVersion: appstudio.redhat.com/v1alpha1
 kind: Release
 metadata:
@@ -742,7 +777,7 @@ echo ""
 CREATE_MANUAL_PR="${CREATE_MANUAL_PR:-0}"
 if [[ "${CREATE_MANUAL_PR}" == "1" ]]; then
 p "# [CREATE_MANUAL_PR=1] Creating the dual-gated PipelineRun directly as the release-service SA..."
-RELEASE_PR=$(cat << 'EOF' | kubectl create --as=system:serviceaccount:release-service:release-service-controller-manager -f - -o jsonpath='{.metadata.name}'
+RELEASE_PR=$(cat << 'EOF' | kubectl_create_retry --as=system:serviceaccount:release-service:release-service-controller-manager -f - -o jsonpath='{.metadata.name}'
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -916,7 +951,12 @@ p "# (EC verification retries make this take several minutes):"
 pe "kubectl wait --for=condition=Succeeded pipelinerun/${RELEASE_PR} -n managed-tenant --timeout=600s"
 
 p "# Inspect the keyless signing execution in the release pod:"
-pe "kubectl logs ${RELEASE_PR}-attach-summary-attestations-pod -n managed-tenant -c step-sign-release-attestation"
+# The release pipeline's attach task names its steps differently from the
+# manual dual-gated PR variant, so search all containers for the signing
+# result instead of naming one.
+kubectl wait --for=condition=Succeeded taskrun/${RELEASE_PR}-attach-summary-attestations -n managed-tenant --timeout=60s >/dev/null 2>&1 || true
+ATTACH_POD=$(kubectl get pod -n managed-tenant -l "tekton.dev/pipeline=${RELEASE_PR}" -o name 2>/dev/null | head -1)
+pe "kubectl logs -n managed-tenant ${ATTACH_POD:-pod/${RELEASE_PR}-attach-summary-attestations-pod} --all-containers 2>/dev/null | grep -iE 'keyless|attestation|rekor' | tail -5 || true"
 
 p "# 3. Inspect the released container image OCI 1.1 referrers in the registry:"
 p "# The release pushed to registry-service.kind-registry/released-demo-app; the VSA attestation"

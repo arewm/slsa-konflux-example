@@ -27,8 +27,8 @@ echo "==> [Demo Cleanup] Cleaning up demo execution artifacts..."
 
 # 1. Delete default-tenant TaskRuns created during demo runs
 echo "  - Deleting demo TaskRuns in default-tenant..."
-kubectl delete taskrun -n default-tenant -l appstudio.openshift.io/application=demo-app --wait=true --ignore-not-found=true 2>/dev/null || true
-kubectl delete taskrun attacker-unsigned-task demo-signed-task demo-sa-token-inspection demo-rogue-push-attempt demo-builder-gated-push demo-untrusted-service-query demo-trusted-scanner-query -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
+kubectl delete taskrun -n default-tenant -l appstudio.openshift.io/application=demo-app --wait=false --ignore-not-found=true 2>/dev/null || true
+kubectl delete taskrun attacker-unsigned-task demo-signed-task demo-sa-token-inspection demo-rogue-push-attempt demo-builder-gated-push demo-untrusted-service-query demo-trusted-scanner-query -n default-tenant --wait=false --ignore-not-found=true 2>/dev/null || true
 
 # 2. Delete test / attacker Pods in default-tenant
 echo "  - Deleting demo test/attacker pods in default-tenant..."

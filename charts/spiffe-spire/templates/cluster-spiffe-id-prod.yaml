@@ -3,6 +3,7 @@ kind: ClusterSPIFFEID
 metadata:
   name: konflux-trusted-prod
 spec:
+  className: spire-spire
   # SPIRE controller manager evaluates this template at runtime (Go templates, not Helm).
   # The backtick block prevents Helm from processing the inner brace expressions.
   # Open question: .ClusterName availability in controller manager context (see design doc).

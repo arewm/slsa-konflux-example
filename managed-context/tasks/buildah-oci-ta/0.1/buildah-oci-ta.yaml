@@ -1,0 +1,44 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: "konflux"
+  name: buildah-oci-ta
+spec:
+  description: >-
+    Demo builder task for the push-gating act: fetches the workload's
+    JWT-SVID for the gated registry audience so the push authorization
+    can be demonstrated. Stands in for the full buildah build task.
+  stepTemplate:
+    volumeMounts:
+      - name: spiffe-workload-api
+        mountPath: /spiffe-workload-api
+        readOnly: true
+  steps:
+    - name: wait-spire
+      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
+      command:
+        - sleep
+        - '10'
+    - name: fetch-jwt
+      image: ghcr.io/spiffe/spire-agent:1.15.3
+      command:
+        - /opt/spire/bin/spire-agent
+        - api
+        - fetch
+        - jwt
+        - -audience
+        - https://registry-oidc.kind-registry:5000
+        - -socketPath
+        - /spiffe-workload-api/spire-agent.sock
+        - -output
+        - json
+  volumes:
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true

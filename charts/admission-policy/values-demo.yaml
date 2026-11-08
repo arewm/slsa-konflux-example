@@ -1,0 +1,16 @@
+# Demo (Act 2) values for the admission-policy chart.
+#
+# Trust the local demo catalog namespace and verify bundle signatures against
+# the per-cluster demo catalog key (attestor demo-catalog-key). The public key
+# itself is NOT committed: it belongs to the cosign keypair that
+# demo/push-demo-catalog-bundles.sh generates per cluster (secret
+# demo-signing-key in kind-registry) and injects at install time with:
+#
+#   --set-file 'trustedBundles[0].signingKeys[0].publicKey'=<cosign.pub>
+#
+# Install via demo/setup-demo.sh (which calls demo/push-demo-catalog-bundles.sh).
+trustedBundles:
+  - pattern: "registry-service.kind-registry/tekton-catalog/*"
+    signingKeys:
+      - name: "demo-catalog-key"
+        publicKey: ""  # injected per-cluster by demo/push-demo-catalog-bundles.sh

@@ -11,6 +11,12 @@ verificationMode: "ivpol"
 # Each entry is matched as a glob prefix against the TaskRun bundle reference.
 # Leave signingKeys empty to configure the pattern without verification
 # (useful before tasks are signed — everything lands on dev).
+# Registry credentials Kyverno uses to fetch manifests for signature
+# verification. Secrets must exist in the Kyverno namespace; the Konflux
+# internal registry auth secret is propagated there by the operator.
+registryCredentials:
+  - internal-registry-client-auth
+
 trustedBundles: []
 # Example:
 #   - pattern: "quay.io/konflux-ci/tekton-catalog/*"

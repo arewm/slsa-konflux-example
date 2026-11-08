@@ -12,11 +12,23 @@ spec:
   failurePolicy: Fail
   validationActions:
     - Deny
+  webhookConfiguration:
+    timeoutSeconds: {{ .Values.webhookTimeoutSeconds | default 30 }}
+  {{- if .Values.registryCredentials }}
+  credentials:
+    secrets:
+      {{- range .Values.registryCredentials }}
+      - {{ . | quote }}
+      {{- end }}
+  {{- end }}
   matchConstraints:
     resourceRules:
       - apiGroups: ["tekton.dev"]
         apiVersions: ["v1", "v1beta1"]
-        operations: ["CREATE", "UPDATE"]
+        # CREATE only: signature verification matters at admission; matching
+        # UPDATE would deny cleanup/finalizer patches on TaskRuns whose
+        # bundle digests were later evicted from the registry.
+        operations: ["CREATE"]
         resources: ["taskruns"]
   {{- $regexParts := list }}
   {{- range .Values.trustedBundles }}

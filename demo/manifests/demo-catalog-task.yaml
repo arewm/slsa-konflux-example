@@ -1,0 +1,1 @@
+{"apiVersion":"tekton.dev/v1","kind":"Task","metadata":{"labels":{"app.kubernetes.io/version":"0.1"},"name":"demo-catalog-task"},"spec":{"steps":[{"image":"alpine:latest","name":"step-catalog","script":"echo \"Catalog Task executed successfully\""}]}}

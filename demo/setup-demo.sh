@@ -18,7 +18,165 @@ for ns in default-tenant managed-tenant kind-registry spire tuf-system rekor-sys
   fi
 done
 
-# 2. Check and synchronize Rekor public key with TUF root secret if needed
+# 2. Verify Trillian/CT-log health; repair if the transparency-log backend lost its data
+# (After a cluster/VM restart the trillian MySQL PVC can be recreated empty. The
+# sigstore-scaffold chart provisions the schema and log trees via Jobs that are
+# garbage-collected after they succeed, so they never re-run on their own.)
+TUF_RESTARTED=0
+CTLOG_STH=$(kubectl run probe-ctlog-sth -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://ctlog.ctlog-system.svc/sigstorescaffolding/ct/v1/get-sth 2>/dev/null || true)
+if ! echo "$CTLOG_STH" | grep -q "tree_size"; then
+  echo "  - CT log is unhealthy (Trillian data lost after restart). Re-initializing transparency logs..."
+  # 2a. Re-apply the Trillian MySQL schema
+  cat <<'EOF' | kubectl delete --ignore-not-found=true -f - >/dev/null 2>&1 || true
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-trillian-createdb
+  namespace: trillian-system
+EOF
+  cat <<'EOF' | kubectl apply -f - >/dev/null
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-trillian-createdb
+  namespace: trillian-system
+spec:
+  template:
+    spec:
+      serviceAccountName: trillian-logserver
+      restartPolicy: Never
+      containers:
+        - name: createdb
+          image: "ghcr.io/sigstore/scaffolding/createdb@sha256:3cee6c78973b82af6c3c3632bf8d44dafbab1632b3999a7292b170237c5dd5cc"
+          env:
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: MYSQL_USER
+              valueFrom: { secretKeyRef: { name: trillian-mysql, key: mysql-user } }
+            - name: MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: trillian-mysql, key: mysql-password } }
+            - name: MYSQL_DATABASE
+              valueFrom: { secretKeyRef: { name: trillian-mysql, key: mysql-database } }
+            - name: MYSQL_HOSTNAME
+              value: trillian-mysql
+            - name: MYSQL_PORT
+              value: "3306"
+            - name: EXIT_DIR
+              value: /var/exitdir
+          args:
+            - "--db_name=$(MYSQL_DATABASE)"
+            - "--mysql_uri=$(MYSQL_USER):$(MYSQL_PASSWORD)@tcp($(MYSQL_HOSTNAME):$(MYSQL_PORT))/"
+          volumeMounts:
+            - name: exit-dir
+              mountPath: /var/exitdir
+      volumes:
+        - name: exit-dir
+          emptyDir: {}
+EOF
+  kubectl wait --for=condition=complete job/demo-trillian-createdb -n trillian-system --timeout=180s
+
+  # 2b. Clear stale tree IDs so the createtree Jobs provision fresh trees
+  kubectl patch cm ctlog-config -n ctlog-system --type=json -p='[{"op":"remove","path":"/data/treeID"}]' >/dev/null 2>&1 || true
+  kubectl patch cm rekor-config -n rekor-system --type=json -p='[{"op":"remove","path":"/data/treeID"}]' >/dev/null 2>&1 || true
+  # createctconfig reuses an existing secret, so it must be regenerated too
+  kubectl delete secret ctlog-secret ctlog-public-key -n ctlog-system --ignore-not-found=true >/dev/null 2>&1 || true
+
+  # 2c. Recreate the ctlog and rekor trees
+  for JOB in ctlog-createtree demo-rekor-createtree; do
+    kubectl delete job "$JOB" -n ctlog-system --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete job "$JOB" -n rekor-system --ignore-not-found=true >/dev/null 2>&1 || true
+  done
+  cat <<'EOF' | kubectl apply -f - >/dev/null
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ctlog-createtree
+  namespace: ctlog-system
+spec:
+  template:
+    spec:
+      serviceAccountName: ctlog-createtree
+      restartPolicy: Never
+      containers:
+        - name: createtree
+          image: "ghcr.io/sigstore/scaffolding/createtree@sha256:e5232e8c9122fcf87260b48f4b05bcb95c35c8aaa57581b42f0fde7460bd3e91"
+          env:
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          args: ["--namespace=$(NAMESPACE)", "--configmap=ctlog-config", "--display_name=ctlog-tree", "--admin_server=trillian-logserver.trillian-system:8091"]
+EOF
+  cat <<'EOF' | kubectl apply -f - >/dev/null
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-rekor-createtree
+  namespace: rekor-system
+spec:
+  template:
+    spec:
+      serviceAccountName: sigstore-scaffold-rekor-createtree
+      restartPolicy: Never
+      containers:
+        - name: createtree
+          image: "ghcr.io/sigstore/scaffolding/createtree@sha256:e5232e8c9122fcf87260b48f4b05bcb95c35c8aaa57581b42f0fde7460bd3e91"
+          env:
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          args: ["--namespace=$(NAMESPACE)", "--configmap=rekor-config", "--display_name=rekortree", "--admin_server=trillian-logserver.trillian-system:8091", "--force=false"]
+EOF
+  kubectl wait --for=condition=complete job/ctlog-createtree -n ctlog-system --timeout=180s
+  kubectl wait --for=condition=complete job/demo-rekor-createtree -n rekor-system --timeout=180s
+
+  # 2d. Regenerate the CT log signing config (keys + tree ID)
+  cat <<'EOF' | kubectl apply -f - >/dev/null
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: demo-ctlog-createctconfig
+  namespace: ctlog-system
+spec:
+  template:
+    spec:
+      serviceAccountName: sigstore-scaffold-ctlog-createctconfig
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-createtree-configmap
+          image: "docker.io/curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40"
+          command: ["sh", "-c", "until curl --fail --header \"Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)\" --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt --max-time 10 https://kubernetes.default.svc/api/v1/namespaces/$(NAMESPACE)/configmaps/ctlog-config | grep '\"treeID\":'; do echo waiting for Configmap ctlog-config; sleep 5; done;"]
+          env:
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+      containers:
+        - name: createctconfig
+          image: "ghcr.io/sigstore/scaffolding/createctconfig:v0.7.31@sha256:3a061734c5be610d69830ea1e223bd6a8b86bc262b67ff7409147d7db698df51"
+          env:
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          args: ["--configmap=ctlog-config", "--secret=ctlog-secret", "--pubkeysecret=ctlog-public-key", "--fulcio-url=http://fulcio-server.fulcio-system.svc", "--trillian-server=trillian-logserver.trillian-system:8091", "--log-prefix=sigstorescaffolding"]
+EOF
+  kubectl wait --for=condition=complete job/demo-ctlog-createctconfig -n ctlog-system --timeout=180s
+
+  # 2e. Restart the transparency-log consumers
+  kubectl rollout restart deployment/ctlog -n ctlog-system
+  kubectl rollout restart deployment/rekor-server -n rekor-system
+  kubectl rollout restart deployment/fulcio-server -n fulcio-system
+  kubectl rollout status deployment/ctlog -n ctlog-system --timeout=120s
+  kubectl rollout status deployment/rekor-server -n rekor-system --timeout=120s
+  kubectl rollout status deployment/fulcio-server -n fulcio-system --timeout=120s
+
+  # 2f. Refresh the key copies TUF serves (the TUF server re-signs on restart,
+  # which also rotates its root — handled below by restarting chains)
+  CTLOG_PK=$(kubectl get secret ctlog-public-key -n ctlog-system -o jsonpath='{.data.public}' | base64 -d)
+  kubectl create secret generic ctlog-public-key -n tuf-system --from-literal=public="$CTLOG_PK" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl rollout restart deployment/sigstore-scaffold-tuf-tuf -n tuf-system
+  kubectl rollout status deployment/sigstore-scaffold-tuf-tuf -n tuf-system --timeout=60s
+  TUF_RESTARTED=1
+  echo "  - Transparency logs re-initialized."
+else
+  echo "  - CT log is healthy."
+fi
+
+# 2g. Check and synchronize Rekor public key with TUF root secret if needed
 echo "==> [Demo Setup] Checking Rekor public key synchronization with TUF root..."
 REKOR_PK=$(kubectl run probe-rekor-pk -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s http://rekor-server.rekor-system.svc.cluster.local/api/v1/log/publicKey 2>/dev/null || true)
 if [ -n "$REKOR_PK" ]; then
@@ -28,8 +186,22 @@ if [ -n "$REKOR_PK" ]; then
     kubectl create secret generic rekor-public-key -n tuf-system --from-literal=key="$REKOR_PK" --dry-run=client -o yaml | kubectl apply -f -
     kubectl rollout restart deployment/sigstore-scaffold-tuf-tuf -n tuf-system
     kubectl rollout status deployment/sigstore-scaffold-tuf-tuf -n tuf-system --timeout=60s
+    TUF_RESTARTED=1
   else
     echo "  - Rekor public key is aligned with TUF root."
+  fi
+fi
+
+# 2h. If TUF was restarted, force Tekton Chains to re-bootstrap TUF trust.
+# (The scaffolding TUF server re-signs its repository on restart, rotating the
+# root key. Chains caches TUF metadata in an emptyDir, so a pod restart is
+# needed for trust-on-first-use with the new root. Deleting the pod directly
+# is required: the Tekton operator reverts `kubectl rollout restart`.)
+if [ "${TUF_RESTARTED}" = "1" ]; then
+  echo "  - TUF restarted; restarting Tekton Chains to refresh TUF trust..."
+  CHAINS_POD=$(kubectl get pods -n tekton-pipelines -l app=tekton-chains-controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+  if [ -n "${CHAINS_POD}" ]; then
+    kubectl delete pod "${CHAINS_POD}" -n tekton-pipelines
   fi
 fi
 
@@ -119,6 +291,9 @@ kubectl patch tektonconfig config --type=merge -p '{
               "signers.x509.tuf.mirror.url": "http://tuf-server.tuf-system.svc.cluster.local",
               "signers.x509.rekor.address": "http://rekor-server.rekor-system.svc.cluster.local",
               "artifacts.oci.signer": "none",
+              "artifacts.taskrun.storage": "oci",
+              "artifacts.pipelinerun.storage": "oci",
+              "artifacts.oci.storage": "oci",
               "storage.oci.encoding-format": "sigstore-bundle"
             }
           }
@@ -148,6 +323,10 @@ kubectl rollout status deployment/registry-oidc -n kind-registry --timeout=60s
 echo "==> [Demo Setup] Deploying CVE Database Service..."
 kubectl apply -f "${SCRIPT_DIR}/manifests/cve-database-service.yaml"
 kubectl rollout status deployment/cve-database-service -n services --timeout=60s
+
+# 4b. Publish and sign the Act 2 demo catalog task bundles
+echo "==> [Demo Setup] Publishing and signing demo catalog task bundles..."
+"${SCRIPT_DIR}/push-demo-catalog-bundles.sh"
 
 # 5. Deploy dedicated Demo Application via component-onboarding Helm chart
 echo "==> [Demo Setup] Deploying demo-app via charts/component-onboarding..."

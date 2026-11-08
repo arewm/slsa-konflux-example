@@ -29,10 +29,14 @@ demo/
 ├── setup-demo.sh                  # Pre-flight setup: syncs Rekor/TUF, deploys OIDC Zot, CVE service, and demo-app
 ├── serve-slides.sh                # Multi-port ttyd web terminal launcher for slide embeds (ports 7680-7684)
 ├── run-demo.sh                    # Interactive live demonstration script (Acts 0 through 4)
+├── push-demo-catalog-bundles.sh   # Publishes & signs the Act 2 demo catalog task bundles (idempotent)
 ├── cleanup-demo.sh                # Synchronous, idempotent cleanup script
 ├── demo-magic.sh                  # Terminal presentation helper (simulated typing & clicker support)
 └── manifests/
     ├── snapshot.yaml              # AppStudio Snapshot manifest for demo-app releases
+    ├── demo-catalog-task.yaml     # Act 2 signed catalog task definition (bundle source)
+    ├── demo-unsigned-task.yaml    # Act 2 unsigned attacker-spoof task definition (same content)
+    ├── catalog-bundle-ref         # Digest-pinned bundle refs written by push-demo-catalog-bundles.sh
     ├── zot-oidc.yaml              # OIDC-authenticated Zot registry deployment & access policy
     ├── cve-database-service.yaml  # Secretless mock CVE database service (OIDC JWT validator)
     ├── separation_of_duties.rego  # Conforma Rego policy enforcing role-scoped attestations
@@ -200,6 +204,20 @@ fetch("http://localhost:7681", { mode: "no-cors" })
 1. **The Ambient Authority Flaw**: Inspects standard Kubernetes `ServiceAccount` projected tokens (`system:serviceaccount:default-tenant:default`). All tasks running under this service account share identical ambient permissions.
 2. **Ambient Secret Hijack & Registry Tag Overwrite**: An unvetted pod mounts the ambient `regcred` secret and overwrites `slsa-e2e-test:latest` in the registry with a malicious backdoor payload.
 3. **Registry Verification**: Inspects the overwritten artifact in the registry to show that ambient credentials undermine artifact integrity.
+
+#### Act 2 Prerequisites: Demo Catalog Task Bundles
+
+Act 2 references two task bundles in the local registry under `tekton-catalog/`:
+
+- `demo-catalog-task` — a trivial catalog task that is **Cosign-signed** with the demo catalog key. `verify-bundle-signatures` verifies its signature at admission and promotes it to `trusted-task-role: prod`.
+- `demo-unsigned-task` — the **same task content, left unsigned** (the "attacker spoof" case). It matches the trusted catalog pattern but has no valid signature, so admission is denied.
+
+The task definitions are checked in at `demo/manifests/demo-catalog-task.yaml` and `demo/manifests/demo-unsigned-task.yaml` (identical content; only the signing differs). `demo/setup-demo.sh` calls `demo/push-demo-catalog-bundles.sh`, which:
+
+1. Ensures the demo signing keypair exists (secret `demo-signing-key` with `cosign.key`/`cosign.pub` in `kind-registry`; generated on first use per cluster — a fresh cluster gets a fresh key, which is fine since signing and verification are configured from the same key).
+2. Pushes both bundles to the local registry with `tkn bundle push` and records the resulting digest-pinned refs in `demo/manifests/catalog-bundle-ref` (digests are content-addressed but not stable across `tkn` versions, so `run-demo.sh` reads them from that file instead of hardcoded pins).
+3. Signs only `demo-catalog-task` (key-based cosign signature, no Rekor upload — matching the policy's `insecureIgnoreTlog`).
+4. Installs/upgrades the `admission-policy` chart with `trustedBundles` matching `registry-service.kind-registry/tekton-catalog/*` and attestor `demo-catalog-key` bound to the cluster's `cosign.pub` (see `charts/admission-policy/values-demo.yaml`).
 
 ### Act 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)
 1. **Kyverno Classification Rules & Anti-Spoofing**: Inspects Kyverno's `classify-taskrun` policy and tests `prevent-pod-label-spoofing`, showing that pods cannot self-assign production labels.
