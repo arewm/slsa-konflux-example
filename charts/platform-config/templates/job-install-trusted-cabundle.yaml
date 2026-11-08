@@ -1,0 +1,90 @@
+{{- if .Values.trustedCABundle.enabled }}
+{{- $endpoint := .Values.trustedCABundle.registryEndpoint }}
+{{- if not $endpoint }}
+{{- $host := (split "/" .Values.release.trustedArtifacts.ociStorage)._0 }}
+{{- $endpoint = printf "%s:443" $host }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: install-trusted-cabundle
+  namespace: {{ .Values.release.targetNamespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: install-trusted-cabundle
+    spec:
+      serviceAccountName: cabundle-installer
+      restartPolicy: Never
+      containers:
+      - name: install-cabundle
+        image: quay.io/konflux-ci/task-runner:2.1.0@sha256:c34c933c269e2401bb042fe69e2999cf288331b6586d4f4eca9c845270d9b1f9
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+
+          REGISTRY_ENDPOINT="{{ $endpoint }}"
+          CONFIGMAP_NAME="config-trusted-cabundle"
+          NAMESPACES=("{{ .Values.namespace }}" "{{ .Values.release.targetNamespace }}")
+
+          echo "Extracting CA certificate from registry: ${REGISTRY_ENDPOINT}"
+
+          if ! command -v openssl &>/dev/null; then
+            echo "ERROR: openssl is not available in this image"
+            exit 1
+          fi
+
+          CERTS=$(echo | openssl s_client -showcerts -connect "${REGISTRY_ENDPOINT}" \
+            -servername "${REGISTRY_ENDPOINT%%:*}" 2>/dev/null)
+
+          if [ -z "$CERTS" ]; then
+            echo "ERROR: Failed to connect to registry at ${REGISTRY_ENDPOINT}"
+            exit 1
+          fi
+
+          CA_BUNDLE=$(echo "$CERTS" | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p')
+
+          if [ -z "$CA_BUNDLE" ]; then
+            echo "ERROR: No certificates found in registry response"
+            exit 1
+          fi
+
+          echo "Certificate details:"
+          echo "$CA_BUNDLE" | openssl x509 -noout -subject -issuer -dates 2>/dev/null || true
+          echo ""
+
+          # Append Fulcio root CA if the Sigstore scaffold chart has been deployed.
+          # The scaffold chart stores the Fulcio signing CA in fulcio-server-secret.
+          FULCIO_CA=$(kubectl get secret fulcio-server-secret \
+            -n fulcio-system \
+            -o jsonpath='{.data.cert}' 2>/dev/null | base64 -d || true)
+          if [ -n "${FULCIO_CA}" ]; then
+            echo "Appending Fulcio root CA from fulcio-system/fulcio-server-secret"
+            CA_BUNDLE="${CA_BUNDLE}"$'\n'"${FULCIO_CA}"
+          else
+            echo "Sigstore not deployed or fulcio-server-secret not found; skipping Fulcio CA"
+          fi
+
+          for NS in "${NAMESPACES[@]}"; do
+            echo "Creating ${CONFIGMAP_NAME} in namespace ${NS}..."
+
+            kubectl delete configmap "${CONFIGMAP_NAME}" \
+              -n "${NS}" \
+              --ignore-not-found=true
+
+            kubectl create configmap "${CONFIGMAP_NAME}" \
+              --from-literal="ca-bundle.crt=${CA_BUNDLE}" \
+              --namespace="${NS}"
+
+            echo "ConfigMap ${CONFIGMAP_NAME} created in ${NS}"
+          done
+
+          echo ""
+          echo "Trusted CA bundle installed. Tekton will mount it at /tekton-custom-certs/ca-bundle.crt"
+{{- end }}

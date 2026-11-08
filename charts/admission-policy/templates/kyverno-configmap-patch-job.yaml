@@ -1,0 +1,118 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kyverno-configmap-patcher
+  namespace: default
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-configmap-patcher
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["kyverno"]
+  verbs: ["get", "patch"]
+  # Scoped to the kyverno namespace via ClusterRoleBinding subject restriction;
+  # ClusterRole because we need cross-namespace access from the default SA.
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["kyverno-admission-controller"]
+  verbs: ["patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/status"]
+  resourceNames: ["kyverno-admission-controller"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kyverno-configmap-patcher
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kyverno-configmap-patcher
+subjects:
+- kind: ServiceAccount
+  name: kyverno-configmap-patcher
+  namespace: default
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kyverno-configmap-patch
+  namespace: default
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    metadata:
+      name: kyverno-configmap-patch
+    spec:
+      serviceAccountName: kyverno-configmap-patcher
+      restartPolicy: Never
+      containers:
+      - name: patch
+        image: docker.io/alpine/k8s:1.32.3
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -euo pipefail
+
+          EXTRACTORS=$(kubectl get cm kyverno -n kyverno -o jsonpath='{.data.imageExtractors}' 2>/dev/null || true)
+
+          if echo "${EXTRACTORS}" | grep -q "tekton.dev/v1/TaskRun"; then
+            echo "imageExtractors already contains TaskRun entry; skipping patch."
+            exit 0
+          fi
+
+          # Two extraction paths:
+          # 1. resolver: bundles style (Tekton v1 current) — bundle ref is in spec.taskRef.params[?name=="bundle"].value
+          # 2. direct bundle style (deprecated) — bundle ref is spec.taskRef.bundle
+          PATCH=$(cat <<'EOF'
+          tekton.dev/v1/TaskRun:
+            - path: /spec/taskRef/params
+              name: "bundle"
+              key: "name"
+              value: "value"
+              jmesPath: "[?name == 'bundle'] | [0].value"
+            - path: /spec/taskRef/bundle
+              name: "bundle"
+              key: "bundle"
+          tekton.dev/v1beta1/TaskRun:
+            - path: /spec/taskRef/params
+              name: "bundle"
+              key: "name"
+              value: "value"
+              jmesPath: "[?name == 'bundle'] | [0].value"
+            - path: /spec/taskRef/bundle
+              name: "bundle"
+              key: "bundle"
+          EOF
+          )
+
+          CURRENT=$(kubectl get cm kyverno -n kyverno -o jsonpath='{.data.imageExtractors}' 2>/dev/null || echo "")
+          MERGED="${CURRENT}"$'\n'"${PATCH}"
+
+          kubectl patch cm kyverno -n kyverno --type=merge \
+            -p "{\"data\":{\"imageExtractors\":$(echo "${MERGED}" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}}"
+
+          # Kyverno caches imageExtractors at startup; restart required to pick up the new config.
+          kubectl rollout restart deployment/kyverno-admission-controller -n kyverno
+          kubectl rollout status deployment/kyverno-admission-controller -n kyverno --timeout=120s

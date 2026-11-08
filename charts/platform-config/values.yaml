@@ -1,0 +1,146 @@
+# Default values for platform-config
+# Platform configuration for Konflux tenant setup - install once per tenant
+
+# Cluster configuration
+# Set to false when deploying to managed clusters without cluster-admin access
+# This will skip resources that require cluster-level permissions (e.g., ClusterRole bindings)
+requiresClusterAdmin: true
+
+# Repository URL for slsa-konflux-example (used for pipelines and policy data)
+# This can be customized for forks or local development
+repositoryUrl: "https://github.com/arewm/slsa-konflux-example"
+
+# User and namespace configuration
+# default-tenant is created by the Konflux operator
+# managed-tenant must be created using scripts/setup-prerequisites.sh before installing this chart
+
+# List of users to grant admin access in the tenant namespace
+# Each user will get a RoleBinding to konflux-admin-user-actions
+# and a ClusterRoleBinding for self-access-reviewer (if requiresClusterAdmin is true)
+users:
+  - user1
+
+# List of users to grant admin access in the target (managed) namespace
+# Typically different from tenant users for proper separation of concerns
+targetUsers:
+  - user2
+
+# Create release-pipeline service account in the tenant namespace
+# This is needed for release operations from the tenant context
+createReleaseServiceAccount: true
+
+# Namespace configuration
+# IMPORTANT: These values must match between platform-config and component-onboarding charts
+namespace: "default-tenant"
+
+# Release configuration
+release:
+  # Target namespace for ReleasePlanAdmission and EnterpriseContractPolicy
+  # This is where the release plan admission will be created (managed namespace)
+  # IMPORTANT: Must match component-onboarding chart
+  targetNamespace: "managed-tenant"
+
+  # Enterprise Contract policy name
+  # IMPORTANT: Must match component-onboarding chart
+  policyName: "ec-policy"
+
+  # Service account for release pipeline
+  # IMPORTANT: Must match component-onboarding chart
+  serviceAccount: "release-service-account"
+
+  # Trusted artifacts configuration
+  trustedArtifacts:
+    # OCI repository for storing trusted artifacts
+    # This is where intermediate build artifacts are stored during release
+    # Examples:
+    #   - For KinD: "registry-service.kind-registry/trusted-artifacts"
+    #   - For Quay: "quay.io/myorg/trusted-artifacts"
+    # Default: registry-service.kind-registry/trusted-artifacts
+    ociStorage: "registry-service.kind-registry/trusted-artifacts"
+
+    # Username for trusted artifacts registry authentication
+    # Required when using external registries (leave empty for internal KinD registry)
+    username: ""
+
+    # Password/token for trusted artifacts registry authentication
+    # Required when using external registries (leave empty for internal KinD registry)
+    password: ""
+
+  # Pipeline configuration
+  pipeline:
+    # Git repository URL for the pipeline
+    # Defaults to .Values.repositoryUrl
+    url: ""
+
+    # Git revision/branch for the pipeline
+    # Default: main
+    revision: "main"
+
+    # Path to the pipeline YAML in the repository
+    # Default: managed-context/pipelines/slsa-e2e-release/slsa-e2e-release.yaml
+    pathInRepo: "managed-context/pipelines/slsa-e2e-release/slsa-e2e-release.yaml"
+
+  # Enterprise Contract policy name
+  # Must match the policyName used in component-onboarding chart installations
+  policyName: "ec-policy"
+
+  # Base image verification configuration
+  # Used to verify the base image's release signature and provenance,
+  # and include dependency levels in the generated VSA.
+  baseImageVerification:
+    # Enable base image verification during VSA generation
+    # When true, creates a ConfigMap with verification keys in the managed namespace
+    enabled: false
+
+    # Expected builder ID in base image provenance
+    # For Konflux/Red Hat images: https://tekton.dev/chains/v2
+    builderId: "https://tekton.dev/chains/v2"
+
+    # Path to the public key for verifying base image release signatures
+    # Relative to the chart directory. Replace the file to use a different key.
+    # Default: Red Hat release3 key (https://access.redhat.com/security/team/key/#702D426D)
+    releaseKeyFile: "keys/base-image-release.pub"
+
+    # Path to the public key for verifying base image provenance attestations
+    # Relative to the chart directory. Replace the file to use a different key.
+    # Default: Konflux Tekton Chains ECDSA signing key
+    provenanceKeyFile: "keys/base-image-provenance.pub"
+
+# Release signing configuration
+# Used for signing release-time attestations (VSAs, SBOMs, etc.)
+# Separate from build-time Tekton Chains signing for proper trust boundary separation
+signing:
+  # Enable release signing key generation
+  # When true, creates a cosign key-pair and stores in managed namespace secrets
+  # This key is used for:
+  #   - VSA (Verification Summary Attestation) signing
+  #   - Release SBOM attestations
+  #   - Other release-time signatures
+  # Default: true (required for VSA generation and release attestations)
+  enableSigning: true
+
+  # Name of the secret containing release signing keys
+  # This secret will be created in the managed namespace (release.targetNamespace)
+  # The secret contains: cosign.key (private key) and cosign.pub (public key)
+  # Default: release-signing-key
+  signingSecretName: "release-signing-key"
+
+  # Generate new signing keys on each helm install
+  # Set to false to preserve existing keys across upgrades
+  # WARNING: Setting to true will regenerate keys, invalidating all previous signatures
+  # Default: false (preserve existing keys)
+  regenerateKeys: false
+
+# Trusted CA bundle configuration for internal registries with self-signed certificates
+# When enabled, a pre-install Job extracts the registry's CA certificate via openssl
+# and creates config-trusted-cabundle ConfigMaps that Tekton Pipelines automatically
+# mounts into task pods for TLS verification
+trustedCABundle:
+  # Enable auto-detection and creation of CA bundle ConfigMaps
+  # Required when using an internal registry with self-signed TLS certificates (e.g., KinD)
+  # Not needed for production clusters using publicly-trusted CAs
+  enabled: true
+
+  # Registry host:port to connect to for certificate extraction
+  # Defaults to the hostname from release.trustedArtifacts.ociStorage with port 443
+  registryEndpoint: ""

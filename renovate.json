@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["on the first day of the month"],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 1,
+  "labels": ["dependencies"],
+  "automerge": false,
+  "packageRules": [
+    {
+      "description": "Tekton task bundle digests",
+      "matchManagers": ["regex"],
+      "matchPackagePatterns": ["quay.io/konflux-ci/tekton-catalog/.*"],
+      "groupName": "tekton-task-bundles"
+    },
+    {
+      "description": "Conforma CLI",
+      "matchPackagePatterns": ["quay.io/conforma/cli"],
+      "groupName": "conforma"
+    },
+    {
+      "description": "All container image digests",
+      "matchManagers": ["regex"],
+      "matchPackagePatterns": ["quay.io/.*"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["managed-context/.*\\.yaml$", "scripts/.*\\.sh$", "charts/.*\\.yaml$"],
+      "matchStrings": [
+        "(?<depName>quay\\.io/[^:]+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

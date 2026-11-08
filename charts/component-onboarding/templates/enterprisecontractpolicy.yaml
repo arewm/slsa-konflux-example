@@ -1,0 +1,64 @@
+{{- $applicationName := .Values.applicationName | default .Values.componentName }}
+{{- $policyData := .Values.release.policy.policyData | default (printf "%s//managed-context/policies/ec-policy-data/data" (.Values.repositoryUrl | replace "https://github.com/" "github.com/")) }}
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: EnterpriseContractPolicy
+metadata:
+  name: {{ $applicationName }}-{{ .Values.release.policyName }}
+  namespace: {{ .Values.release.targetNamespace }}
+spec:
+  description: SLSA policy for {{ $applicationName }}
+{{- if .Values.release.signing.publicKey }}
+  publicKey: {{ .Values.release.signing.publicKey | quote }}
+{{- end }}
+  sources:
+    - name: Release Policies
+      policy:
+        - oci::{{ .Values.release.policy.policyBundle }}
+        - {{ .Values.repositoryUrl | replace "https://github.com/" "github.com/" }}//managed-context/policies/ec-policy-data/policy/custom/slsa_source_verification?ref={{ .Values.release.pipeline.revision | default "main" }}
+      data:
+        - {{ $policyData }}
+        - {{ .Values.release.policy.acceptableBundles }}
+{{- if or .Values.release.policy.slsaSourceMinLevel .Values.release.policy.restrictUnpatchedCveLevels }}
+      ruleData:
+{{- if .Values.release.policy.slsaSourceMinLevel }}
+        slsa_source_min_level: {{ .Values.release.policy.slsaSourceMinLevel | quote }}
+{{- end }}
+{{- if .Values.release.policy.restrictUnpatchedCveLevels }}
+        restrict_unpatched_cve_security_levels:
+{{- range .Values.release.policy.restrictUnpatchedCveLevels }}
+          - {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+      config:
+        include:
+{{- if .Values.release.policy.policyCollections }}
+{{- range .Values.release.policy.policyCollections }}
+          - '@{{ . }}'
+{{- end }}
+{{- else }}
+          - '@slsa3'
+{{- end }}
+          - '@slsa_source'
+{{- if .Values.release.policy.excludeRules }}
+        exclude:
+{{- range .Values.release.policy.excludeRules }}
+          - '{{ . }}'
+{{- end }}
+{{- end }}
+{{- if .Values.release.policy.volatileExcludes }}
+      volatileConfig:
+        exclude:
+{{- range .Values.release.policy.volatileExcludes }}
+          - value: '{{ .value }}'
+{{- if .effectiveOn }}
+            effectiveOn: '{{ .effectiveOn }}'
+{{- end }}
+{{- if .effectiveUntil }}
+            effectiveUntil: '{{ .effectiveUntil }}'
+{{- end }}
+{{- if .reference }}
+            reference: '{{ .reference }}'
+{{- end }}
+{{- end }}
+{{- end }}

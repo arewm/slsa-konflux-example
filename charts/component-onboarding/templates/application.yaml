@@ -1,0 +1,8 @@
+{{- $applicationName := .Values.applicationName | default .Values.componentName }}
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Application
+metadata:
+  name: {{ $applicationName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  displayName: {{ .Values.displayName | default $applicationName }}

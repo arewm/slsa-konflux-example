@@ -1,0 +1,28 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: prevent-pod-label-spoofing
+spec:
+  failurePolicy: Fail
+  validationFailureAction: Enforce
+  rules:
+  - name: require-taskrun-owner
+    match:
+      any:
+      - resources:
+          kinds: ["Pod"]
+          operations: ["CREATE"]
+          namespaces: {{ .Values.namespaces | toJson }}
+    # selector in match.resources is not reliable at admission time; use preconditions instead
+    preconditions:
+      all:
+      - key: "{{`{{ request.object.metadata.labels.\"trusted-task-role\" || '' }}`}}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: "Pods with trusted-task-role label must be owned by a TaskRun"
+      pattern:
+        metadata:
+          ownerReferences:
+          - kind: TaskRun

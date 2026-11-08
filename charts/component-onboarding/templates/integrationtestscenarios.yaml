@@ -1,0 +1,57 @@
+{{- $applicationName := .Values.applicationName | default .Values.componentName }}
+---
+apiVersion: appstudio.redhat.com/v1beta2
+kind: IntegrationTestScenario
+metadata:
+  name: {{ $applicationName }}-policy-pr
+  namespace: {{ .Values.namespace }}
+spec:
+  application: {{ $applicationName }}
+  contexts:
+    - name: pull_request
+      description: "PR source branches are not protected"
+  resolverRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/konflux-ci/build-definitions
+      - name: revision
+        value: {{ .Values.integrationTest.revision }}
+      - name: pathInRepo
+        value: pipelines/enterprise-contract.yaml
+  params:
+    - name: POLICY_CONFIGURATION
+      value: {{ .Values.release.targetNamespace }}/{{ $applicationName }}-{{ .Values.release.policyName }}
+    - name: PUBLIC_KEY
+      value: {{ .Values.release.signing.publicKey | quote }}
+    - name: STRICT
+      value: "true"
+    - name: EXTRA_RULE_DATA
+      value: "slsa_source_min_level={{ .Values.integrationTest.prSourceMinLevel | default "1" }}"
+---
+apiVersion: appstudio.redhat.com/v1beta2
+kind: IntegrationTestScenario
+metadata:
+  name: {{ $applicationName }}-policy-push
+  namespace: {{ .Values.namespace }}
+spec:
+  application: {{ $applicationName }}
+  contexts:
+    - name: push
+      description: "Validate push builds with strict policy (matches release requirements)"
+  resolverRef:
+    resolver: git
+    params:
+      - name: url
+        value: https://github.com/konflux-ci/build-definitions
+      - name: revision
+        value: {{ .Values.integrationTest.revision }}
+      - name: pathInRepo
+        value: pipelines/enterprise-contract.yaml
+  params:
+    - name: POLICY_CONFIGURATION
+      value: {{ .Values.release.targetNamespace }}/{{ $applicationName }}-{{ .Values.release.policyName }}
+    - name: PUBLIC_KEY
+      value: {{ .Values.release.signing.publicKey | quote }}
+    - name: STRICT
+      value: "true"
