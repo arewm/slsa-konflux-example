@@ -1,0 +1,184 @@
+---
+# Post-install job that configures Vault's JWT auth method against SPIRE's
+# OIDC discovery endpoint, creates the scanner role bound to a specific
+# SPIFFE ID, the read-only policy, and the legacy KV v2 secret.
+#
+# The SPIRE root CA is needed because the in-cluster discovery provider URL
+# serves TLS with a certificate rooted in the SPIRE bundle ("oidc_discovery_ca_pem").
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-legacy-configurator
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vault-legacy-configurator
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+# Primary: fetch the live SPIRE bundle from the server
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  resourceNames: ["{{ .Values.spire.serverPod }}"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["pods"]
+  resourceNames: ["{{ .Values.spire.serverPod }}"]
+  verbs: ["get"]
+# Fallback: read the synced bundle ConfigMap
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["{{ .Values.spire.bundleConfigMap.name }}"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-legacy-configurator
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vault-legacy-configurator
+subjects:
+- kind: ServiceAccount
+  name: vault-legacy-configurator
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-legacy-config
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      name: vault-legacy-config
+    spec:
+      serviceAccountName: vault-legacy-configurator
+      restartPolicy: Never
+      containers:
+      - name: configure
+        image: {{ .Values.configJobImage | quote }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -euo pipefail
+
+          VAULT_ADDR="http://vault-legacy-exchange.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.vault.servicePort }}"
+          VAULT_TOKEN="{{ .Values.vault.devRootToken }}"
+
+          echo "Waiting for Vault to become ready at ${VAULT_ADDR}..."
+          for i in $(seq 1 60); do
+            if python3 -c "
+          import sys, urllib.request
+          try:
+              urllib.request.urlopen('${VAULT_ADDR}/v1/sys/health', timeout=2)
+          except urllib.error.HTTPError:
+              sys.exit(0)  # any HTTP response means the API is serving
+          " 2>/dev/null; then
+              echo "  Vault is up."
+              break
+          fi
+          sleep 2
+          done
+
+          echo "Fetching SPIRE root CA bundle..."
+          BUNDLE=$(kubectl exec -n {{ .Values.spire.namespace }} {{ .Values.spire.serverPod }} -c {{ .Values.spire.serverContainer }} -- /opt/spire/bin/spire-server bundle show 2>/dev/null || true)
+          if [ -z "${BUNDLE}" ]; then
+            echo "  (fallback) reading bundle from ConfigMap {{ .Values.spire.bundleConfigMap.namespace }}/{{ .Values.spire.bundleConfigMap.name }}"
+            BUNDLE=$(kubectl get configmap {{ .Values.spire.bundleConfigMap.name }} -n {{ .Values.spire.bundleConfigMap.namespace }} -o jsonpath='{.data.{{ .Values.spire.bundleConfigMap.key }}}')
+          fi
+          if ! echo "${BUNDLE}" | grep -q "BEGIN CERTIFICATE"; then
+            echo "Error: could not obtain a SPIRE CA bundle" >&2
+            exit 1
+          fi
+          echo "  Obtained SPIRE bundle ($(echo "${BUNDLE}" | grep -c 'BEGIN CERTIFICATE') certificate(s))."
+
+          BUNDLE="${BUNDLE}" VAULT_ADDR="${VAULT_ADDR}" VAULT_TOKEN="${VAULT_TOKEN}" python3 << 'PYEOF'
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          addr = os.environ["VAULT_ADDR"]
+          token = os.environ["VAULT_TOKEN"]
+          bundle = os.environ["BUNDLE"]
+
+          def call(method, path, body=None, ok=(200,)):
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(
+                  addr + path, data=data, method=method,
+                  headers={"X-Vault-Token": token,
+                           "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return resp.status, json.loads(resp.read() or b"{}")
+              except urllib.error.HTTPError as e:
+                  return e.code, json.loads(e.read() or b"{}")
+
+          # 1. Enable the JWT auth method (idempotent: ignore "path in use")
+          status, out = call("POST", "/v1/sys/auth/jwt", {"type": "jwt"})
+          if status not in (200, 204) and "path is already in use" not in out.get("errors", [""])[0]:
+              print("auth enable:", status, out); sys.exit(1)
+          print("  JWT auth method enabled at auth/jwt")
+
+          # 2. Point it at SPIRE's OIDC discovery provider, trusting the SPIRE CA
+          status, out = call("POST", "/v1/auth/jwt/config", {
+              "oidc_discovery_url": "{{ .Values.oidcDiscoveryUrl }}",
+              "oidc_discovery_ca_pem": bundle,
+          })
+          if status not in (200, 204):
+              print("jwt config:", status, out); sys.exit(1)
+          print("  OIDC discovery configured: {{ .Values.oidcDiscoveryUrl }}")
+
+          # 3. Scanner role: audience + EXACT subject (SPIFFE ID) binding
+          status, out = call("POST", "/v1/auth/jwt/role/{{ .Values.jwtAuth.roleName }}", {
+              "role_type": "jwt",
+              "bound_audiences": {{ .Values.jwtAuth.boundAudiences | toJson }},
+              "user_claim": "{{ .Values.jwtAuth.userClaim }}",
+              "bound_subject": "{{ .Values.jwtAuth.boundSubject }}",
+              "token_policies": {{ .Values.jwtAuth.tokenPolicies | toJson }},
+              "token_ttl": "{{ .Values.jwtAuth.tokenTtl }}",
+              "token_max_ttl": "{{ .Values.jwtAuth.tokenMaxTtl }}",
+          })
+          if status not in (200, 204):
+              print("role:", status, out); sys.exit(1)
+          print("  Role '{{ .Values.jwtAuth.roleName }}' bound to subject {{ .Values.jwtAuth.boundSubject }}")
+
+          # 4. Read-only policy for exactly the legacy credential path
+          policy = '''
+          path "secret/data/{{ .Values.legacySecret.path }}" {
+            capabilities = ["read"]
+          }
+          '''
+          status, out = call("PUT", "/v1/sys/policies/acl/{{ .Values.policyName }}",
+                            {"policy": policy})
+          if status not in (200, 204):
+              print("policy:", status, out); sys.exit(1)
+          print("  Policy '{{ .Values.policyName }}' allows read of secret/data/{{ .Values.legacySecret.path }} only")
+
+          # 5. Seed the legacy static credential (KV v2)
+          status, out = call("POST", "/v1/secret/data/{{ .Values.legacySecret.path }}",
+                            {"data": {{ .Values.legacySecret.data | toJson }}})
+          if status not in (200, 204):
+              print("secret:", status, out); sys.exit(1)
+          print("  Legacy credential seeded at secret/{{ .Values.legacySecret.path }}")
+
+          print("Vault configuration complete.")
+          PYEOF

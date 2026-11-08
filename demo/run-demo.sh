@@ -671,6 +671,45 @@ p "#   2. Precise SPIRE pod selector matching ONLY the attachment task (task=att
 pe "kubectl get clusterpolicy classify-release-authority -o yaml 2>/dev/null | yq '.spec.rules'"
 pe "kubectl get clusterspiffeid konflux-release-authority -o yaml 2>/dev/null | yq '.spec'"
 
+p "# 0. Clean slate: remove leftover Rekor query jobs and failed pods from prior runs"
+kubectl delete job query-rekor-demo -n default --wait=true --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete pod -n default-tenant -l app.kubernetes.io/part-of=kubecon-demo --field-selector=status.phase=Failed --wait=true --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete pod -n default --field-selector=status.phase=Failed --wait=true --ignore-not-found=true >/dev/null 2>&1 || true
+p "Prior-run artifacts removed."
+
+p "# 0b. The release boundary is now HARDENED with fail-closed label guards:"
+p "#   guard-managed-labels  — only the release-service controller may set the managed markers"
+p "#   guard-task-labels     — only the Tekton controller may set tekton.dev/* labels on TaskRuns"
+p "#   validate-role-labels  — trust labels must survive a recompute of their classification"
+pe "kubectl get clusterpolicy guard-managed-labels,guard-task-labels,validate-role-labels"
+
+p "# THE ROGUE PIPELINE ATTACK:"
+p "# An attacker (us, as admin) tries to hand-craft a 'managed' release PipelineRun"
+p "# in managed-tenant to claim the release authority..."
+kubectl delete pipelinerun rogue-managed-pr -n managed-tenant --wait=true >/dev/null 2>&1 || true
+pe "cat << 'EOF' | kubectl create -f - || true
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: rogue-managed-pr
+  namespace: managed-tenant
+  labels:
+    appstudio.openshift.io/application: demo-app
+    pipelines.appstudio.openshift.io/type: managed
+spec:
+  pipelineSpec:
+    tasks:
+    - name: noop
+      taskSpec:
+        steps:
+        - name: echo
+          image: alpine:3.20
+          script: echo rogue
+EOF"
+p "# Admission DENIED! guard-managed-labels: the managed markers may only be set"
+p "# by the release-service controller. Location ≠ Authorization."
+wait
+
 p "# 1. Create an AppStudio Release Custom Resource in default-tenant:"
 echo -e "   ${CYAN}Release View in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/releases"
 echo ""
@@ -690,12 +729,20 @@ EOF
 )
 pe "kubectl get release ${RELEASE_NAME} -n default-tenant"
 
-p "# 2. Execute the Dual-Gated Managed Release Authority PipelineRun:"
-p "# The release pipeline executes in managed-tenant with access to the SPIFFE Release Authority."
+p "# 2. The release-service controller reconciles the Release and creates the managed PipelineRun:"
+p "# The dual-gated release pipeline executes in managed-tenant with access to the SPIFFE Release Authority."
+p "# Note the PipelineRun is created BY the release service (managed-* prefix, managed markers)"
+p "# — the only identity allowed through guard-managed-labels."
 echo -e "   ${CYAN}PipelineRuns in Konflux UI:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/activity/pipelineruns"
 echo ""
 
-RELEASE_PR=$(cat << 'EOF' | kubectl create -f - -o jsonpath='{.metadata.name}'
+# CREATE_MANUAL_PR=1 creates the dual-gated PipelineRun directly (as the
+# release-service SA, so it passes guard-managed-labels) instead of going
+# through the Release CR flow — useful for comparison demos of both paths.
+CREATE_MANUAL_PR="${CREATE_MANUAL_PR:-0}"
+if [[ "${CREATE_MANUAL_PR}" == "1" ]]; then
+p "# [CREATE_MANUAL_PR=1] Creating the dual-gated PipelineRun directly as the release-service SA..."
+RELEASE_PR=$(cat << 'EOF' | kubectl create --as=system:serviceaccount:release-service:release-service-controller-manager -f - -o jsonpath='{.metadata.name}'
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -841,19 +888,43 @@ spec:
 EOF
 )
 echo -e "   ${GREEN}Scheduled PipelineRun:${COLOR_RESET} ${RELEASE_PR}"
+else
+p "# Waiting for the release-service controller to create the managed PipelineRun..."
+RELEASE_PR=""
+for i in $(seq 1 30); do
+  RELEASE_PR=$(kubectl get pipelineruns -n managed-tenant \
+    -l release.appstudio.openshift.io/name=${RELEASE_NAME} \
+    --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+  [ -n "${RELEASE_PR}" ] && break
+  sleep 2
+done
+if [ -z "${RELEASE_PR}" ]; then
+  echo "Error: release-service did not create a managed PipelineRun for Release ${RELEASE_NAME}."
+  kubectl get release ${RELEASE_NAME} -n default-tenant -o jsonpath='{.status.conditions}'; echo
+  exit 1
+fi
+echo -e "   ${GREEN}Managed PipelineRun:${COLOR_RESET} ${RELEASE_PR} (created by the release-service controller)"
+fi
 echo -e "   ${CYAN}Track in Browser:${COLOR_RESET} https://localhost:9443/application-pipeline/workspaces/default/applications/demo-app/activity/pipelineruns"
 echo ""
 
-p "# Wait for the dual-gated release authority pipeline to complete:"
-pe "kubectl wait --for=condition=Succeeded pipelinerun/${RELEASE_PR} -n managed-tenant --timeout=90s"
+p "# Inspect the managed PipelineRun: created by the release service, carrying the guarded markers:"
+pe "kubectl get pipelinerun ${RELEASE_PR} -n managed-tenant --show-labels"
+
+p "# Wait for the dual-gated release authority pipeline to complete"
+p "# (EC verification retries make this take several minutes):"
+pe "kubectl wait --for=condition=Succeeded pipelinerun/${RELEASE_PR} -n managed-tenant --timeout=600s"
 
 p "# Inspect the keyless signing execution in the release pod:"
 pe "kubectl logs ${RELEASE_PR}-attach-summary-attestations-pod -n managed-tenant -c step-sign-release-attestation"
 
 p "# 3. Inspect the released container image OCI 1.1 referrers in the registry:"
+p "# The release pushed to registry-service.kind-registry/released-demo-app; the VSA attestation"
+p "# is recorded against the SNAPSHOT's immutable image digest."
 REG_USER=$(kubectl get secret regcred-internal-registry -n default-tenant -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq -r '.auths[].auth' | base64 -d)
-RELEASE_DIGEST=$(curl -s -k -u "${REG_USER}" -I -H "Accept: application/vnd.oci.image.index.v1+json" https://localhost:5001/v2/slsa-e2e-test/manifests/latest | grep -i docker-content-digest | awk '{print $2}' | tr -d '\r\n')
-pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/slsa-e2e-test/referrers/${RELEASE_DIGEST} | jq .manifests[].artifactType"
+RELEASE_DIGEST=$(kubectl get snapshot demo-app-snapshot -n default-tenant -o jsonpath='{.spec.components[0].containerImage}' | grep -oE 'sha256:[a-f0-9]{64}')
+p "# Released image digest (from the snapshot): ${RELEASE_DIGEST}"
+pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/released-demo-app/referrers/${RELEASE_DIGEST} | jq .manifests[].artifactType"
 
 p "# 4. Query the Rekor transparency log dynamically using the released image attestation:"
 kubectl delete job query-rekor-demo -n default --wait=true >/dev/null 2>&1 || true
@@ -884,9 +955,18 @@ spec:
           curl -fsS "http://rekor-server.rekor-system.svc.cluster.local/api/v1/log/entries/${UUID}"
       restartPolicy: Never
 EOF
-kubectl wait --for=condition=Complete job/query-rekor-demo -n default --timeout=30s >/dev/null 2>&1 || true
+# Wait for the job properly and surface failures instead of piping garbage:
+# --pod-running-timeout makes `kubectl logs job/` wait for (and select) the
+# current pod rather than erroring with "Found N pods" from prior runs.
+if ! kubectl wait --for=condition=Complete job/query-rekor-demo -n default --timeout=180s >/dev/null 2>&1; then
+  echo "   [Error] query-rekor-demo job did not complete. Pod logs for debugging:"
+  kubectl logs job/query-rekor-demo -n default --pod-running-timeout=30s --tail=20 || \
+    kubectl get pods -n default -l job-name=query-rekor-demo -o wide
+  kubectl delete job query-rekor-demo -n default --ignore-not-found=true >/dev/null 2>&1 || true
+  exit 1
+fi
 
-pe "kubectl logs job/query-rekor-demo | python3 -c \"
+pe "kubectl logs job/query-rekor-demo --pod-running-timeout=10s | python3 -c \"
 import sys, json, base64, subprocess, tempfile
 
 line = sys.stdin.readline()

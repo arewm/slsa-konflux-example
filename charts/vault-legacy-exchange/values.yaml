@@ -1,0 +1,67 @@
+# Vault dev-mode deployment for the legacy-service token exchange demo.
+#
+# NOTE: dev mode stores everything in memory with a well-known root token.
+# It is for DEMO USE ONLY — never run this in production.
+
+# Namespace is not created by the chart; install with:
+#   helm upgrade --install vault-legacy ./charts/vault-legacy-exchange \
+#     -n services --create-namespace
+
+vault:
+  image:
+    repository: docker.io/hashicorp/vault
+    tag: "1.15"
+    # linux/arm64 digest of hashicorp/vault:1.15 (this demo cluster runs arm64 nodes).
+    # linux/amd64 digest: sha256:fea7f528068fbb458307f54eb2cc1141be77f7603f0ac36e33f17ea4a25e392d
+    digest: sha256:b6e6195fcab570d106f174ef793f1a27cb83d0dde599b70c26a76f5cd287959f
+  # Dev-mode root token (demo only!)
+  devRootToken: "demo-vault-root-token"
+  servicePort: 8200
+
+# --- SPIRE / trust configuration (must match charts/spiffe-spire values) ---
+trustDomain: "konflux-ci.dev"
+clusterName: "kind-konflux"
+oidcDiscoveryUrl: "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"
+
+# Where the config job fetches the SPIRE root CA bundle:
+# primary: exec into the SPIRE server; fallback: this ConfigMap
+spire:
+  namespace: "spire"
+  serverPod: "spire-server-0"
+  serverContainer: "spire-server"
+  bundleConfigMap:
+    namespace: "kind-registry"
+    name: "spire-bundle"
+    key: "ca.crt"
+
+# --- JWT auth role ------------------------------------------------------
+jwtAuth:
+  # Path mount for the JWT auth method (vault auth enable -path=jwt jwt)
+  mountPath: "jwt"
+  roleName: "scanner"
+  # Audience a task must request when fetching its JWT-SVID from SPIRE
+  boundAudiences:
+    - "vault"
+  # The exact SPIFFE ID allowed to obtain the legacy credential.
+  # Must match the prod ClusterSPIFFEID template:
+  #   spiffe://<trustDomain>/trusted/<clusterName>/<service-account>/<task>
+  boundSubject: "spiffe://konflux-ci.dev/trusted/kind-konflux/default/trivy-sbom-scan"
+  userClaim: "sub"
+  tokenPolicies:
+    - "cve-feed-reader"
+  tokenTtl: "5m"
+  tokenMaxTtl: "15m"
+
+# --- Legacy credential --------------------------------------------------
+legacySecret:
+  # KV v2 path: secret/<path>
+  path: "legacy-api"
+  data:
+    api_token: "demo-legacy-static-token-3f9a2c"
+
+# Policy attached to tokens minted via the scanner role. Read-only access
+# to exactly the legacy credential path.
+policyName: "cve-feed-reader"
+
+# Image for the post-install configuration job (needs kubectl + python3)
+configJobImage: "docker.io/alpine/k8s:1.32.3"

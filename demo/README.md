@@ -6,17 +6,17 @@
 
 ## Overview
 
-Modern cloud-native CI systems frequently suffer from **mistaken identity**:
-1. **Ambient Authority**: Every task in a Kubernetes namespace runs under a shared `ServiceAccount` and mounts ambient secrets (`regcred`, API tokens). Any compromised step or rogue developer task can hijack these credentials to overwrite production tags or exfiltrate secrets.
-2. **Coarse-Grained Attestation**: Standard keyless signing tokens identify only the namespace or service account (`sub: system:serviceaccount:<ns>:<sa>`), failing to distinguish a build task from a vulnerability scanner.
+Cloud-native CI systems tend to suffer from **mistaken identity**:
+1. **Ambient Authority**: Every task in a Kubernetes namespace runs under a shared `ServiceAccount` and mounts ambient secrets (`regcred`, API tokens). A compromised step or a rogue developer task can hijack those credentials to overwrite production tags or exfiltrate secrets.
+2. **Coarse-Grained Attestation**: Standard keyless signing tokens identify only the namespace or service account (`sub: system:serviceaccount:<ns>:<sa>`). They cannot distinguish a build task from a vulnerability scanner.
 3. **Overprivileged Release Pipelines**: Release authorities that sign SLSA provenance and Verification Summary Attestations (VSAs) often inherit ambient credentials across an entire namespace.
 
-This demonstration proves an end-to-end defense across the entire software supply chain lifecycle:
+The demonstration walks through an end-to-end defense covering the full supply chain lifecycle:
 - **Admission Verification**: Kyverno inspects TaskRuns before scheduling, verifying Sigstore signatures on pinned catalog bundles and assigning role labels (`dev` vs. `prod`).
 - **Cryptographic Workload Identity**: SPIRE issues short-lived, task-scoped SPIFFE SVIDs (X.509 and JWT) based on Kyverno-validated pod labels and precise pod UIDs.
 - **Separation of Duties**: Conforma / Enterprise Contract (OPA Rego) policies ensure that scanners can only sign vulnerability reports and builders can only sign provenance.
-- **Task-Scoped OCI Push Gating**: Zot OCI registry validates bearer JWT tokens directly against SPIRE's OIDC discovery endpoint, restricting image pushes to vetted builder roles.
-- **Portable Secretless Service Access**: Pipelines authenticate to internal services (e.g. CVE feeds) using short-lived audience-scoped JWT-SVIDs without static Kubernetes secrets.
+- **Task-Scoped OCI Push Gating**: The Zot OCI registry validates bearer JWT tokens directly against SPIRE's OIDC discovery endpoint, restricting image pushes to vetted builder roles.
+- **Portable Secretless Service Access**: Pipelines authenticate to internal services (e.g. CVE feeds) using short-lived audience-scoped JWT-SVIDs, with no static Kubernetes secrets.
 - **Managed Release Boundary (Model 2 Dual-Gating)**: Managed release signing requires both PipelineRun-level classification and task-level pod selectors, generating keyless attestations signed via SPIFFE identity and recorded in Rekor.
 
 ---
@@ -43,7 +43,7 @@ demo/
 
 ## Prerequisites
 
-Before running the demo, ensure the following tooling and infrastructure are available:
+Before running the demo, confirm the following tooling and infrastructure are in place:
 
 1. **Active KinD Cluster with Konflux & SPIRE**:
    - Cluster created with KinD on Podman/Docker.
@@ -73,12 +73,12 @@ Run the setup script to initialize the environment:
 ```
 
 ### What `setup-demo.sh` Does:
-1. **Verifies Prerequisites**: Checks connectivity and ensures all required namespaces exist.
-2. **Synchronizes Rekor / TUF Keys**: Automatically aligns the active Rekor public key with the local TUF root secret (`rekor-public-key` in `tuf-system`) if the cluster was restarted.
+1. **Verifies Prerequisites**: Checks connectivity and confirms all required namespaces exist.
+2. **Synchronizes Rekor / TUF Keys**: Aligns the active Rekor public key with the local TUF root secret (`rekor-public-key` in `tuf-system`) if the cluster was restarted.
 3. **Deploys OIDC Zot Registry**: Applies `demo/manifests/zot-oidc.yaml` and waits for rollout.
 4. **Deploys CVE Mock Service**: Applies `demo/manifests/cve-database-service.yaml` and waits for rollout.
 5. **Onboards `demo-app`**: Installs `demo-app` into `default-tenant` using the `charts/component-onboarding` Helm chart and applies `demo/manifests/snapshot.yaml`.
-6. **Establishes Clean Baseline**: Executes `demo/cleanup-demo.sh` to ensure no lingering runs or rogue tags exist.
+6. **Establishes Clean Baseline**: Runs `demo/cleanup-demo.sh` so no lingering runs or rogue tags exist.
 
 ---
 
@@ -94,7 +94,7 @@ Run the script directly in your terminal:
 
 - Simulates realistic command typing.
 - Pauses before each command. Press **`[ENTER]`** to proceed.
-- Clears the terminal between acts to maintain audience focus.
+- Clears the terminal between acts so the audience follows one act at a time.
 
 ### 2. Fast / CI Mode (No Typing Delays or Pauses)
 
@@ -107,7 +107,7 @@ To execute all acts non-interactively without delays:
 
 ### 3. Immediate Auto-Cleanup
 
-By default, demo resources are retained so they can be inspected in the Konflux UI. To automatically clean up upon completion:
+By default, demo resources are retained so they can be inspected in the Konflux UI. To clean up automatically on completion:
 
 ```bash
 DEMO_CLEANUP=true ./demo/run-demo.sh
@@ -117,7 +117,7 @@ DEMO_CLEANUP=true ./demo/run-demo.sh
 
 ## Slide Integration & Presentation Mode
 
-This demo includes a multi-port slide server (`demo/serve-slides.sh`) designed for embedding live web terminals directly into browser-based slides (like **Remark.js**, **Slidev**, or **Reveal.js**) via `ttyd`:
+The demo includes a multi-port slide server (`demo/serve-slides.sh`) for embedding live web terminals into browser-based slides (such as **Remark.js**, **Slidev**, or **Reveal.js**) via `ttyd`:
 
 ### 1. Predefined Act Ports
 
@@ -179,13 +179,13 @@ fetch("http://localhost:7681", { mode: "no-cors" })
 </script>
 ```
 
-### 4. Seamless Presenter Clicker Flow & Focus Recovery
+### 4. Presenter Clicker Flow and Focus Recovery
 
 - **Clicker Keys Supported in Demos**: While a demo act is running, `demo/demo-magic.sh` listens for `[Enter]`, `[Space]`, `[Right Arrow]`, and `[PageDown]` (the standard hardware key sent by presentation remotes).
 - **Session Preservation**: When an act finishes, the process stays open in an interactive shell so the WebSocket connection never drops.
-- **Escape Key Interception (`[Esc]`)**: Cross-origin iframes normally trap keyboard focus. `demo/serve-slides.sh` generates a slide-aware terminal index that intercepts `[Escape]` in the DOM capture phase, blurs the terminal, and posts `postMessage({ type: 'DEMO_ESCAPE' }, '*')` to the slide window, immediately returning focus to Remark.js.
-- **Act Completion Auto-Defocus**: On act completion, `run-demo.sh` outputs OSC escape sequence `\033]0;ACT_<N>_COMPLETE\007`. The terminal index observes this title mutation and automatically sends `DEMO_ACT_COMPLETE` to blur the terminal and return focus to the slide deck—allowing the very next clicker press to advance the slides.
-- **Visual Focus Indicator**: The terminal toolbar dynamically displays a green `SLIDES ACTIVE` status badge confirming keyboard control is restored to presentation navigation.
+- **Escape Key Interception (`[Esc]`)**: Cross-origin iframes normally trap keyboard focus. `demo/serve-slides.sh` generates a slide-aware terminal index that intercepts `[Escape]` in the DOM capture phase, blurs the terminal, and posts `postMessage({ type: 'DEMO_ESCAPE' }, '*')` to the slide window. Focus returns to Remark.js immediately.
+- **Act Completion Auto-Defocus**: On act completion, `run-demo.sh` outputs the OSC escape sequence `\033]0;ACT_<N>_COMPLETE\007`. The terminal index observes this title mutation and sends `DEMO_ACT_COMPLETE` to blur the terminal and return focus to the slide deck, so the next clicker press advances the slides.
+- **Visual Focus Indicator**: The terminal toolbar displays a green `SLIDES ACTIVE` status badge confirming keyboard control is restored to presentation navigation.
 
 ---
 
@@ -197,12 +197,12 @@ fetch("http://localhost:7681", { mode: "no-cors" })
 - Displays clickable browser links to monitor the application in the Konflux UI (`https://localhost:9443`).
 
 ### Act 1: The Breakdown (Ambient Authority & Secret Hijack)
-1. **The Ambient Authority Flaw**: Inspects standard Kubernetes `ServiceAccount` projected tokens (`system:serviceaccount:default-tenant:default`). Demonstrates that all tasks running under this service account share identical ambient permissions.
+1. **The Ambient Authority Flaw**: Inspects standard Kubernetes `ServiceAccount` projected tokens (`system:serviceaccount:default-tenant:default`). All tasks running under this service account share identical ambient permissions.
 2. **Ambient Secret Hijack & Registry Tag Overwrite**: An unvetted pod mounts the ambient `regcred` secret and overwrites `slsa-e2e-test:latest` in the registry with a malicious backdoor payload.
-3. **Registry Verification**: Inspects the overwritten artifact in the registry to prove that ambient credentials undermine artifact integrity.
+3. **Registry Verification**: Inspects the overwritten artifact in the registry to show that ambient credentials undermine artifact integrity.
 
 ### Act 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)
-1. **Kyverno Classification Rules & Anti-Spoofing**: Inspects Kyverno's `classify-taskrun` policy and tests `prevent-pod-label-spoofing`, proving pods cannot self-assign production labels.
+1. **Kyverno Classification Rules & Anti-Spoofing**: Inspects Kyverno's `classify-taskrun` policy and tests `prevent-pod-label-spoofing`, showing that pods cannot self-assign production labels.
 2. **Untrusted Inline Task**: Submits a TaskRun with inline scripting. Kyverno admits it but restricts it to `trusted-task-role: dev`. SPIRE mints an unprivileged dev identity (`spiffe://konflux-ci.dev/dev/.../task`).
 3. **Attacker Catalog Spoof Attempt**: An adversary submits an unsigned task referencing the trusted catalog namespace (`registry-service.kind-registry/tekton-catalog/demo-unsigned-task`). Kyverno's `verify-bundle-signatures` blocks admission at the API boundary via Sigstore image verification.
 4. **Cryptographically Signed Catalog Task**: Submits a Cosign-signed task bundle. Kyverno verifies the signature and promotes the label to `trusted-task-role: prod`. SPIRE mints a vetted production identity.
@@ -213,9 +213,9 @@ fetch("http://localhost:7681", { mode: "no-cors" })
    - **Legitimate Builder Task**: The vetted builder bundle (`buildah-oci-ta`) presents its identity (`spiffe://konflux-ci.dev/trusted/.../buildah-oci-ta`). Zot accepts the upload session with **HTTP/2 202 Accepted**.
 2. **Portable Secretless Service Access (CVE Database)**:
    - Queries the internal CVE database service in `services`. The service mounts zero Kubernetes secrets and validates callers via SPIRE's `/keys` JWKS endpoint.
-   - **Untrusted Caller**: An arbitrary dev task requests an audience-scoped JWT for `https://cve-database.internal`. The service returns **HTTP/1.0 403 Forbidden** due to role authorization failure.
+   - **Untrusted Caller**: An arbitrary dev task requests an audience-scoped JWT for `https://cve-database.internal`. The service returns **HTTP/1.0 403 Forbidden**: role authorization failure.
    - **Vetted Scanner (`trivy-sbom-scan`)**: The scanner task requests a JWT and queries the feed. The service returns **HTTP/1.0 200 OK** with vulnerability data.
-3. **Separation of Duties (OPA Rego)**: Runs unit tests against `separation_of_duties.rego`, proving that a builder task attempting to sign a clean CVE scan is denied by policy.
+3. **Separation of Duties (OPA Rego)**: Runs unit tests against `separation_of_duties.rego`, showing that a builder task attempting to sign a clean CVE scan is denied by policy.
 
 ### Act 4: Managed Release Boundary (Dual-Gated Authority)
 1. **Release Custom Resource**: Creates an AppStudio `Release` resource in `default-tenant` referencing `demo-app-release-plan` and `demo-app-snapshot`.
@@ -244,7 +244,7 @@ Direct links:
 
 ## Cleanup & Repeatability
 
-The demo is designed to be **strictly idempotent** and can be run repeatedly back-to-back without manual cluster re-initialization.
+The demo is strictly idempotent and can be run repeatedly back-to-back without manual cluster re-initialization.
 
 ### Execution Artifact Cleanup (Default)
 To delete all TaskRuns, Pods, Releases, PipelineRuns, and Rekor query jobs while keeping `demo-app` and services installed:
@@ -253,7 +253,7 @@ To delete all TaskRuns, Pods, Releases, PipelineRuns, and Rekor query jobs while
 ./demo/cleanup-demo.sh
 ```
 
-*Note: This automatically restores `slsa-e2e-test:latest` to its pristine payload.*
+*Note: This restores `slsa-e2e-test:latest` to its pristine payload.*
 
 ### Full Infrastructure Purge
 To completely uninstall `demo-app`, the mock CVE service, and the OIDC Zot deployment:
@@ -268,7 +268,7 @@ To completely uninstall `demo-app`, the mock CVE service, and the OIDC Zot deplo
 
 1. **Rekor Transparency Log Key Mismatches**:
    - In local KinD environments, Rekor server keys are ephemeral across cluster restarts.
-   - If Cosign fails with `not enough verified log entries from transparency log`, run `./demo/setup-demo.sh`, which automatically detects key drift, updates `secret/rekor-public-key` in `tuf-system`, and restarts the TUF server.
+   - If Cosign fails with `not enough verified log entries from transparency log`, run `./demo/setup-demo.sh`. It detects key drift, updates `secret/rekor-public-key` in `tuf-system`, and restarts the TUF server.
 2. **Container Image Distroless Invocations**:
    - `ghcr.io/spiffe/spire-agent` is a scratch/distroless image. Do not attempt to invoke `/bin/sh` inside it; invoke `/opt/spire/bin/spire-agent` directly.
 3. **SPIRE Agent Sync Timing**:

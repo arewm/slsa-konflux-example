@@ -1,0 +1,10 @@
+apiVersion: v2
+name: vault-legacy-exchange
+description: >
+  HashiCorp Vault (dev mode) with JWT auth backed by SPIRE's OIDC discovery
+  endpoint. Demonstrates Pattern 2's legacy-service variant: a trusted task
+  exchanges its JWT-SVID for a static legacy credential, with release bound
+  to a specific SPIFFE ID (sub claim).
+type: application
+version: 0.1.0
+appVersion: "1.15"

@@ -1,10 +1,10 @@
 # CI Workload Identity: Beyond Ambient Authority
 
-CI/CD pipelines commonly run all tasks under a shared identity: one ambient credential signs SBOMs, reports vulnerability scans, and pushes container images. 
+CI/CD pipelines commonly run all tasks under a shared identity: one ambient credential signs SBOMs, reports vulnerability scans, and pushes container images.
 
-Standard workload identities establish execution context—a cluster, namespace, node, or service account. But location does not establish authorization. When every task in a pipeline shares the same service account, any compromised step can act with the full authority of the pipeline.
+Standard workload identities establish execution context: a cluster, namespace, node, or service account. Location does not establish authorization. When every task in a pipeline shares the same service account, a single compromised step can act with the full authority of the pipeline.
 
-This document describes how to bind admission-time task verification to fine-grained cryptographic workload identities (SPIFFE/SPIRE), and details five production patterns that replace ambient authority with role-scoped capabilities.
+This document explains how to bind admission-time task verification to fine-grained cryptographic workload identities (SPIFFE/SPIRE), and covers five production patterns that replace ambient authority with role-scoped capabilities.
 
 ---
 
@@ -63,7 +63,7 @@ spiffe://konflux-ci.dev/trusted/{cluster}/{service-account}/{task-name}
 
 ### Trust Invariants
 
-This model relies on two foundational controls:
+The model relies on two foundational controls:
 - **Tamper-proof labels**: The `prevent-pod-label-spoofing` Kyverno policy rejects any pod carrying `trusted-task-role` unless its `ownerReferences` trace directly to an admitted `TaskRun`. Tenant workloads cannot self-assign trusted roles.
 - **Immutable references**: Catalog tasks must be pinned by cryptographic digest (`@sha256:...`) and signed by an authorized release key. Mutable tags receive `trusted-task-role: dev`.
 
@@ -157,7 +157,7 @@ Zot access control rules restrict write actions to the builder's verified SPIFFE
 ```
 
 ### Enforcement
-1. `buildah-oci-ta` requests a JWT-SVID from the SPIFFE CSI socket with audience `registry-service.kind-registry`.
+1. `buildah-oci-ta` requests a JWT-SVID from the SPIRE CSI socket with audience `registry-service.kind-registry`.
 2. The task passes the token as a Bearer credential to `podman push` or `skopeo copy`.
 3. Zot validates the token signature against SPIRE's JWKS and authorizes the push based on the `sub` claim.
 
@@ -172,7 +172,7 @@ If an untrusted, unpinned, or inline task attempts to push, admission marks it `
 Pipelines frequently query internal APIs: private vulnerability feeds, artifact metadata stores, or defect tracking systems. Operators commonly copy static API tokens into Kubernetes Secrets across every tenant namespace, creating credential sprawl and rotation overhead.
 
 ### Identity & Mechanism
-Internal services mount zero secrets. Upon startup, the service loads public signing keys from SPIRE's JWKS endpoint (`https://spire-spiffe-oidc-discovery-provider.../keys`).
+Internal services mount zero secrets. At startup, the service loads public signing keys from SPIRE's JWKS endpoint (`https://spire-spiffe-oidc-discovery-provider.../keys`).
 
 The task requests an audience-scoped JWT-SVID:
 
@@ -281,17 +281,7 @@ Model 2 enforces a control-plane conjunction between Kyverno admission and SPIRE
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Early tasks match the pipeline role, but fail the task selector. SPIRE issues no identity. Only `attach-summary-attestations` receives the release authority SVID.
-
-### Model 3: Policy Clearance Tokens (Capability Gating)
-Model 3 is an alternative data-plane design that avoids control-plane label matching:
-1. `verify-conforma` evaluates policy rules against the build snapshot.
-2. If all rules pass, it mints a short-lived **Clearance Token** (JWT) signed by the policy engine private key. The token claims include `verdict: PASSED`, `policy_hash`, `pipelinerun_uid`, and the target `image_digest`.
-3. The token passes to `attach-summary-attestations` via an immutable Trusted Artifact OCI archive.
-4. `attach-summary-attestations` presents both its workload identity and the clearance token to Fulcio.
-5. Fulcio validates the policy clearance token before issuing a release signing certificate.
-
----
+Early tasks match the pipeline role but fail the task selector, so SPIRE issues no identity. Only `attach-summary-attestations` receives the release authority SVID.
 
 ## Comparison: CI Identity Models
 

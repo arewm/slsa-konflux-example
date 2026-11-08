@@ -1,0 +1,57 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault-legacy-exchange
+  labels:
+    app.kubernetes.io/name: vault-legacy-exchange
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vault-legacy-exchange
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vault-legacy-exchange
+        app.kubernetes.io/part-of: kubecon-demo
+    spec:
+      containers:
+      - name: vault
+        image: "{{ .Values.vault.image.repository }}:{{ .Values.vault.image.tag }}@{{ .Values.vault.image.digest }}"
+        imagePullPolicy: IfNotPresent
+        command: ["vault", "server", "-dev"]
+        env:
+        # DEMO ONLY: well-known root token, in-memory storage, no seal/unseal
+        - name: VAULT_DEV_ROOT_TOKEN_ID
+          value: {{ .Values.vault.devRootToken | quote }}
+        - name: VAULT_DEV_LISTEN_ADDRESS
+          value: "0.0.0.0:{{ .Values.vault.servicePort }}"
+        ports:
+        - containerPort: {{ .Values.vault.servicePort }}
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+            port: {{ .Values.vault.servicePort }}
+          initialDelaySeconds: 3
+          periodSeconds: 3
+        securityContext:
+          capabilities:
+            add: ["IPC_LOCK"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-legacy-exchange
+  labels:
+    app.kubernetes.io/name: vault-legacy-exchange
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  selector:
+    app.kubernetes.io/name: vault-legacy-exchange
+  ports:
+  - name: http
+    port: {{ .Values.vault.servicePort }}
+    targetPort: {{ .Values.vault.servicePort }}

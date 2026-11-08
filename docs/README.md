@@ -28,6 +28,8 @@ Technical references and operator specifications to consult as needed:
 
 - **[Dual-Gated Release Authority Guide](reference/dual-gated-release.md)**  
   Implementation runbook for Model 2 release gating in `managed-tenant`, including Kyverno and SPIRE conjunction rules, dual-mode keyless signing, and Rekor verification commands.
+- **[Legacy Token Exchange](reference/legacy-token-exchange.md)**  
+  Pattern 2 extension: a task exchanges its SPIFFE JWT-SVID for a static credential via Vault, for services that cannot validate OIDC tokens.
 
 ---
 

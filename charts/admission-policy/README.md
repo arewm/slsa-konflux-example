@@ -6,7 +6,7 @@ This Helm chart deploys Kyverno ClusterPolicies for Tekton TaskRun and PipelineR
 
 1. **`classify-taskrun`:**
    - Evaluates `TaskRun` creations.
-   - Assigns default role label: `trusted-task-role: dev`.
+   - Assigns the default role label: `trusted-task-role: dev`.
    - If a TaskRun references a bundle that is **digest-pinned** (`@sha256:...`) and matches a pattern in `trustedBundles`, upgrades the label to: `trusted-task-role: prod`.
 
 2. **`prevent-pod-label-spoofing`:**
@@ -16,10 +16,10 @@ This Helm chart deploys Kyverno ClusterPolicies for Tekton TaskRun and PipelineR
 
 3. **`verify-bundle-signatures`:**
    - Enforces Sigstore / Cosign bundle signatures against configured public keys before admission.
-   - **`ivpol` mode (default)**: Uses `ImageValidatingPolicy` (`policies.kyverno.io/v1beta1`) with CEL-based image extraction (`spec.images`). Compatible with stock Kyverno v1.16/v1.17+ on Konflux clusters without requiring controller patches or ConfigMap restart jobs.
+   - **`ivpol` mode (default)**: Uses `ImageValidatingPolicy` (`policies.kyverno.io/v1beta1`) with CEL-based image extraction (`spec.images`). Works with stock Kyverno v1.16/v1.17+ on Konflux clusters, without controller patches or ConfigMap restart jobs.
    - **`clusterpolicy` mode (legacy)**: Uses `ClusterPolicy` (`kyverno.io/v1`) with `verifyImages` and `imageExtractors`. Requires Kyverno >= 1.19.2 (or a patched controller supporting `filter` in `imageExtractors`) and runs `kyverno-configmap-patch-job`.
    - **`both` mode**: Deploys both policies side-by-side for benchmarking/testing.
-   - **`none` mode**: Skips signature verification (only classification is applied).
+   - **`none` mode**: Skips signature verification; only classification is applied.
 
 4. **`classify-release-authority`:**
    - Evaluates `TaskRun` creations in the `managed-tenant` namespace.
@@ -28,7 +28,7 @@ This Helm chart deploys Kyverno ClusterPolicies for Tekton TaskRun and PipelineR
      labels:
        trusted-pipeline-role: release-authority
      ```
-   - Used in conjunction with SPIRE `konflux-release-authority` ClusterSPIFFEID to enforce release dual-gating.
+   - Used in conjunction with the SPIRE `konflux-release-authority` ClusterSPIFFEID to enforce release dual-gating.
 
 ## Values Configuration
 

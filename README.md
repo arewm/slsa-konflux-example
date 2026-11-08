@@ -1,42 +1,28 @@
-# SLSA End-to-End Example (Konflux style)
+# "Your CI's Mistaken Identity" — Task-Scoped Trust Demo
 
-This repository demonstrates end-to-end SLSA (Supply-chain Levels for Software Artifacts) compliance using [Konflux](https://konflux-ci.dev), Tekton, Kyverno, and SPIFFE/SPIRE. It hardens build platforms to achieve SLSA Build Level 3 by default while eliminating ambient authority across the pipeline.
+Companion repository for the KubeCon NA 2026 talk **"Your CI's Mistaken Identity: Task-Scoped Trust in Cloud-Native Pipelines"** ([slides](https://github.com/arewm/presentations/tree/kubecon-na-2026-finalize-30min/_presentations/2026-11-10-your-cis-mistaken-identity), [session](https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/program/schedule/?id=1248924)).
 
-### SLSA E2E Stage Coverage
+This branch (`kubecon-na-2026-your-cis-mistaken-identity`) introduces task-scoped cryptographic workload identities using Tekton, Kyverno, and SPIFFE/SPIRE. It replaces shared ServiceAccount ambient authority with verified, role-scoped machine identities.
 
-| Stage | Coverage | SLSA Level | Key Components |
-|---|---|---|---|
-| Source | Covered | L2-L3 (via source-tool) | `verify-source` task, `slsa_source_verification.rego` |
-| Build | Covered | L3 (Tekton Chains) | `slsa-e2e-oci-ta` pipeline, pod isolation, namespace separation |
-| Verification | Covered | Conforma policy evaluation | `verify-conforma`, `rule_data.yml` |
-| Publication | Covered | Pipeline-gated | `push-snapshot` gated by `verify-conforma` |
-| Use | Covered | OCI-native VSA distribution | `cosign verify-attestation` |
+## What this builds on
 
----
+The demo runs on top of the **SLSA end-to-end example**: the Konflux-style build, verification, and release pipeline (SLSA Build Level 3, source track, Conforma policy, VSAs) that is this repository's primary project. That example, its roadmap, tutorials, and stage-by-stage coverage live on the [`main` branch](https://github.com/arewm/slsa-konflux-example/tree/main#readme). This branch extends it with task-scoped identity and will not be merged back.
 
-## Documentation Roadmap
-
-The documentation is organized into hands-on tutorials and technical reference guides:
-
-### Hands-On Tutorials
-- **[Part 1: Build and Release](docs/tutorials/part1-build-and-release.md)**: Onboard Festoji, build containers with pod isolation, inspect OCI 1.1 referrers (SBOM, provenance, signatures), and verify releases as a consumer.
-- **[Part 2: Source Track, Vulnerability Management, and Hermetic Builds](docs/tutorials/part2-source-and-vulnerabilities.md)**: Advanced controls with `source-test-repo`: Source Level 3 via `source-tool`, per-application Conforma policies, CVE leeway, and hermetic builds.
-
-### Technical Reference & Threat Models
-- **[Trusting Artifacts: Architecture & Threat Model](docs/reference/trusting-artifacts.md)**: Why Tekton Chains signs unverified outputs, why PersistentVolumeClaims undermine task trust, how OCI Trusted Artifacts enforce immutability, and how Verification Summary Attestations (VSAs) delegate consumer trust.
-- **[CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md)**: Taxonomy of five production patterns: separation of duties in attestation signing, federated OCI push gating, secretless internal APIs, cloud IAM federation, and release boundary capability gating.
-- **[Dual-Gated Release Authority Guide](docs/reference/dual-gated-release.md)**: Implementation runbook for Model 2 release gating in `managed-tenant`.
-- **[Documentation Index](docs/README.md)**: Complete guide directory.
-
----
-
-## KubeCon NA 2026: "Your CI's Mistaken Identity"
-
-This branch (`kubecon-na-2026-your-cis-mistaken-identity`) introduces **task-scoped cryptographic workload identities** using Tekton, Kyverno, and SPIFFE/SPIRE. It replaces shared ServiceAccount ambient authority with verified, role-scoped machine identities.
+Each talk pillar has a guide:
 
 - **[Live Demonstration Guide](demo/README.md)**: Interactive terminal walkthrough (Acts 0 through 4), browser slides integration (`ttyd` on ports 7680–7684), clicker support, and setup scripts.
-- **[CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md)**: The 5 production workload identity patterns.
-- **[Dual-Gated Release Guide](docs/reference/dual-gated-release.md)**: Model 2 PipelineRun-scoped release dual-gating.
+- **Admission-time task verification** (Kyverno classifies TaskRuns by signed, digest-pinned bundle): [CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md) and the policies in [charts/admission-policy/](charts/admission-policy/).
+- **Task-scoped SPIFFE/SPIRE identities** (short-lived SVIDs minted from verified task roles): [CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md).
+- **Separation of duties in attestations** (Conforma/OPA enforcement of role-scoped claims): [separation_of_duties.rego](demo/manifests/separation_of_duties.rego) and [CI Workload Identity Patterns](docs/reference/workload-identity-patterns.md).
+- **OCI push gating and secretless services** (Zot validates SVIDs; Vault exchanges SVIDs for legacy credentials): [Legacy Token Exchange](docs/reference/legacy-token-exchange.md).
+- **Dual-gated release authority and label-guard hardening** (Model 2 PipelineRun-scoped release gating): [Dual-Gated Release Guide](docs/reference/dual-gated-release.md).
+- **Trusted artifacts and the data plane** (immutable OCI handoffs between tasks): [Trusting Artifacts](docs/reference/trusting-artifacts.md).
+
+---
+
+## Documentation
+
+Hands-on tutorials (build/release, source track, hermetic builds) and technical reference guides (threat models, workload identity patterns, release authority) are indexed in [docs/README.md](docs/README.md).
 
 ---
 
@@ -48,6 +34,10 @@ Deploy Konflux locally using the official installer:
 
 ```bash
 # Clone the konflux-ci repository (pinned to tested release v0.2.2)
+# The demo cluster was installed with the konflux-operator image
+# quay.io/konflux-ci/konflux-operator:release-sha-be0e6ca
+# (digest sha256:8d6180cf966ca370938422d2a339cda46d638091238278517bbc46ed75a523b2).
+# Pin that digest in your installer for reproducible setups.
 export KONFLUX_VERSION=v0.2.2
 git clone --branch "${KONFLUX_VERSION}" https://github.com/konflux-ci/konflux-ci.git
 cd konflux-ci

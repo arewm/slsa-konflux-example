@@ -10,7 +10,7 @@ The limitation lies on the artifact output side. Chains signs whatever artifact 
 
 Tekton Chains exposes `artifacts.oci.signer: "none"` (tracked in issue [#1346](https://github.com/tektoncd/chains/issues/1346) and PR [#1419](https://github.com/tektoncd/chains/pull/1419)) to disable OCI image signing while retaining in-toto SLSA provenance generation. This prevents Chains from producing misleading cryptographic signatures on unverified container outputs, leaving artifact promotion and release signing to verified gates.
 
-Execution provenance is necessary, but insufficient on its own: release policy must also verify task authorization, artifact integrity, and signing authority.
+Execution provenance is necessary but insufficient on its own: release policy must also verify task authorization, artifact integrity, and signing authority.
 
 ---
 
@@ -61,7 +61,7 @@ Combining task trust, artifact immutability, isolated signing, and ephemeral pod
 - **Trusted Task Verification**: Conforma policy verifies that all pipeline tasks originate from approved, signed, digest-pinned catalogs.
 - **Tamper-Resistant Intermediate Artifacts**: Content-addressable OCI storage prevents inter-task data poisoning on shared storage volumes.
 
-Compromising a single build does not grant access to other builds, cannot forge release signatures, and cannot alter intermediate artifacts without breaking the content-addressed chain.
+Compromising a single build grants no access to other builds, cannot forge release signatures, and cannot alter intermediate artifacts without breaking the content-addressed chain.
 
 ---
 

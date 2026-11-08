@@ -24,8 +24,8 @@ This Helm chart deploys the SPIRE infrastructure (Server, Agent DaemonSet, SPIFF
      ```
    - Namespace selector: `trusted-tasks-enabled: "true"`
    - Template: `spiffe://{{ .Values.trustDomain }}/release/{{ index .PodMeta.Labels "appstudio.openshift.io/application" }}/{{ index .PodMeta.Labels "tekton.dev/pipeline" }}`
-   - Minted **strictly** for the final attestation attachment task in the authorized release pipeline. Early tasks in `managed-tenant` receive NO release authority SVID.
+   - Minted only for the final attestation attachment task in the authorized release pipeline. Early tasks in `managed-tenant` receive NO release authority SVID.
 
 ## Fulcio Integration
 
-The chart includes a post-install/post-upgrade Job (`fulcio-spire-integration`) that configures in-cluster Fulcio with the SPIRE OIDC discovery endpoint (`https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local`) and SPIRE root CA certificate so that Fulcio can issue X.509 code-signing certificates against SPIRE JWT-SVIDs.
+The chart includes a post-install/post-upgrade Job (`fulcio-spire-integration`) that configures in-cluster Fulcio with the SPIRE OIDC discovery endpoint (`https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local`) and SPIRE root CA certificate, so that Fulcio can issue X.509 code-signing certificates against SPIRE JWT-SVIDs.

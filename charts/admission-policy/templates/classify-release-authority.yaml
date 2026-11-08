@@ -11,11 +11,25 @@ spec:
       - resources:
           kinds: ["TaskRun"]
           namespaces: ["managed-tenant"]
+    # Mechanism (verified empirically on this cluster): the Tekton pipelines
+    # controller propagates PipelineRun labels onto the TaskRuns it spawns, so
+    # every TaskRun of a release-service-created PipelineRun carries
+    # pipelines.appstudio.openshift.io/type=managed. The marker is only
+    # trustworthy because guard-managed-labels (fail-closed) restricts who may
+    # set it on PipelineRuns, guard-task-labels restricts who may set
+    # tekton.dev/pipeline on TaskRuns, and validate-role-labels additionally
+    # requires a PipelineRun ownerReference — proving the marker was
+    # controller-propagated rather than hand-set. Both conditions are required
+    # (pipeline name AND managed marker) so neither alone suffices to claim
+    # release authority.
     preconditions:
       all:
       - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipeline\" || '' }}`}}"
         operator: Equals
         value: "slsa-e2e-release-dual-gated"
+      - key: "{{`{{ request.object.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
+        operator: Equals
+        value: "managed"
     mutate:
       patchStrategicMerge:
         metadata:

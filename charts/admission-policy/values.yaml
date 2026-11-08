@@ -26,3 +26,25 @@ trustedBundles: []
 namespaces:
   - default-tenant
   - managed-tenant
+
+# ---------------------------------------------------------------------------
+# Release boundary hardening ("label guards")
+#
+# fail-closed ClusterPolicies that partition who may set the classification
+# and managed-marker labels. The mutate policies above (classify-taskrun,
+# classify-release-authority) run with failurePolicy: Ignore so a Kyverno
+# outage degrades to "unclassified" rather than "down"; these validate
+# policies enforce the label invariants with failurePolicy: Fail.
+# Set hardening: false to deploy the pre-hardening behavior (demo comparison).
+# ---------------------------------------------------------------------------
+hardening: true
+
+# ServiceAccount of the release-service controller that legitimately creates
+# managed release PipelineRuns. Only this identity may attach the managed
+# marker labels (pipelines.appstudio.openshift.io/type=managed,
+# appstudio.openshift.io/service=release) to a PipelineRun.
+releaseServiceAccount: "system:serviceaccount:release-service:release-service-controller-manager"
+
+# ServiceAccount of the Tekton pipelines controller that legitimately sets
+# tekton.dev/* labels on TaskRuns (via propagation from a PipelineRun).
+tektonControllerServiceAccount: "system:serviceaccount:tekton-pipelines:tekton-pipelines-controller"

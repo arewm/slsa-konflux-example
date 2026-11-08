@@ -4,6 +4,14 @@ kind: ClusterPolicy
 metadata:
   name: classify-taskrun
 spec:
+  # Mutate-normalizes / validate-enforces split: this policy runs with
+  # failurePolicy: Ignore deliberately — if Kyverno is down, TaskRuns land
+  # unclassified ("dev") rather than blocking the whole cluster, so Ignore is
+  # availability-only, not security. The security invariant is enforced
+  # fail-closed by validate-role-labels (failurePolicy: Fail), which rejects
+  # any TaskRun whose trusted-task-role=prod label does not survive a
+  # recompute of these classification preconditions. A rogue actor cannot
+  # exploit the Ignore policy to claim trust it didn't earn.
   failurePolicy: Ignore
   rules:
   - name: set-dev-label
@@ -12,6 +20,17 @@ spec:
       - resources:
           kinds: ["TaskRun"]
           operations: ["CREATE", "UPDATE"]
+    # Only stamp the default when the label is absent. A hand-set
+    # trusted-task-role is deliberately NOT normalized away here: mutations
+    # run before validations in the admission chain, so overwriting a
+    # hand-set label would hide it from validate-role-labels, which must see
+    # the claimed value to deny unearned prod claims fail-closed. (A hand-set
+    # "dev" is the trust floor and harmless.)
+    preconditions:
+      all:
+      - key: "{{`{{ request.object.metadata.labels.\"trusted-task-role\" || '' }}`}}"
+        operator: Equals
+        value: ""
     mutate:
       patchStrategicMerge:
         metadata:

@@ -52,8 +52,10 @@ kubectl delete job query-rekor-demo -n default --wait=true --ignore-not-found=tr
 echo "  - Resetting slsa-e2e-test:latest in internal registry to baseline signed image..."
 REG_USER=$(kubectl get secret regcred-internal-registry -n default-tenant -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.auths[].auth' 2>/dev/null | base64 -d 2>/dev/null || true)
 if [ -n "${REG_USER}" ]; then
-  # Extract pinned verified digest from snapshot manifest
-  SNAPSHOT_DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' "${SCRIPT_DIR}/manifests/snapshot.yaml" | head -n1 || echo "sha256:5f1c994bf2a8a69bb5497c1bc3358f37c9952bf52dc109de2fc1307f080e12db")
+  # Extract the verified digest from the LIVE snapshot (setup may have
+  # rebuilt it via REBUILD_SNAPSHOT); fall back to the checked-in pin.
+  SNAPSHOT_DIGEST=$(kubectl get snapshot demo-app-snapshot -n default-tenant -o jsonpath='{.spec.components[0].containerImage}' 2>/dev/null | grep -oE 'sha256:[a-f0-9]{64}' || true)
+  SNAPSHOT_DIGEST="${SNAPSHOT_DIGEST:-$(grep -oE 'sha256:[a-f0-9]{64}' "${SCRIPT_DIR}/manifests/snapshot.yaml" | head -n1 || echo "sha256:5f1c994bf2a8a69bb5497c1bc3358f37c9952bf52dc109de2fc1307f080e12db")}"
   kubectl delete pod demo-registry-reset -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
   kubectl run demo-registry-reset --namespace=default-tenant \
     --image=quay.io/skopeo/stable:v1.14.2 \
