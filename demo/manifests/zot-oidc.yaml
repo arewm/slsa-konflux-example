@@ -91,9 +91,9 @@ spec:
         - mountPath: /var/lib/registry-oidc
           name: storage
         - mountPath: /etc/ssl/certs/spire-ca.crt
-          name: trusted-ca
+          name: spire-bundle
           readOnly: true
-          subPath: ca-bundle.crt
+          subPath: ca.crt
       volumes:
       - name: certs
         secret:
@@ -103,12 +103,9 @@ spec:
           name: zot-oidc-config
       - emptyDir: {}
         name: storage
-      - name: trusted-ca
+      - name: spire-bundle
         configMap:
-          items:
-          - key: ca-bundle.crt
-            path: ca-bundle.crt
-          name: trusted-ca
+          name: spire-bundle
 ---
 apiVersion: v1
 kind: Service

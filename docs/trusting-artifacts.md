@@ -1,70 +1,112 @@
-# Trusting Artifacts
+# Trusting Artifacts: Architecture & Threat Model
 
 ## The Core Problem: Chains Signs Anything
 
-[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys separate from build execution.
+[Tekton Chains](https://tekton.dev/docs/chains/) observes completed PipelineRuns and TaskRuns, generates SLSA provenance attestations, and signs them. This observer pattern keeps signing keys completely out of build containers—the payload doesn't sign itself.
 
-The tradeoff is that Chains signs whatever artifacts tasks claim to produce. It does not verify whether the task is trustworthy, whether the artifact was actually built in this pipeline, or whether a malicious task swapped in a pre-built image.
+Because Chains watches the Kubernetes control plane from an observer namespace, **we can trust Chains for provenance**. A running task cannot forge Chains' view of what ran: Chains faithfully records the exact TaskRuns executed, the bundle references invoked, the git commit, parameters passed, and timestamps.
 
-Consider what happens when a malicious task enters the pipeline. It claims to build a container image from source, but instead pulls a pre-compromised image from an attacker's registry. It uses Tekton [type hinting](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting) to report this as a "built" artifact. Chains sees a completed task, generates signed SLSA provenance, and now you have cryptographically valid provenance for an artifact that was never actually built from the claimed source.
+The tradeoff is on the artifact output side: Chains signs whatever artifacts tasks claim to produce. It doesn't know whether a task is trustworthy, whether the artifact was actually built from the claimed source, or whether a malicious task simply pulled a pre-built image from an attacker's registry and used Tekton [type hinting](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting) to report it as a build output.
 
-Signing alone does not solve supply chain security. We need to verify what was signed.
+Chains sees a completed task, reads the type-hinted result, and generates signed SLSA provenance. You end up with a cryptographically valid provenance record for an artifact that was never built from the claimed source.
 
-## The Solution: Verify Tasks AND Artifacts
+Upstream Tekton Chains recognizes this gap: through `artifacts.oci.signer: "none"` (originally tracked in issue [#1346](https://github.com/tektoncd/chains/issues/1346)), operators can explicitly disable OCI image signing while preserving in-toto SLSA provenance generation. This prevents Chains from producing misleading cryptographic signatures on unverified container outputs, leaving artifact promotion and release signing to verified gates.
 
-Trusting provenance requires trusting the entire build chain. All tasks must come from known, approved sources, and artifacts must remain immutable between tasks.
+Signing alone does not solve supply chain security. Chains gives us reliable execution provenance, but we still need to verify what was signed, who was authorized to sign it, and whether intermediate artifacts remained intact.
 
-Konflux enforces both properties at different stages. During the build, Tekton Chains creates signed attestations recording what happened. At release time, the `verify-conforma` task in the managed namespace checks the attestations against policy: Were the tasks trusted? Are the artifacts intact? Only after validation passes does the release pipeline promote images.
+---
 
-## Task Trust
+## Task Trust: Leveraging Chains Provenance
 
-Konflux uses [Conforma](https://conforma.dev) to verify that every task in a build came from an approved source.
+Because we *can* trust Chains' provenance to accurately record which tasks executed, we can evaluate task trust against that record.
 
-Conforma's [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package enforces three requirements:
+The first line of defense is ensuring that every task in the pipeline came from an approved source. In Konflux, [Conforma](https://conforma.dev) evaluates task trust retroactively after the build finishes. Its [`trusted_tasks`](https://conforma.dev/docs/policy/packages/release_trusted_task.html) package checks three things against the Chains-signed provenance:
 
-- Tasks must reference digest-pinned bundles, not mutable tags
+- Tasks must reference digest-pinned bundles (`@sha256:...`), not mutable tags
 - Those bundles must appear in an approved trusted task list
-- Any task that a policy declares as required must itself be trusted
+- Any task that policy declares as required must itself be trusted
 
-## Artifact Trust: Why PVCs Are Not Enough
+If an attacker injects an unauthorized task or points to an unpinned tag, Chains records that task reference in the provenance. Conforma catches it during policy evaluation and blocks release.
 
-Containers in a pipeline are isolated from each other, but shared volumes tell a different story. When tasks pass data through PVCs, any task with access to the volume can read or modify artifacts left by previous tasks. A single malicious task can tamper with everything. This forces an all-or-nothing trust model: either every task in the pipeline is trusted, or none of the output can be trusted.
+---
 
-That model works, but it has a real cost. Centralized pipeline ownership means every change, even adding a linter, must go through a trust review process. This tension between security and developer autonomy is why Konflux uses [Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html) instead of PVCs.
+## Artifact Trust: Why Task Trust Isn't Sufficient with PVCs
 
-Trusted Artifacts store intermediate data as immutable OCI images, addressed by content digest. Rather than writing to a shared filesystem, each task's output becomes the next task's input through explicit parameter chaining.
+Task trust alone is not enough if your tasks share a volume.
 
-This design makes tampering detectable: any modification changes the digest. It also scopes trust more narrowly. Because there is no shared volume, untrusted tasks cannot modify artifacts they never receive. Users can add custom tasks to their pipeline without undermining trust in the build output.
+Containers in a Kubernetes pod are isolated from each other, but shared PersistentVolumeClaims (PVCs) break that isolation. When pipeline tasks pass data through a PVC, any task mounted to that volume can read or overwrite files left behind by previous tasks.
 
-## How This Achieves SLSA Build L3
+That forces an all-or-nothing trust model: either *every* task in the pipeline is fully trusted, or *none* of the output can be trusted.
 
-The properties above — task trust verification, artifact immutability, and signing key isolation — are the building blocks of [SLSA Build Level 3](https://slsa.dev/spec/v1.1/requirements). Specifically:
+This creates real friction between security teams and developers. If a developer wants to add a custom linter, an experimental test runner, or an inline script, centralized pipeline ownership means that change has to go through a formal catalog review... just to run a linter.
 
-**Hardened builds.** Each build runs in an isolated Kubernetes pod. Pods are ephemeral and do not share state with other builds. The build environment is defined by the pipeline and task definitions, not by ad-hoc commands.
+### Content-Addressable OCI Artifacts
 
-**Isolated signing.** Tekton Chains signs provenance in an observer namespace. The signing key is never accessible to the build pipeline. A compromised build cannot forge provenance for a different artifact.
+Konflux breaks that all-or-nothing dependency using [Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html) instead of PVCs.
 
-**Trusted task verification.** At release time, Conforma verifies that every task in the build came from an approved, digest-pinned bundle. This prevents a compromised pipeline from injecting unauthorized tasks that could exfiltrate secrets or swap artifacts.
+Rather than writing to a shared filesystem, tasks package intermediate state into OCI image layers addressed by cryptographic content digest (`sha256:...`). Each task's output is passed to the next task through explicit parameter chaining:
 
-**Tamper-resistant artifacts.** Trusted Artifacts use content-addressable OCI storage between tasks. Any modification to intermediate artifacts changes the digest, breaking the chain and causing verification to fail.
+1. Task A packages its build outputs, pushes an OCI artifact to storage, and emits the immutable digest.
+2. Task B receives that digest as an explicit parameter and unpacks it.
+3. If an intermediate file is modified, the digest changes, breaking the chain and failing the build.
 
-Together, these properties mean that an attacker who compromises a single build cannot affect other builds, cannot sign arbitrary artifacts, and cannot inject untrusted tasks without detection. This is the core guarantee of SLSA Build L3.
+Because there is no shared volume, untrusted tasks cannot touch artifacts they were never given. Developers can add custom tasks to their pipelines without undermining trust in the core build output.
 
-For a walkthrough of these properties in practice, see [Part 1: Build and Release](part1-build-and-release.md).
+---
+
+## How This Achieves SLSA Build Level 3
+
+Combining task trust, artifact immutability, isolated signing, and ephemeral pods satisfies the requirements for [SLSA Build Level 3](https://slsa.dev/spec/v1.1/requirements):
+
+- **Hardened Ephemeral Builds**: Builds run in isolated Kubernetes pods that are torn down after completion. No persistent disk or process space is shared across builds.
+- **Isolated Signing (Build vs. Release Boundary)**: Build execution runs in an unprivileged tenant namespace (`default-tenant`). Provenance signing is performed by Tekton Chains in an observer namespace. Release attestation signing occurs strictly within the platform-managed namespace (`managed-tenant`). Builds cannot access release signing material.
+- **Trusted Task Verification**: Conforma policy verifies that all pipeline tasks originate from approved, signed, digest-pinned catalogs.
+- **Tamper-Resistant Intermediate Artifacts**: Content-addressable OCI storage prevents inter-task data poisoning on shared storage volumes.
+
+An attacker who compromises a single build cannot affect other builds, cannot sign arbitrary artifacts, and cannot tamper with intermediate data without detection.
+
+---
 
 ## Consumer Trust: The VSA as Trust Anchor
 
-Build provenance from Tekton Chains is signed with the build platform's identity — an ephemeral OIDC certificate from Fulcio, or a platform-managed keypair on clusters without Sigstore. A consumer who wants to verify the build provenance directly must know and trust that identity, which can change when the platform is upgraded, migrated, or replaced.
+Build provenance from Tekton Chains is signed with the build platform's identity... an ephemeral OIDC certificate from Fulcio or an internal keypair. A consumer verifying that provenance directly would have to understand the build platform's internals, track key rotations, and reproduce 100+ policy rules.
 
-The Verification Summary Attestation solves this. Rather than asking consumers to verify the full build chain themselves, the release pipeline runs Conforma against the build provenance, distills the conclusions into a new VSA document, and signs it using the release signing key — a separate, stable identity controlled by the release platform and distributed out-of-band to consumers (for example, included in a project's security documentation or pinned in a trust policy).
+The **Verification Summary Attestation (VSA)** solves this through trust delegation:
 
-This is trust delegation: the release platform (known, stable key) vouches that it ran the full policy evaluation against the build provenance. Consumers verify one signature against one key and receive the SLSA level claims without needing to:
+1. The build pipeline runs in `default-tenant`, producing images and Chains provenance.
+2. The release pipeline runs in `managed-tenant`.
+3. The `verify-conforma` task evaluates Enterprise Contract policies against the image and its attestations.
+4. If verification passes, the release pipeline distills the conclusions into a signed VSA:
+   - Claims: `verificationResult: PASSED`, `verifiedLevels: [SLSA_BUILD_LEVEL_3]`.
+   - Signer: The release platform identity.
+5. Consumers verify a single signature on the VSA against the release platform identity. They don't need to parse the raw build chain or understand Tekton Chains internals.
 
-- Know the build platform's signing identity or certificate issuance details
-- Understand how Tekton Chains signs provenance
-- Reproduce the full policy evaluation
+---
 
-The tradeoff is explicit: consumers trust that Conforma's evaluation was correct and that the release platform is trustworthy. The VSA is a receipt, not an independent proof — its value depends on the release platform running meaningful policy in an integrity-controlled environment. This is why the release pipeline runs in the managed namespace where platform operators, not developers, control policy and signing keys.
+## Shifting Trust Left: From Retroactive Policies to Task Identity
+
+In the baseline model, task trust is calculated *retroactively*. Conforma evaluates whether tasks were trusted only after the pipeline completes.
+
+That works fine for gating releases, but it has limits:
+- Untrusted code still runs to completion inside the cluster before anything inspects it.
+- Outside services (registries, internal APIs) cannot easily know whether a running task is trusted without running a full Conforma policy evaluation themselves.
+
+Instead of waiting for a downstream policy engine to evaluate task trust, we can shift that calculation left to **admission time**.
+
+When a `TaskRun` is submitted, an admission controller (Kyverno) verifies that the task bundle is digest-pinned and signed by an approved catalog key *before* the pod is scheduled. Tasks that pass receive a production role; untrusted or inline tasks receive a dev role. SPIRE turns those verified labels into cryptographic workload identities (SPIFFE SVIDs).
+
+This individualizes trust down to specific tasks:
+- **Separation of duties**: Scanners sign vulnerability reports, builders sign SBOMs. A builder cannot sign off on a vulnerability scan.
+- **Push gating without static secrets**: Registries (like Zot) accept SPIFFE OIDC Bearer tokens, permitting pushes only from vetted builder identities and blocking dev tasks with `403 Forbidden`.
+- **Secretless service access**: Internal services validate callers directly against SPIRE's JWKS endpoint without distributing static tokens into tenant namespaces.
+- **Dual-gated release authority**: Managed release pipelines prevent ambient authority from signing VSAs before policy evaluation passes.
+
+For the full taxonomy of workload identity patterns and concrete implementations, see:
+- **[CI Workload Identity Patterns](task-workload-identity-patterns.md)** — The 5 classes of workload identity use cases.
+- **[Dual-Gated Release Guide](dual-gated-release-guide.md)** — PipelineRun-scoped release authority in `managed-tenant`.
+- **[Live Demonstration Guide](../demo/README.md)** — Interactive 4-act demonstration for KubeCon NA 2026.
+
+---
 
 ## References
 
@@ -72,6 +114,8 @@ The tradeoff is explicit: consumers trust that Conforma's evaluation was correct
 - [Type Hinting for SLSA Provenance](https://tekton.dev/docs/chains/slsa-provenance/#type-hinting)
 - [Conforma Project](https://conforma.dev)
 - [Conforma Policy Rules](https://github.com/conforma/policy)
-- [SLSA Specification](https://slsa.dev/spec/)
+- [SLSA Specification v1.1](https://slsa.dev/spec/)
 - [Verification Summary Attestation (VSA)](https://slsa.dev/verification_summary)
 - [Konflux Build Definitions](https://github.com/konflux-ci/build-definitions)
+- [ADR 0036: Trusted Artifacts](https://konflux-ci.dev/architecture/ADR/0036-trusted-artifacts.html)
+- [ADR 0053: Trusted Task Model](https://github.com/konflux-ci/architecture/blob/main/ADR/0053-trusted-task-model.md)

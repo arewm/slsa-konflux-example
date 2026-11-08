@@ -1,0 +1,83 @@
+{{- if and .Values.trustedBundles (or (eq .Values.verificationMode "ivpol") (eq .Values.verificationMode "both") (not .Values.verificationMode)) }}
+---
+# Blocks TaskRuns referencing trusted catalog bundles that lack a valid Cosign signature.
+# Uses ImageValidatingPolicy (policies.kyverno.io/v1beta1) with CEL-based image extraction.
+# Compatible with stock Kyverno v1.16/v1.17+ on Konflux clusters without requiring controller
+# patches (PR #16269) or ConfigMap patch restart jobs.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ImageValidatingPolicy
+metadata:
+  name: {{ if eq .Values.verificationMode "both" }}verify-bundle-signatures-ivpol{{ else }}verify-bundle-signatures{{ end }}
+spec:
+  failurePolicy: Fail
+  validationActions:
+    - Deny
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1", "v1beta1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["taskruns"]
+  {{- $regexParts := list }}
+  {{- range .Values.trustedBundles }}
+    {{- $regexParts = append $regexParts (.pattern | replace "." "[.]" | replace "*" ".*") }}
+  {{- end }}
+  {{- $bundleRegex := join "|" $regexParts }}
+  matchConditions:
+    - name: check-namespace
+      expression: >-
+        object.metadata.namespace in {{ .Values.namespaces | toJson }}
+    - name: references-trusted-catalog-bundle
+      expression: >-
+        has(object.spec.taskRef) && (
+          (
+            has(object.spec.taskRef.params) &&
+            object.spec.taskRef.params.exists(p,
+              has(p.name) && p.name == 'bundle' &&
+              has(p.value) && p.value.matches('({{ $bundleRegex }})')
+            )
+          ) ||
+          (
+            has(object.spec.taskRef.bundle) &&
+            object.spec.taskRef.bundle.matches('({{ $bundleRegex }})')
+          )
+        )
+  images:
+    - name: taskBundle
+      expression: >-
+        has(object.spec.taskRef) && has(object.spec.taskRef.params) ?
+          object.spec.taskRef.params
+            .filter(p, has(p.name) && p.name == 'bundle' && has(p.value))
+            .map(p, p.value) :
+          (has(object.spec.taskRef) && has(object.spec.taskRef.bundle)) ?
+            [object.spec.taskRef.bundle] : []
+  matchImageReferences:
+  {{- range .Values.trustedBundles }}
+    - glob: {{ .pattern | quote }}
+  {{- end }}
+  attestors:
+  {{- range .Values.trustedBundles }}
+    {{- range .signingKeys }}
+    - name: {{ .name | default "catalogKey" | quote }}
+      cosign:
+        key:
+          data: {{ .publicKey | quote }}
+        ctlog:
+          insecureIgnoreTlog: true
+          insecureIgnoreSCT: true
+    {{- end }}
+  {{- end }}
+  validations:
+    - expression: >-
+        images.taskBundle.all(img, img.matches('@sha256:[a-f0-9]{64}$'))
+      message: "Admission Denied: Catalog task bundles must be pinned by an immutable @sha256 digest."
+    {{- $attestorList := list }}
+    {{- range .Values.trustedBundles }}
+      {{- range .signingKeys }}
+        {{- $attestorList = append $attestorList (printf "attestors[%q]" (.name | default "catalogKey")) }}
+      {{- end }}
+    {{- end }}
+    - expression: >-
+        images.taskBundle.map(img, verifyImageSignatures(img, [{{ join ", " $attestorList }}])).all(valid, valid > 0)
+      message: "Admission Denied: TaskRun references a catalog bundle that lacks a valid platform Cosign signature."
+{{- end }}

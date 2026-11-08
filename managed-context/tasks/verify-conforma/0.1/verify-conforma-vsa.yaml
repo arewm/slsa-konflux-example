@@ -200,6 +200,11 @@ spec:
         Used together with CERTIFICATE_IDENTITY.
       default: ""
 
+    - name: SKIP_IMAGE_SIG_CHECK
+      type: string
+      description: Skip OCI image signature verification and verify only attestation signatures
+      default: "false"
+
     - name: ENABLE_VSA
       type: string
       description: Enable VSA generation
@@ -323,6 +328,10 @@ spec:
 
         if [[ -n "$(params.PUBLIC_KEY)" ]]; then
           EC_ARGS+=(--public-key "$(params.PUBLIC_KEY)")
+        fi
+
+        if [[ "$(params.SKIP_IMAGE_SIG_CHECK)" == "true" ]]; then
+          EC_ARGS+=(--skip-image-sig-check)
         fi
 
         if [[ -n "$(params.CERTIFICATE_IDENTITY)" && -n "$(params.CERTIFICATE_OIDC_ISSUER)" ]]; then

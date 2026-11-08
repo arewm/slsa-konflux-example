@@ -325,7 +325,7 @@ spec:
         - name: POLICY_CONFIGURATION
           value: $(params.enterpriseContractPolicy)
         - name: PUBLIC_KEY
-          value: "k8s://tekton-pipelines/public-key"
+          value: ""
         - name: STRICT
           # only set to false for development
           value: "true"
@@ -334,11 +334,11 @@ spec:
         - name: TUF_MIRROR
           value: "$(params.tufMirror)"
         - name: IGNORE_REKOR
-          value: "true"
+          value: "false"
         - name: CERTIFICATE_IDENTITY
-          value: ""
+          value: "$(params.certificateIdentity)"
         - name: CERTIFICATE_OIDC_ISSUER
-          value: ""
+          value: "$(params.certificateOidcIssuer)"
         - name: EXTRA_RULE_DATA
           value: $(params.enterpriseContractExtraRuleData)
         - name: TIMEOUT

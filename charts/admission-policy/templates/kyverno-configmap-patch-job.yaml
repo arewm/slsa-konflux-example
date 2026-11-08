@@ -1,3 +1,4 @@
+{{- if and .Values.trustedBundles (or (eq .Values.verificationMode "clusterpolicy") (eq .Values.verificationMode "both")) }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -116,3 +117,4 @@ spec:
           # Kyverno caches imageExtractors at startup; restart required to pick up the new config.
           kubectl rollout restart deployment/kyverno-admission-controller -n kyverno
           kubectl rollout status deployment/kyverno-admission-controller -n kyverno --timeout=120s
+{{- end }}

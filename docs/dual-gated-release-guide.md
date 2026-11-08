@@ -176,6 +176,7 @@ spec:
       configMaps:
         chains-config:
           data:
+            artifacts.oci.signer: "none"
             storage.oci.encoding-format: "sigstore-bundle"
 ```
 
