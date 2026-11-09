@@ -4,10 +4,8 @@ set -eo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 echo "==> [Demo Setup] Verifying cluster connection and prerequisites..."
-kubectl cluster-info >/dev/null 2>&1 || {
-  echo "Error: Cannot connect to Kubernetes cluster via kubectl."
-  exit 1
-}
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/kubeconfig.sh"
 
 # 1. Verify required namespaces exist
 for ns in default-tenant managed-tenant kind-registry spire tuf-system rekor-system; do

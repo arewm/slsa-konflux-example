@@ -19,6 +19,10 @@
 set -eo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Discover the Konflux demo cluster kubeconfig (no-op if already targeted).
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/kubeconfig.sh"
 REPO_DIR="$( cd "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd )"
 
 TENANT_NS="default-tenant"
@@ -76,7 +80,6 @@ fi
 
 # ---------------------------------------------------------------- preflight
 say "Verifying cluster connection and prerequisites..."
-kubectl cluster-info >/dev/null 2>&1 || fail "Cannot connect to the cluster via kubectl."
 for tool in helm tkn cosign python3; do
   need "${tool}" "required to build and sign the demo task bundle"
 done

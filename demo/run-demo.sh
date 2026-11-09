@@ -2,6 +2,10 @@
 set -e
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Discover the Konflux demo cluster kubeconfig (no-op if already targeted).
+# shellcheck disable=SC1091
+source "${DIR}/kubeconfig.sh"
 TYPE_SPEED=30
 source "${DIR}/demo-magic.sh"
 

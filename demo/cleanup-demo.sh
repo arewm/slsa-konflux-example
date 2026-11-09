@@ -2,6 +2,10 @@
 set -eo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Discover the Konflux demo cluster kubeconfig (no-op if already targeted).
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/kubeconfig.sh"
 PURGE_ALL=false
 
 while [[ $# -gt 0 ]]; do
