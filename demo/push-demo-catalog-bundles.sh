@@ -145,8 +145,15 @@ note "UNSIGNED_TASK_BUNDLE=${BUNDLE_REF_HOST}/${UNSIGNED_REPO}@${UNSIGNED_DIGEST
 
 # ---------------------------------------------------------------- sign
 sign_bundle() {  # $1 = full bundle ref (host/repo@digest)
+  # --tlog-upload=false: key-based signing must stay off the public Rekor
+  #   (the IVPOL verifies with insecureIgnoreTlog; uploading localhost
+  #   refs to rekor.sigstore.dev is noise). Also prevents the interactive
+  #   "private repository" prompt cosign v3 raises in a TTY.
+  # --yes: never prompt; setup must run unattended.
   DOCKER_CONFIG="${WORK_DIR}/docker-config" COSIGN_PASSWORD="" cosign sign \
     --key "${COSIGN_KEY_FILE}" \
+    --tlog-upload=false \
+    --yes \
     --allow-insecure-registry \
     "$1" >/dev/null
 }
