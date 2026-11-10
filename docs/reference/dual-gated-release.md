@@ -72,33 +72,43 @@ Model 2 closes the ambient authority gap with a cryptographic and admission conj
 
 ## 3. Implementation Details
 
-### A. Kyverno ClusterPolicy: `classify-release-authority`
+### A. Kyverno MutatingPolicy: `classify-release-authority`
 Located at `charts/admission-policy/templates/classify-release-authority.yaml`.
 
 ```yaml
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1beta1
+kind: MutatingPolicy
 metadata:
   name: classify-release-authority
 spec:
   failurePolicy: Ignore
-  rules:
-  - name: label-release-authority-taskrun
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          namespaces: ["managed-tenant"]
-    preconditions:
-      all:
-      - key: "{{ request.object.metadata.labels.\"tekton.dev/pipeline\" || '' }}"
-        operator: Equals
-        value: "slsa-e2e-release-dual-gated"
-    mutate:
-      patchStrategicMerge:
-        metadata:
-          labels:
-            trusted-pipeline-role: "release-authority"
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["taskruns"]
+  variables:
+    - name: pipelineLabel
+      expression: >-
+        has(request.object.metadata.labels) && 'tekton.dev/pipeline' in request.object.metadata.labels
+        ? request.object.metadata.labels['tekton.dev/pipeline'] : ''
+    - name: managedType
+      expression: >-
+        has(request.object.metadata.labels) && 'pipelines.appstudio.openshift.io/type' in request.object.metadata.labels
+        ? request.object.metadata.labels['pipelines.appstudio.openshift.io/type'] : ''
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            metadata: Object.metadata{
+              labels: request.namespace == 'managed-tenant' &&
+                      variables.pipelineLabel == 'slsa-e2e-release-dual-gated' &&
+                      variables.managedType == 'managed'
+                ? {'trusted-pipeline-role': 'release-authority'} : {}
+            }
+          }
 ```
 
 ### B. SPIRE ClusterSPIFFEID: `konflux-release-authority`
