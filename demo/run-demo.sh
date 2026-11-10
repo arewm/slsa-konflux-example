@@ -176,7 +176,7 @@ p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
 p "#"
 p "# Let's inspect what identity a task receives under this standard pattern:"
 kubectl delete taskrun demo-sa-token-inspection -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -236,7 +236,7 @@ p "# THE ATTACK:"
 p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
 p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
 kubectl delete pod rogue-ambient-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: v1
 kind: Pod
 metadata:
@@ -505,7 +505,7 @@ pe "kubectl get configmap zot-oidc-config -n kind-registry -o jsonpath='{.data.c
 p "# 1. Attack Attempt on Gated Registry:"
 p "# A rogue dev task attempts to push to slsa-e2e-test using its SPIFFE JWT-SVID:"
 kubectl delete taskrun demo-rogue-push-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -580,7 +580,7 @@ wait
 p "# 2. Legitimate Push on Gated Registry:"
 p "# The vetted Builder task bundle (buildah-oci-ta) executes with its trusted production identity:"
 kubectl delete taskrun demo-builder-gated-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -632,7 +632,7 @@ pe "kubectl get pods,services -n services"
 p "# 1. Untrusted Task Attempt:"
 p "# A dev task requests a token and attempts to access the CVE feed:"
 kubectl delete taskrun demo-untrusted-service-query -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -705,7 +705,7 @@ p "# 2. Vetted Scanner Task (trivy-sbom-scan):"
 p "# The catalog scanner task presents its audience-scoped SVID (SPIFFE Verifiable" 
 p "# Identity Document) to the service:"
 kubectl delete taskrun demo-trusted-scanner-query -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl apply -f -
+pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -754,6 +754,169 @@ pe "cat ${DIR}/manifests/separation_of_duties.rego"
 
 p "# Test Conforma policy against an adversarial attack (Builder attempts to forge clean CVE scan):"
 pe "opa test ${DIR}/manifests/separation_of_duties.rego ${DIR}/manifests/separation_of_duties_test.rego -v"
+
+wait
+p ""
+p "# ------------------------------------------------------------------"
+p "# Part D: Legacy Token Exchange (Vault broker — Pattern 2 extension)"
+p "# ------------------------------------------------------------------"
+p "# When the service CANNOT speak OIDC (legacy static-token APIs, e.g."
+p "# Pulp content repositories), a broker exchanges the task's JWT-SVID for"
+p "# the static credential — released only to the bound SPIFFE ID, never"
+p "# mounted ambiently in the tenant namespace."
+
+VAULT_BUNDLE_REF_FILE="${DIR}/manifests/vault-bundle-ref"
+if [ -f "${VAULT_BUNDLE_REF_FILE}" ] && kubectl get deployment vault-legacy-exchange -n services >/dev/null 2>&1; then
+  # shellcheck disable=SC1090
+  source "${VAULT_BUNDLE_REF_FILE}"
+  VAULT_URL="http://vault-legacy-exchange.services.svc.cluster.local:8200"
+
+  p "# The vetted scanner task fetches an audience-scoped JWT-SVID (audience"
+  p "# 'vault') and presents it to the broker:"
+  kubectl delete taskrun demo-vault-scanner-exchange -n default-tenant --wait=true >/dev/null 2>&1 || true
+  pe "cat << 'EOF' | kubectl_create_retry
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: demo-vault-scanner-exchange
+  namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  params:
+  - name: jwt-audience
+    value: "vault"
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: ${VAULT_TASK_BUNDLE}
+    - name: name
+      value: trivy-sbom-scan
+    - name: kind
+      value: task
+EOF"
+  pe "kubectl wait --for=condition=Succeeded taskrun/demo-vault-scanner-exchange -n default-tenant --timeout=300s"
+  SCANNER_JWT=$(kubectl logs demo-vault-scanner-exchange-pod -n default-tenant -c step-fetch-jwt \
+    | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
+  p "# JWT-SVID subject: $(python3 -c "
+import base64, json, sys
+p = '${SCANNER_JWT}'.split('.')[1]; p += '=' * (-len(p) % 4)
+print(json.loads(base64.urlsafe_b64decode(p))['sub'])")"
+
+  p "# Exchange it at the broker — login mints a short-lived (5m) Vault token:"
+  kubectl delete pod test-vault-login -n default-tenant --wait=true >/dev/null 2>&1 || true
+  pe "kubectl run test-vault-login -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -s -X POST -H 'Content-Type: application/json' -d '{\"role\": \"scanner\", \"jwt\": \"${SCANNER_JWT}\"}' ${VAULT_URL}/v1/auth/jwt/login"
+  for i in $(seq 1 20); do
+    kubectl logs test-vault-login -n default-tenant > /tmp/vault-login.json 2>/dev/null || true
+    if grep -q . /tmp/vault-login.json 2>/dev/null; then break; fi
+    sleep 2
+  done
+  VAULT_TOKEN=$(python3 -c "import json; d=json.load(open('/tmp/vault-login.json')); print(d['auth']['client_token'])" 2>/dev/null || true)
+  p "# Login OK: Vault minted a token with policy 'cve-feed-reader' (ttl 5m)."
+
+  p "# Read the legacy static credential with it:"
+  kubectl delete pod test-vault-read -n default-tenant --wait=true >/dev/null 2>&1 || true
+  pe "kubectl run test-vault-read -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -s -H 'X-Vault-Token: ${VAULT_TOKEN}' ${VAULT_URL}/v1/secret/data/legacy-api"
+  for i in $(seq 1 20); do
+    kubectl logs test-vault-read -n default-tenant > /tmp/vault-read.json 2>/dev/null || true
+    if grep -q . /tmp/vault-read.json 2>/dev/null; then break; fi
+    sleep 2
+  done
+  pe "kubectl logs test-vault-read -n default-tenant"
+  p "# The scanner can now authenticate to the legacy service with ZERO"
+  p "# pre-shared secrets — the credential followed the verified identity."
+
+  demo_cleanup pod test-vault-login -n default-tenant
+  demo_cleanup pod test-vault-read -n default-tenant
+  demo_cleanup taskrun demo-vault-scanner-exchange -n default-tenant
+
+  wait
+  p "# Now the dev-tier task attempts the same exchange:"
+  kubectl delete taskrun demo-vault-dev-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
+  DEV_VAULT_ATTEMPTS=0
+  while [ ${DEV_VAULT_ATTEMPTS} -lt 3 ]; do
+    DEV_VAULT_ATTEMPTS=$((DEV_VAULT_ATTEMPTS + 1))
+    cat << 'EOF' | kubectl_create_retry >/dev/null
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  name: demo-vault-dev-attempt
+  namespace: default-tenant
+  labels:
+    appstudio.openshift.io/application: demo-app
+    appstudio.openshift.io/component: demo-app
+    tekton.dev/task: dev-experiment
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  taskSpec:
+    stepTemplate:
+      volumeMounts:
+      - mountPath: /spiffe-workload-api
+        name: spiffe-workload-api
+        readOnly: true
+    steps:
+    - name: wait-spire
+      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
+      command:
+      - sleep
+      - '10'
+    - name: fetch-jwt
+      image: ghcr.io/spiffe/spire-agent:1.15.3
+      command:
+      - /opt/spire/bin/spire-agent
+      - api
+      - fetch
+      - jwt
+      - -audience
+      - vault
+      - -socketPath
+      - /spiffe-workload-api/spire-agent.sock
+      - -output
+      - json
+    volumes:
+    - csi:
+        driver: csi.spiffe.io
+        readOnly: true
+      name: spiffe-workload-api
+EOF
+    if kubectl wait --for=condition=Succeeded taskrun/demo-vault-dev-attempt -n default-tenant --timeout=120s >/dev/null 2>&1; then
+      break
+    fi
+    # The dev SVID entry is minted by the controller-manager shortly after
+    # the pod appears; if fetch-jwt lost that race, retry with a fresh pod.
+    if kubectl logs demo-vault-dev-attempt-pod -n default-tenant -c step-fetch-jwt 2>/dev/null | grep -q "no identity issued"; then
+      p "# (SPIRE entry not yet minted for the fresh pod — retrying)"
+      kubectl delete taskrun demo-vault-dev-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
+      continue
+    fi
+    break
+  done
+  DEV_JWT=$(kubectl logs demo-vault-dev-attempt-pod -n default-tenant -c step-fetch-jwt 2>/dev/null \
+    | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])" 2>/dev/null || true)
+  if [ -n "${DEV_JWT}" ]; then
+    kubectl delete pod test-vault-dev-login -n default-tenant --wait=true >/dev/null 2>&1 || true
+    pe "kubectl run test-vault-dev-login -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -s -X POST -H 'Content-Type: application/json' -d '{\"role\": \"scanner\", \"jwt\": \"${DEV_JWT}\"}' ${VAULT_URL}/v1/auth/jwt/login"
+    for i in $(seq 1 20); do
+      kubectl logs test-vault-dev-login -n default-tenant > /tmp/vault-dev-login.json 2>/dev/null || true
+      if grep -q . /tmp/vault-dev-login.json 2>/dev/null; then break; fi
+      sleep 2
+    done
+    pe "kubectl logs test-vault-dev-login -n default-tenant"
+    p "# Vault DENIED the login: the JWT subject is the dev-tier identity,"
+    p "# which does not match the role's bound_subject. The dev task cannot"
+    p "# obtain the legacy credential."
+    demo_cleanup pod test-vault-dev-login -n default-tenant
+  else
+    p "# (dev-tier task could not fetch a JWT-SVID; skipping the denial)"
+  fi
+  demo_cleanup taskrun demo-vault-dev-attempt -n default-tenant
+else
+  p "# (Vault extension not primed — run demo/setup-demo.sh and accept the"
+  p "#  tkn/cosign tool fetch to enable this part.)"
+fi
 
 wait
 clear_between_acts
@@ -1044,7 +1207,7 @@ pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/released-demo-app/re
 
 p "# 4. Query the Rekor transparency log dynamically using the released image attestation:"
 kubectl delete job query-rekor-demo -n default --wait=true >/dev/null 2>&1 || true
-cat << 'EOF' | sed "s|__DIGEST__|${RELEASE_DIGEST}|g" | kubectl apply -f -
+cat << 'EOF' | sed "s|__DIGEST__|${RELEASE_DIGEST}|g" | kubectl_create_retry
 apiVersion: batch/v1
 kind: Job
 metadata:

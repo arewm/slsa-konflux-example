@@ -25,4 +25,7 @@ kind-config.yaml
 .claire/
 
 # Git worktrees
-.worktrees/
+.worktrees
+demo/.tools/
+# Generated per-cluster by demo/vault-setup-lib.sh
+demo/manifests/vault-bundle-ref

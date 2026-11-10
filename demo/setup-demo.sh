@@ -351,6 +351,20 @@ kubectl rollout status deployment/cve-database-service -n services --timeout=60s
 echo "==> [Demo Setup] Publishing and signing demo catalog task bundles..."
 "${SCRIPT_DIR}/push-demo-catalog-bundles.sh"
 
+# 4c. Prime the Vault legacy token-exchange extension (Act 3 Part D).
+# Deploys the vault-legacy Helm release and pushes+signs the vault variant
+# of the scanner bundle. Requires tkn/cosign; if they are missing the user
+# is offered a download into demo/.tools/ (gitignored) — declining skips
+# this extension gracefully (Act 3 Part D prints a note instead).
+echo "==> [Demo Setup] Priming Vault legacy token-exchange extension..."
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/vault-setup-lib.sh"
+if vault_setup_infra; then
+  echo "    Vault extension primed (Act 3 Part D enabled)."
+else
+  echo "    Skipping Vault extension (tools unavailable or declined)."
+fi
+
 # 5. Deploy dedicated Demo Application via component-onboarding Helm chart
 echo "==> [Demo Setup] Deploying demo-app via charts/component-onboarding..."
 # Delete a pre-existing EnterpriseContractPolicy first: a stale

@@ -62,6 +62,11 @@ Before running the demo, confirm the following tooling and infrastructure are in
    - `jq` (v1.6+)
    - `opa` (Open Policy Agent CLI)
    - `curl`, `openssl`, and `python3`
+   - `tkn` (Tekton CLI) and `cosign` — required to publish and sign the demo
+     catalog bundles. If missing, `setup-demo.sh` offers to download them into
+     `demo/.tools/` (gitignored; nothing is installed system-wide). Declining
+     skips the Vault token-exchange extension (Act 3, Part D); the catalog
+     bundles are always required.
 3. **Port Forwarding / Endpoints**:
    - Konflux UI: `https://localhost:9443`
    - Zot OCI Registry: `https://localhost:5001` (NodePort)
@@ -234,6 +239,9 @@ The task definitions are checked in at `demo/manifests/demo-catalog-task.yaml` a
    - **Untrusted Caller**: An arbitrary dev task requests an audience-scoped JWT for `https://cve-database.internal`. The service returns **HTTP/1.0 403 Forbidden**: role authorization failure.
    - **Vetted Scanner (`trivy-sbom-scan`)**: The scanner task requests a JWT and queries the feed. The service returns **HTTP/1.0 200 OK** with vulnerability data.
 3. **Separation of Duties (OPA Rego)**: Runs unit tests against `separation_of_duties.rego`, showing that a builder task attempting to sign a clean CVE scan is denied by policy.
+4. **Legacy Token Exchange (Vault broker — Pattern 2 extension)**: For services that cannot speak OIDC natively (e.g. Pulp content repositories behind static API tokens), a Vault broker exchanges a task's JWT-SVID for the static credential. Primes during `setup-demo.sh` (Helm release `vault-legacy` in `services`; the scanner bundle's vault variant pushed and signed with the demo catalog key, its digest recorded in `demo/manifests/vault-bundle-ref`).
+   - **Vetted Scanner**: fetches an audience-`vault` JWT-SVID, logs in to Vault (token minted with policy `cve-feed-reader`, TTL 5m), and reads the legacy static credential — zero pre-shared secrets in the tenant namespace.
+   - **Dev-tier Task**: attempts the same exchange; Vault denies the login because the JWT subject does not match the role's `bound_subject`.
 
 ### Act 4: Managed Release Boundary (Dual-Gated Authority)
 1. **Release Custom Resource**: Creates an AppStudio `Release` resource in `default-tenant` referencing `demo-app-release-plan` and `demo-app-snapshot`.
