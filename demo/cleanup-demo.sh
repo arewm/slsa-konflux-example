@@ -6,6 +6,17 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 # Discover the Konflux demo cluster kubeconfig (no-op if already targeted).
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/kubeconfig.sh"
+
+# Force-delete a TaskRun that is stuck Terminating on a chains/results
+# finalizer; otherwise a rapid cleanup -> re-run cycle can abort on
+# 'AlreadyExists: object is being deleted' when re-creating fixed names.
+delete_taskrun_force() {  # $1 = name, $2 = namespace
+  kubectl delete taskrun "$1" -n "$2" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+  if kubectl get taskrun "$1" -n "$2" >/dev/null 2>&1; then
+    kubectl patch taskrun "$1" -n "$2" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+    kubectl delete taskrun "$1" -n "$2" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+  fi
+}
 PURGE_ALL=false
 
 while [[ $# -gt 0 ]]; do
@@ -31,8 +42,12 @@ echo "==> [Demo Cleanup] Cleaning up demo execution artifacts..."
 
 # 1. Delete default-tenant TaskRuns created during demo runs
 echo "  - Deleting demo TaskRuns in default-tenant..."
-kubectl delete taskrun -n default-tenant -l appstudio.openshift.io/application=demo-app --wait=false --ignore-not-found=true 2>/dev/null || true
-kubectl delete taskrun attacker-unsigned-task demo-signed-task demo-sa-token-inspection demo-rogue-push-attempt demo-builder-gated-push demo-untrusted-service-query demo-trusted-scanner-query -n default-tenant --wait=false --ignore-not-found=true 2>/dev/null || true
+for tr in $(kubectl get taskruns -n default-tenant -l appstudio.openshift.io/application=demo-app -o name 2>/dev/null); do
+  delete_taskrun_force "${tr#taskrun.tekton.dev/}" default-tenant
+done
+for tr in attacker-unsigned-task demo-signed-task demo-sa-token-inspection demo-rogue-push-attempt demo-builder-gated-push demo-untrusted-service-query demo-trusted-scanner-query; do
+  delete_taskrun_force "$tr" default-tenant
+done
 
 # 2. Delete test / attacker Pods in default-tenant
 echo "  - Deleting demo test/attacker pods in default-tenant..."
