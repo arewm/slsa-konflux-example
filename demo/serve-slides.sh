@@ -85,8 +85,7 @@ prepare_custom_index() {
 import sys
 
 raw = sys.stdin.read()
-script = '''<script>
-(function() {
+script = '''<script>(function() {
   'use strict';
   function signalToParent(type, data) {
     if (window.parent && window.parent !== window) {
@@ -135,13 +134,30 @@ script = '''<script>
     observer.observe(titleEl, { subtree: true, characterData: true, childList: true });
   }
   setInterval(checkTitle, 300);
-})();
-</script>'''
+})();</script>'''
+
+style = '''<style>
+/* Full-screen terminal rendering: remove ttyd's default centering and
+   padding so the xterm fills the entire viewport (and thus the slide
+   iframe) edge to edge. */
+html, body { margin: 0 !important; padding: 0 !important; height: 100% !important; }
+#terminal-container {
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  padding: 0 !important;
+}
+#terminal-container .terminal {
+  height: 100% !important;
+  width: 100% !important;
+  padding: 0 2px !important; /* hairline inset so glyphs never clip */
+}
+</style>'''
 
 if '</body>' in raw:
-    out = raw.replace('</body>', script + '</body>')
+    out = raw.replace('</body>', style + script + '</body>')
 else:
-    out = raw + script
+    out = raw + style + script
 
 with open('${CUSTOM_INDEX}', 'w', encoding='utf-8') as f:
     f.write(out)

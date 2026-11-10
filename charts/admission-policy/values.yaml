@@ -27,11 +27,19 @@ trustedBundles: []
 #           ...
 #           -----END PUBLIC KEY-----
 
-# Namespaces where TaskRun classification is applied.
-# These namespaces also get labeled trusted-tasks-enabled: "true" by the chart.
-namespaces:
-  - default-tenant
-  - managed-tenant
+# Task-trust namespace scoping. When list is empty (the default): cluster-wide
+# — classification, bundle signature verification, and trusted-task identity
+# issuance apply in every namespace, and the trust decision rests entirely on
+# bundle provenance (catalog path pattern + digest pin + Cosign signature),
+# not on which namespace the TaskRun runs in. Listed namespaces get labeled
+# trusted-tasks-enabled: "true" (the spiffe-spire chart's identity-issuance
+# selector); in cluster-wide mode the labeler labels every namespace.
+#
+# Default: cluster-wide. CI (Tekton) can run in any namespace, and the only
+# structurally special namespaces are the managed ones — which are separated
+# by the managed-marker label guards, not by this list. List namespaces here
+# only to explicitly scope the task-trust domain.
+namespaces: []
 
 # ---------------------------------------------------------------------------
 # Release boundary hardening ("label guards")

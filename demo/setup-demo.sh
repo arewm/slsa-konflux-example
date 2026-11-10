@@ -126,6 +126,10 @@ EOF
   kubectl wait --for=condition=complete job/demo-rekor-createtree -n rekor-system --timeout=180s
 
   # 2d. Regenerate the CT log signing config (keys + tree ID)
+  # The Job is immutable: delete it first so the re-apply actually runs.
+  # (The secrets were deleted in 2b; a stale Completed Job would satisfy
+  # the wait below without regenerating them, leaving ctlog unmountable.)
+  kubectl delete job demo-ctlog-createctconfig -n ctlog-system --ignore-not-found=true >/dev/null 2>&1 || true
   cat <<'EOF' | kubectl apply -f - >/dev/null
 apiVersion: batch/v1
 kind: Job

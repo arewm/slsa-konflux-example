@@ -6,8 +6,11 @@ spec:
   className: spire-spire
   # SPIRE controller manager evaluates this template at runtime (Go templates, not Helm).
   # The backtick block prevents Helm from processing the inner brace expressions.
+  # Inline tasks (taskSpec, no taskRef) carry no tekton.dev/task label; fall
+  # back to "inline" so the rendered SPIFFE ID never has a trailing slash
+  # (which the controller-manager rejects, silently skipping the entry).
   spiffeIDTemplate: >-
-    spiffe://{{ .Values.trustDomain }}/dev/{{ .Values.clusterName }}/{{`{{ .PodSpec.ServiceAccountName }}/{{ index .PodMeta.Labels "tekton.dev/task" }}`}}
+    spiffe://{{ .Values.trustDomain }}/dev/{{ .Values.clusterName }}/{{`{{ .PodSpec.ServiceAccountName }}/{{ if index .PodMeta.Labels "tekton.dev/task" }}{{ index .PodMeta.Labels "tekton.dev/task" }}{{ else }}inline{{ end }}`}}
   namespaceSelector:
     matchExpressions:
     - key: kubernetes.io/metadata.name

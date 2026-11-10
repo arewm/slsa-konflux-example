@@ -27,7 +27,7 @@
 # recomputes, pod ownerRefs) hold for every namespace, and only the
 # platform controllers are legitimate setters anywhere — so the wider
 # scope is strictly safer. The namespaces values still scope the
-# classification mutation and the IVPOL.
+# classification mutation and the ImageValidatingPolicy.
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:

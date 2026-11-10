@@ -14,3 +14,4 @@ trustedBundles:
     signingKeys:
       - name: "demo-catalog-key"
         publicKey: ""  # injected per-cluster by demo/push-demo-catalog-bundles.sh
+

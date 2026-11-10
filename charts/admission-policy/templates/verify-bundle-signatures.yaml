@@ -17,7 +17,11 @@ spec:
       any:
       - resources:
           kinds: ["TaskRun"]
+          {{- if .Values.namespaces }}
+          # Scoped mode: only the listed namespaces. Omitted entirely when
+          # namespaces is empty => matches all namespaces (cluster-wide).
           namespaces: {{ .Values.namespaces | toJson }}
+          {{- end }}
     {{- $regexParts2 := list }}
     {{- range .Values.trustedBundles }}
       {{- $regexParts2 = append $regexParts2 (.pattern | replace "." "[.]" | replace "*" ".*") }}

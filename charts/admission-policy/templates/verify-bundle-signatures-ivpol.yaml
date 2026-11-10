@@ -36,9 +36,19 @@ spec:
   {{- end }}
   {{- $bundleRegex := join "|" $regexParts }}
   matchConditions:
+    {{- if .Values.namespaces }}
+    # Scoped mode: only the listed namespaces participate in task trust.
     - name: check-namespace
       expression: >-
         object.metadata.namespace in {{ .Values.namespaces | toJson }}
+    {{- else }}
+    # Cluster-wide mode (namespaces: []): every namespace participates; the
+    # trust decision rests entirely on bundle provenance (path + digest +
+    # signature), not location.
+    - name: check-namespace
+      expression: >-
+        has(object.metadata.namespace)
+    {{- end }}
     - name: references-trusted-catalog-bundle
       expression: >-
         has(object.spec.taskRef) && (

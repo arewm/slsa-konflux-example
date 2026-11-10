@@ -49,6 +49,15 @@ should_run_act() {
   [[ "$SELECTED_ACT" == "$target" ]]
 }
 
+# Clear between acts ONLY when running the full arc (--act all/0). Per-act
+# terminals (the slide iframes) keep their scrollback so the session can be
+# walked through during post-presentation Q&A.
+clear_between_acts() {
+  if [[ "$SELECTED_ACT" == "all" || "$SELECTED_ACT" == "0" ]]; then
+    clear
+  fi
+}
+
 finish_act() {
   local act="$1"
   if [[ "$SELECTED_ACT" != "all" && "$SELECTED_ACT" != "0" ]]; then
@@ -65,22 +74,33 @@ DEMO_CLEANUP="${DEMO_CLEANUP:-false}"
 # Retry a kubectl create on transient admission-webhook timeouts (Kyverno
 # signature verification can exceed the webhook timeout on a cold cache).
 kubectl_create_retry() {
-  local attempt payload err
+  local attempt payload out err errfile
   payload=$(cat)  # buffer stdin: retries cannot re-read a pipe
+  errfile=$(mktemp)
   for attempt in 1 2 3; do
-    err=$(printf '%s' "${payload}" | kubectl create -f - "$@" 2>&1) && return 0
+    # stdout (e.g. -o jsonpath='{.metadata.name}' for generateName
+    # resources) is captured and re-emitted on success; stderr goes to a
+    # temp file so it can be inspected for the denial fast-path below.
+    if out=$(printf '%s' "${payload}" | kubectl create -f - "$@" 2>"${errfile}"); then
+      printf '%s\n' "${out}"
+      rm -f "${errfile}"
+      return 0
+    fi
+    err=$(cat "${errfile}")
     # Retrying only makes sense for transient webhook failures (cold-cache
     # Kyverno signature verification exceeding the webhook timeout). An
     # admission DENIAL is the expected demo outcome in many scenes —
     # surface it immediately instead of burning 60s on pointless retries.
     if printf '%s' "${err}" | grep -q "denied the request"; then
       printf '%s\n' "${err}" >&2
+      rm -f "${errfile}"
       return 1
     fi
     printf '%s\n' "${err}" >&2
     echo "    [retry ${attempt}/3] admission webhook slow; waiting 20s..."
     sleep 20
   done
+  rm -f "${errfile}"
   return 1
 }
 
@@ -274,7 +294,7 @@ demo_cleanup pod rogue-ambient-push -n default-tenant
 p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
 wait
 
-clear
+clear_between_acts
 finish_act 1
 fi
 
@@ -294,13 +314,43 @@ fi
 p "# =================================================================="
 p "# ACT 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)"
 p "# =================================================================="
-p "# Inspect Kyverno's task classification rules before admission:"
-p "# Notice: default rule sets 'trusted-task-role: dev'; pinned catalog bundles upgrade to 'prod':"
+p "# PART 1 — THE RULES: meet the admission policies before we test them."
+p "# Classification gate: prod is EARNED, not claimed. The trustedProd variable"
+p "# recomputes it from the TaskRun's own bundle reference alone — digest-pinned"
+p "# and from the trusted catalog registry. Namespace-agnostic by design:"
+pe "kubectl get mutatingpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.variables[] | select(.name == \"trustedProd\") | .expression'"
+p ""
+p "# Only then do the mutations act on it — a 'dev' floor for the unlabeled,"
+p "# and the prod upgrade when trustedProd holds:"
 pe "kubectl get mutatingpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.mutations'"
-
-p "# 0. Inspect and exercise the Pod label anti-spoofing policy:"
+p ""
+p "# And the path pattern alone is not trust. The ImageValidatingPolicy scopes"
+p "# itself to exactly that pattern — out-of-scope bundles never reach these"
+p "# checks (and can never be prod either, since trustedProd demands the same"
+p "# pattern):"
+pe "kubectl get imagevalidatingpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.matchConditions[].name'"
+p ""
+p "# For every bundle IN scope, two fail-closed validations — immutable digest"
+p "# pin, and a valid platform Cosign signature:"
+pe "kubectl get imagevalidatingpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.validations'"
+p ""
+p "# One more guard: labels cannot be forged at the Pod level either —"
+p "# trusted-task-role on a Pod requires a TaskRun owner reference:"
 pe "kubectl get validatingpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.validations'"
-p "# A rogue Pod cannot self-assign trusted-task-role: prod without a TaskRun owner reference."
+p ""
+p "# And the last link: the admission rules decide the label, and SPIRE turns"
+p "# the verified label into a cryptographic identity — production SVIDs are"
+p "# minted only for pods carrying the Kyverno-stamped prod label:"
+pe "kubectl get clusterspiffeid konflux-trusted-prod -o yaml 2>/dev/null | yq '.spec.podSelector'"
+
+wait
+p ""
+p "# ═══════════════════════════════════════════════════════════════════════════"
+p ""
+
+p "# PART 2 — THE TESTS: watch those rules interact under attack."
+p ""
+p "# TEST 1 — Can a rogue Pod simply claim prod by setting the label itself?"
 kubectl delete pod attacker-label-spoof -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl_create_retry
 apiVersion: v1
@@ -319,7 +369,7 @@ EOF" || true
 p "Admission denied: prevent-pod-label-spoofing denied the request (trusted-task-role requires a TaskRun owner reference)."
 demo_cleanup pod attacker-label-spoof -n default-tenant
 
-p "# 1. Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
+p "# TEST 2 — Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
 p "# Expected: Kyverno admits the task but restricts it to the unprivileged 'dev' role."
 UNTRUSTED_TR=$(cat << 'EOF' | kubectl_create_retry -o jsonpath='{.metadata.name}'
 apiVersion: tekton.dev/v1
@@ -351,23 +401,18 @@ pe "kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} --sh
 p "# What workload identity does SPIRE mint for this untrusted task?"
 POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} -o jsonpath='{.items[0].metadata.uid}')
 pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -selector \"k8s:pod-uid:${POD_UID}\""
+p "# Note the identity segment: spiffe://konflux-ci.dev/DEV/... — SPIRE minted"
+p "# the unprivileged dev identity, scoped to exactly this task. No prod"
+p "# authority, no ambient secrets — just a narrowly-scoped dev SVID."
 
 demo_cleanup taskrun "${UNTRUSTED_TR}" -n default-tenant
 
 wait
-clear
 
-p "# 2. What happens when an attacker attempts to spoof our trusted catalog by submitting an unsigned bundle?"
-p "# Notice: Arbitrary tasks are safely admitted as 'dev', but claiming the trusted catalog pattern"
-p "# (registry-service.kind-registry/tekton-catalog/*) without a valid platform Cosign signature"
-p "# is an admission-blocking violation enforced by verify-bundle-signatures:"
-p "#"
-p "# Inspect the bundle signature enforcement policy:"
-if kubectl get imagevalidatingpolicy verify-bundle-signatures >/dev/null 2>&1; then
-  pe "kubectl get imagevalidatingpolicy verify-bundle-signatures -o yaml | yq '{\"name\": .metadata.name, \"images\": .spec.images, \"validations\": .spec.validations}'"
-else
-  pe "kubectl get clusterpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.rules[] | {\"rule\": .name, \"match\": .match, \"verifyImages\": .verifyImages}'"
-fi
+p "# TEST 3 — Spoof the trusted catalog: submit an unsigned bundle that claims"
+p "# the tekton-catalog/* path. The path is the trust grant, but the signature"
+p "# check is mandatory for EVERY bundle on that path — we saw the validations"
+p "# in Part 1; now watch them bite. Denied outright, not merely downgraded:"
 
 kubectl delete taskrun attacker-unsigned-task -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl create -f - || true
@@ -394,8 +439,11 @@ EOF"
 
 p "# Admission denied! Sigstore verification failed: no matching signatures found."
 wait
+p ""
+p "# ═══════════════════════════════════════════════════════════════════════════"
+p ""
 
-p "# 3. Now submit a cryptographically signed, pinned catalog task bundle (signed with Cosign):"
+p "# TEST 4 — Now do it right: a cryptographically signed, digest-pinned catalog bundle:"
 p "# Expected: Kyverno verifies the Sigstore bundle signature and promotes the role to 'prod'."
 kubectl delete taskrun demo-signed-task -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl_create_retry
@@ -425,13 +473,19 @@ pe "kubectl wait --for=condition=Succeeded taskrun/demo-signed-task -n default-t
 p "# Inspect the TaskRun labels stamped by Kyverno:"
 pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
 
-p "# Inspect the production SVID minted by SPIRE for this specific Pod:"
+p "# Inspect the production SVID (SPIFFE Verifiable Identity Document) minted by SPIRE for this Pod:"
 SIGNED_POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=demo-signed-task -o jsonpath='{.items[0].metadata.uid}')
 pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -selector \"k8s:pod-uid:${SIGNED_POD_UID}\""
+p "# And here: spiffe://konflux-ci.dev/TRUSTED/... — earned by the signed,"
+p "# digest-pinned bundle. Admission decided the label; SPIRE minted the"
+p "# production identity the label authorizes. Trust, end to end."
 
 demo_cleanup taskrun demo-signed-task -n default-tenant
 wait
-clear
+clear_between_acts
+p ""
+p "# ═══════════════════════════════════════════════════════════════════════════"
+p ""
 
 finish_act 2
 fi
@@ -648,7 +702,8 @@ wait
 sleep 2
 
 p "# 2. Vetted Scanner Task (trivy-sbom-scan):"
-p "# The catalog scanner task presents its audience-scoped SVID to the service:"
+p "# The catalog scanner task presents its audience-scoped SVID (SPIFFE Verifiable" 
+p "# Identity Document) to the service:"
 kubectl delete taskrun demo-trusted-scanner-query -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl apply -f -
 apiVersion: tekton.dev/v1
@@ -701,7 +756,7 @@ p "# Test Conforma policy against an adversarial attack (Builder attempts to for
 pe "opa test ${DIR}/manifests/separation_of_duties.rego ${DIR}/manifests/separation_of_duties_test.rego -v"
 
 wait
-clear
+clear_between_acts
 finish_act 3
 fi
 

@@ -146,7 +146,7 @@ note "UNSIGNED_TASK_BUNDLE=${BUNDLE_REF_HOST}/${UNSIGNED_REPO}@${UNSIGNED_DIGEST
 # ---------------------------------------------------------------- sign
 sign_bundle() {  # $1 = full bundle ref (host/repo@digest)
   # --use-signing-config=false + --tlog-upload=false: key-based signing must
-  #   stay off the public Rekor (the IVPOL verifies with insecureIgnoreTlog;
+  #   stay off the public Rekor (the ImageValidatingPolicy verifies with insecureIgnoreTlog;
   #   uploading localhost refs to rekor.sigstore.dev is noise). Also prevents
   #   the interactive "private repository" prompt cosign v3 raises in a TTY.
   # --yes: never prompt; setup must run unattended.
@@ -170,7 +170,7 @@ json.dump({"auths": {host: {"auth": base64.b64encode(f"{user}:{pw}".encode()).de
 PYEOF
 
 # Key-based signing skips the Rekor transparency log by default (cosign v3),
-# which matches the IVPOL's insecureIgnoreTlog (no Rekor in the demo cluster).
+# which matches the ImageValidatingPolicy's insecureIgnoreTlog (no Rekor in the demo cluster).
 say "Signing the catalog bundles with the demo catalog key..."
 sign_bundle "${BUNDLE_HOST}/${CATALOG_REPO}@${CATALOG_DIGEST}"
 note "Catalog task bundle signed."
@@ -242,12 +242,12 @@ delete_taskrun_force() {  # $1 = name, $2 = namespace
 
 say "Verifying classification on the live cluster..."
 
-# (a) the IVPOL carries the demo-catalog-key attestor
+# (a) the ImageValidatingPolicy carries the demo-catalog-key attestor
 if kubectl get imagevalidatingpolicy verify-bundle-signatures >/dev/null 2>&1; then
   kubectl get imagevalidatingpolicy verify-bundle-signatures \
     -o jsonpath='{.spec.attestors[*].name}' | grep -q demo-catalog-key \
-    || fail "IVPOL verify-bundle-signatures does not carry attestor demo-catalog-key."
-  note "IVPOL attestor demo-catalog-key present."
+    || fail "ImageValidatingPolicy verify-bundle-signatures does not carry attestor demo-catalog-key."
+  note "ImageValidatingPolicy attestor demo-catalog-key present."
 fi
 
 # (b) the signed catalog bundle classifies trusted-task-role: prod
