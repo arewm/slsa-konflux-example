@@ -1,6 +1,6 @@
 {{- if .Values.hardening }}
 ---
-# Guard: managed-marker labels on PipelineRuns.
+# Guard: managed-marker labels on PipelineRuns (CEL ValidatingPolicy).
 #
 # The managed markers (pipelines.appstudio.openshift.io/type=managed,
 # appstudio.openshift.io/service=release) are what downstream policy
@@ -10,117 +10,85 @@
 # launder itself into the release authority ("rogue pipeline" threat).
 #
 # This policy closes that hole in two ways:
-#   1. deny-managed-marker-usurpation — the markers may only be newly set or
+#   1. marker-usurpation checks — the markers may only be newly set or
 #      changed by the release-service controller ServiceAccount. Unrelated
 #      updates (status/annotation patches by other controllers) that leave
 #      the markers untouched are allowed, so Tekton Chains and the release
 #      service reconciler keep working.
-#   2. deny-managed-marker-spec-injection — label laundering via spec paths
-#      is closed: the Tekton v1 PipelineRun CRD has no labels field on
-#      podTemplates, and the one remaining spec path,
-#      taskRunSpecs[*].metadata.labels (the TaskRun metadata template, which
-#      the Tekton controller applies to every spawned TaskRun), is denied
-#      here regardless of creator — no legitimate flow injects the managed
-#      markers through it.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+#   2. spec-injection check — label laundering via spec paths is closed: the
+#      Tekton v1 PipelineRun CRD has no labels field on podTemplates, and the
+#      one remaining spec path, taskRunSpecs[*].metadata.labels (the TaskRun
+#      metadata template, which the Tekton controller applies to every
+#      spawned TaskRun), is denied here regardless of creator — no legitimate
+#      flow injects the managed markers through it.
+# Scope note: the legacy ClusterPolicy matched only the tenant namespaces
+# (values.namespaces); the CEL policy is deliberately CLUSTER-WIDE. The
+# guarded invariants (marker labels, tekton.dev/* labels, trust-label
+# recomputes, pod ownerRefs) hold for every namespace, and only the
+# platform controllers are legitimate setters anywhere — so the wider
+# scope is strictly safer. The namespaces values still scope the
+# classification mutation and the IVPOL.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
 metadata:
   name: guard-managed-labels
 spec:
-  # background: false is required because the rules evaluate
-  # request.userInfo.username, which has no meaning for background scans.
-  background: false
   failurePolicy: Fail
-  validationFailureAction: Enforce
-  rules:
-  # Two rules, one per protected label, because Kyverno preconditions cannot
-  # nest AND/OR: each fires only when the label transitions TO its protected
-  # value (new value protected AND different from the old value). On CREATE
-  # request.oldObject is empty, so creating a PipelineRun already carrying
-  # the marker counts as a transition. On UPDATE an unchanged marker keeps
-  # the rule silent, letting other controllers (chains, release-service
-  # reconciler) patch annotations/status of managed PipelineRuns without
-  # being denied. Setting the label to any other value (e.g. type=build)
-  # is not restricted.
-  - name: deny-managed-type-usurpation
-    match:
-      any:
-      - resources:
-          kinds: ["PipelineRun"]
-          operations: ["CREATE", "UPDATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
-        operator: Equals
-        value: "managed"
-      - key: "{{`{{ request.object.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
-        operator: NotEquals
-        value: "{{`{{ request.oldObject.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
-    validate:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pipelineruns"]
+  variables:
+    - name: newType
+      expression: >-
+        has(request.object.metadata.labels) && 'pipelines.appstudio.openshift.io/type' in request.object.metadata.labels
+        ? request.object.metadata.labels['pipelines.appstudio.openshift.io/type'] : ''
+    - name: oldType
+      expression: >-
+        request.oldObject != null && has(request.oldObject.metadata.labels) && 'pipelines.appstudio.openshift.io/type' in request.oldObject.metadata.labels
+        ? request.oldObject.metadata.labels['pipelines.appstudio.openshift.io/type'] : ''
+    - name: newService
+      expression: >-
+        has(request.object.metadata.labels) && 'appstudio.openshift.io/service' in request.object.metadata.labels
+        ? request.object.metadata.labels['appstudio.openshift.io/service'] : ''
+    - name: oldService
+      expression: >-
+        request.oldObject != null && has(request.oldObject.metadata.labels) && 'appstudio.openshift.io/service' in request.oldObject.metadata.labels
+        ? request.oldObject.metadata.labels['appstudio.openshift.io/service'] : ''
+  validations:
+    # Marker transition TO the protected value requires the release-service
+    # controller identity. On CREATE request.oldObject has no labels, so
+    # creating a PipelineRun already carrying the marker counts as a
+    # transition. Setting the label to any other value (e.g. type=build) is
+    # not restricted.
+    - expression: >-
+        !(variables.newType == 'managed' && variables.newType != variables.oldType) ||
+        request.userInfo.username == '{{ .Values.releaseServiceAccount }}'
       message: >-
         pipelines.appstudio.openshift.io/type=managed may only be set by the
         release-service controller ({{ .Values.releaseServiceAccount }}).
-      deny:
-        conditions:
-          all:
-          - key: "{{`{{ request.userInfo.username || '' }}`}}"
-            operator: NotEquals
-            value: {{ .Values.releaseServiceAccount | quote }}
-
-  - name: deny-release-service-usurpation
-    match:
-      any:
-      - resources:
-          kinds: ["PipelineRun"]
-          operations: ["CREATE", "UPDATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"appstudio.openshift.io/service\" || '' }}`}}"
-        operator: Equals
-        value: "release"
-      - key: "{{`{{ request.object.metadata.labels.\"appstudio.openshift.io/service\" || '' }}`}}"
-        operator: NotEquals
-        value: "{{`{{ request.oldObject.metadata.labels.\"appstudio.openshift.io/service\" || '' }}`}}"
-    validate:
+    - expression: >-
+        !(variables.newService == 'release' && variables.newService != variables.oldService) ||
+        request.userInfo.username == '{{ .Values.releaseServiceAccount }}'
       message: >-
         appstudio.openshift.io/service=release may only be set by the
         release-service controller ({{ .Values.releaseServiceAccount }}).
-      deny:
-        conditions:
-          all:
-          - key: "{{`{{ request.userInfo.username || '' }}`}}"
-            operator: NotEquals
-            value: {{ .Values.releaseServiceAccount | quote }}
-
-  - name: deny-managed-marker-spec-injection
-    match:
-      any:
-      - resources:
-          kinds: ["PipelineRun"]
-          operations: ["CREATE", "UPDATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
     # Verified against the Tekton v1 CRD: PipelineRun podTemplates carry no
     # labels field, so the only spec-level path that can inject labels onto
-    # spawned TaskRuns is taskRunSpecs[*].metadata.labels (the TaskRun
-    # metadata template, applied by the Tekton controller to every TaskRun
-    # of the named pipeline task). foreach over a null/absent taskRunSpecs
-    # list is skipped, so no JMESPath null handling is needed.
-    validate:
+    # spawned TaskRuns is taskRunSpecs[*].metadata.labels. Denied regardless
+    # of creator; an absent taskRunSpecs list makes exists() false.
+    - expression: >-
+        !has(request.object.spec.taskRunSpecs) ||
+        !request.object.spec.taskRunSpecs.exists(t,
+          has(t.metadata) && has(t.metadata.labels) &&
+          (('pipelines.appstudio.openshift.io/type' in t.metadata.labels &&
+            t.metadata.labels['pipelines.appstudio.openshift.io/type'] == 'managed') ||
+           ('appstudio.openshift.io/service' in t.metadata.labels &&
+            t.metadata.labels['appstudio.openshift.io/service'] == 'release')))
       message: >-
         Managed-marker labels may not be injected via PipelineRun
         taskRunSpecs[].metadata.labels; the Tekton controller would launder
         them onto spawned TaskRuns, bypassing the TaskRun-level guards.
-      foreach:
-      - list: "request.object.spec.taskRunSpecs"
-        deny:
-          conditions:
-            any:
-            - key: "{{`{{ element.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
-              operator: Equals
-              value: "managed"
-            - key: "{{`{{ element.metadata.labels.\"appstudio.openshift.io/service\" || '' }}`}}"
-              operator: Equals
-              value: "release"
 {{- end }}

@@ -65,10 +65,19 @@ DEMO_CLEANUP="${DEMO_CLEANUP:-false}"
 # Retry a kubectl create on transient admission-webhook timeouts (Kyverno
 # signature verification can exceed the webhook timeout on a cold cache).
 kubectl_create_retry() {
-  local attempt payload
+  local attempt payload err
   payload=$(cat)  # buffer stdin: retries cannot re-read a pipe
   for attempt in 1 2 3; do
-    if printf '%s' "${payload}" | kubectl create -f - "$@"; then return 0; fi
+    err=$(printf '%s' "${payload}" | kubectl create -f - "$@" 2>&1) && return 0
+    # Retrying only makes sense for transient webhook failures (cold-cache
+    # Kyverno signature verification exceeding the webhook timeout). An
+    # admission DENIAL is the expected demo outcome in many scenes —
+    # surface it immediately instead of burning 60s on pointless retries.
+    if printf '%s' "${err}" | grep -q "denied the request"; then
+      printf '%s\n' "${err}" >&2
+      return 1
+    fi
+    printf '%s\n' "${err}" >&2
     echo "    [retry ${attempt}/3] admission webhook slow; waiting 20s..."
     sleep 20
   done
@@ -287,10 +296,10 @@ p "# ACT 2: Task Admission & Cryptographic Identity (Kyverno & SPIRE)"
 p "# =================================================================="
 p "# Inspect Kyverno's task classification rules before admission:"
 p "# Notice: default rule sets 'trusted-task-role: dev'; pinned catalog bundles upgrade to 'prod':"
-pe "kubectl get clusterpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.rules'"
+pe "kubectl get mutatingpolicy classify-taskrun -o yaml 2>/dev/null | yq '.spec.mutations'"
 
 p "# 0. Inspect and exercise the Pod label anti-spoofing policy:"
-pe "kubectl get clusterpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.rules'"
+pe "kubectl get validatingpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.validations'"
 p "# A rogue Pod cannot self-assign trusted-task-role: prod without a TaskRun owner reference."
 kubectl delete pod attacker-label-spoof -n default-tenant --wait=true >/dev/null 2>&1 || true
 pe "cat << 'EOF' | kubectl_create_retry
@@ -707,7 +716,7 @@ p "# In managed-tenant, ambient ServiceAccount authority is prohibited."
 p "# Release signing requires Model 2 Dual-Gating:"
 p "#   1. PipelineRun-scoped classification from Kyverno (label: trusted-pipeline-role=release-authority)"
 p "#   2. Precise SPIRE pod selector matching ONLY the attachment task (task=attach-summary-attestations)"
-pe "kubectl get clusterpolicy classify-release-authority -o yaml 2>/dev/null | yq '.spec.rules'"
+pe "kubectl get mutatingpolicy classify-release-authority -o yaml 2>/dev/null | yq '.spec.mutations'"
 pe "kubectl get clusterspiffeid konflux-release-authority -o yaml 2>/dev/null | yq '.spec'"
 
 p "# 0. Clean slate: remove leftover Rekor query jobs and failed pods from prior runs"
@@ -720,7 +729,7 @@ p "# 0b. The release boundary is now HARDENED with fail-closed label guards:"
 p "#   guard-managed-labels  — only the release-service controller may set the managed markers"
 p "#   guard-task-labels     — only the Tekton controller may set tekton.dev/* labels on TaskRuns"
 p "#   validate-role-labels  — trust labels must survive a recompute of their classification"
-pe "kubectl get clusterpolicy guard-managed-labels guard-task-labels validate-role-labels 2>/dev/null || kubectl get clusterpolicies -o name | grep -E 'guard|validate-role'"
+pe "kubectl get validatingpolicy guard-managed-labels guard-task-labels validate-role-labels"
 
 p "# THE ROGUE PIPELINE ATTACK:"
 p "# An attacker (us, as admin) tries to hand-craft a 'managed' release PipelineRun"
@@ -766,6 +775,11 @@ spec:
   snapshot: demo-app-snapshot
 EOF
 )
+# generateName + jsonpath can race with admission-latency retries; fall back
+# to the most recently created demo-release- object if the name was not captured.
+if [ -z "${RELEASE_NAME}" ]; then
+  RELEASE_NAME=$(kubectl get releases -n default-tenant --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+fi
 pe "kubectl get release ${RELEASE_NAME} -n default-tenant"
 
 p "# 2. The release-service controller reconciles the Release and creates the managed PipelineRun:"
@@ -930,12 +944,15 @@ echo -e "   ${GREEN}Scheduled PipelineRun:${COLOR_RESET} ${RELEASE_PR}"
 else
 p "# Waiting for the release-service controller to create the managed PipelineRun..."
 RELEASE_PR=""
-for i in $(seq 1 30); do
+# The release-service controller can take several minutes to validate the
+# Release and process skipped tenant/collector pipelines before creating the
+# managed PipelineRun; poll for up to 7.5 minutes.
+for i in $(seq 1 90); do
   RELEASE_PR=$(kubectl get pipelineruns -n managed-tenant \
     -l release.appstudio.openshift.io/name=${RELEASE_NAME} \
     --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
   [ -n "${RELEASE_PR}" ] && break
-  sleep 2
+  sleep 5
 done
 if [ -z "${RELEASE_PR}" ]; then
   echo "Error: release-service did not create a managed PipelineRun for Release ${RELEASE_NAME}."
