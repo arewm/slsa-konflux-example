@@ -23,7 +23,7 @@ spec:
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
-        operations: ["CREATE"]
+        operations: ["CREATE", "UPDATE"]
         resources: ["pods"]
   variables:
     - name: trustedRole
@@ -34,7 +34,21 @@ spec:
       expression: >-
         has(request.object.metadata.ownerReferences) &&
         request.object.metadata.ownerReferences.exists(o, o.kind == 'TaskRun')
+    # The admitted label value (identical on UPDATEs that leave it alone).
+    - name: oldTrustedRole
+      expression: >-
+        request.oldObject != null && has(request.oldObject.metadata.labels) && 'trusted-task-role' in request.oldObject.metadata.labels
+        ? request.oldObject.metadata.labels['trusted-task-role'] : ''
   validations:
     - expression: >-
         variables.trustedRole == '' || variables.hasTaskRunOwner
       message: "Pods with trusted-task-role label must be owned by a TaskRun"
+    # Immutability: the label is stamped at creation from the classified
+    # TaskRun and nothing legitimately changes it afterwards. CREATEs pass
+    # (the ownerRef check above governs them); UPDATEs that add, change, or
+    # remove the label are denied regardless of requester — the
+    # classification mutation runs at CREATE only, so no controller needs
+    # to write it later.
+    - expression: >-
+        request.operation == 'CREATE' || variables.trustedRole == variables.oldTrustedRole
+      message: "trusted-task-role is immutable on pods (set at creation from the classified TaskRun)"

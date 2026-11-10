@@ -73,6 +73,33 @@ DEMO_CLEANUP="${DEMO_CLEANUP:-false}"
 
 # Retry a kubectl create on transient admission-webhook timeouts (Kyverno
 # signature verification can exceed the webhook timeout on a cold cache).
+# kubectl_apply_retry: like kubectl_create_retry but with `kubectl apply`, so a
+# pre-run (Succeeded) object is reused as-is instead of re-executed; on a fresh
+# cluster it simply creates and runs live.
+kubectl_apply_retry() {
+  local attempt payload out err errfile
+  payload=$(cat)
+  errfile=$(mktemp)
+  for attempt in 1 2 3; do
+    if out=$(printf '%s' "${payload}" | kubectl apply -f - "$@" 2>"${errfile}"); then
+      printf '%s\n' "${out}"
+      rm -f "${errfile}"
+      return 0
+    fi
+    err=$(cat "${errfile}")
+    if printf '%s' "${err}" | grep -q "denied the request"; then
+      printf '%s\n' "${err}" >&2
+      rm -f "${errfile}"
+      return 1
+    fi
+    printf '%s\n' "${err}" >&2
+    echo "    [retry ${attempt}/3] admission webhook slow; waiting 20s..."
+    sleep 20
+  done
+  rm -f "${errfile}"
+  return 1
+}
+
 kubectl_create_retry() {
   local attempt payload out err errfile
   payload=$(cat)  # buffer stdin: retries cannot re-read a pipe
@@ -107,6 +134,22 @@ kubectl_create_retry() {
 demo_cleanup() {
   if [[ "${DEMO_CLEANUP}" == "true" ]]; then
     kubectl delete "$@" --wait=true >/dev/null 2>&1 || true
+  fi
+}
+
+# Delete a resource only if it exists AND is not Succeeded — pre-run
+# successes are reused by the live demo (kubectl apply no-ops, waits and
+# log displays return instantly). Failed/stale objects are re-run.
+reset_if_failed() {
+  local kind="$1" name="$2" ns="$3" status
+  if ! kubectl get "${kind}" "${name}" -n "${ns}" >/dev/null 2>&1; then return 0; fi
+  if [ "${kind}" == "pod" ]; then
+    status=$(kubectl get pod "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null)
+  else
+    status=$(kubectl get "${kind}" "${name}" -n "${ns}" -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null)
+  fi
+  if [ "${status}" != "True" ] && [ "${status}" != "Succeeded" ]; then
+    kubectl delete "${kind}" "${name}" -n "${ns}" --wait=true >/dev/null 2>&1 || true
   fi
 }
 
@@ -175,8 +218,8 @@ p "#   iss: https://kubernetes.default.svc"
 p "#   sub: system:serviceaccount:<namespace>:<serviceaccount>"
 p "#"
 p "# Let's inspect what identity a task receives under this standard pattern:"
-kubectl delete taskrun demo-sa-token-inspection -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+reset_if_failed taskrun demo-sa-token-inspection default-tenant
+pe "cat << 'EOF' | kubectl_apply_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -220,7 +263,7 @@ for line in raw.splitlines():
         p = line.split('.')[1]
         p += '=' * (-len(p)%4)
         claims = json.loads(base64.urlsafe_b64decode(p).decode())
-        print('Projected SA Identity (Default Keyless):')
+        print('Projected ServiceAccount identity:')
         print('  Issuer (iss):', claims.get('iss'))
         print('  Subject (sub):', claims.get('sub'))
         print('  Namespace:    ', claims.get('kubernetes.io', {}).get('namespace'))
@@ -232,15 +275,17 @@ p "# Notice the problem: The identity is coarse-grained to the ServiceAccount (d
 p "# EVERY task running in this namespace shares this exact same identity and ambient credentials!"
 wait
 
-p "# THE ATTACK:"
-p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
-p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
-kubectl delete pod rogue-ambient-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-cat << 'EOF' | kubectl_create_retry >/dev/null
+p "# THE ATTACK — one task added to the pipeline:"
+p "#   ... build-container -> [registry-mirror] -> trivy-sbom-scan ..."
+p "# A compromised PR is enough to inject it: same namespace, same"
+p "# ServiceAccount, indistinguishable from real work. It steals the shared"
+p "# identity and overwrites 'slsa-e2e-test:latest' with a backdoor."
+reset_if_failed pod rogue-registry-mirror default-tenant
+cat << 'EOF' | kubectl_apply_retry >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
-  name: rogue-ambient-push
+  name: rogue-registry-mirror
   namespace: default-tenant
   labels:
     appstudio.openshift.io/application: demo-app
@@ -256,17 +301,17 @@ spec:
     - |
       set -e
       export SSL_CERT_DIR=/tekton-custom-certs
-      mkdir -p ~/.docker
+      mkdir -p ~/.docker /tmp/sig
       cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
 
       echo '=== STEALING THE AMBIENT IDENTITY ==='
       python3 -c "
-        import base64, json
-        tok = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read()
-        p = tok.split('.')[1]; p += '=' * (-len(p) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(p))
-        print('Compromised identity : ' + claims['sub'])
-        print('Issuer               : ' + claims.get('iss', ''))
+      import base64, json
+      tok = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read()
+      p = tok.split('.')[1]; p += '=' * (-len(p) % 4)
+      claims = json.loads(base64.urlsafe_b64decode(p))
+      print('Compromised identity : ' + claims['sub'])
+      print('Issuer               : ' + claims.get('iss', ''))
       "
       echo 'The cluster cannot distinguish this task from the real builder -'
       echo 'same ServiceAccount, same namespace, full ambient authority.'
@@ -279,7 +324,7 @@ spec:
         payload.txt:application/text
 
       oras pull --insecure registry-service.kind-registry/slsa-e2e-test:latest -o /tmp/pulled
-      echo '[VERIFICATION] Tag contents:' \$(cat /tmp/pulled/payload.txt)
+      echo "[VERIFICATION] Tag contents: $(cat /tmp/pulled/payload.txt)" 
     volumeMounts:
     - mountPath: /tekton/creds-secrets/regcred-internal-registry
       name: regcred
@@ -299,10 +344,11 @@ spec:
   restartPolicy: Never
 EOF
 
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=180s >/dev/null 2>&1 || true
-for i in $(seq 1 30); do kubectl logs rogue-ambient-push -n default-tenant >/dev/null 2>&1 || { sleep 5; continue; }; break; done
-pe "kubectl logs rogue-ambient-push -n default-tenant | grep -B2 -A3 -e \"Compromised identity\" -e \"VERIFICATION\" || true"
-demo_cleanup pod rogue-ambient-push -n default-tenant
+p "# The injected task is executing..."
+pe "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-registry-mirror -n default-tenant --timeout=180s || true"
+p "# The injected task's own logs — the identity it stole, then the push:"
+pe "kubectl logs rogue-registry-mirror -n default-tenant || true"
+demo_cleanup pod rogue-registry-mirror -n default-tenant
 
 p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
 wait
@@ -347,8 +393,9 @@ p "# For every bundle IN scope, two fail-closed validations — immutable digest
 p "# pin, and a valid platform Cosign signature:"
 pe "kubectl get imagevalidatingpolicy verify-bundle-signatures -o yaml 2>/dev/null | yq '.spec.validations'"
 p ""
-p "# One more guard: labels cannot be forged at the Pod level either —"
-p "# trusted-task-role on a Pod requires a TaskRun owner reference:"
+p "# One more guard at the Pod level — two validations:"
+p "# at CREATE, the label requires a TaskRun owner reference; and it is"
+p "# IMMUTABLE afterwards — any update that changes it is denied:"
 pe "kubectl get validatingpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.validations'"
 p ""
 p "# And the last link: the admission rules decide the label, and SPIRE turns"
@@ -384,11 +431,13 @@ demo_cleanup pod attacker-label-spoof -n default-tenant
 
 p "# TEST 2 — Submit an untrusted / inline TaskRun (not pinned or catalog-signed):"
 p "# Expected: Kyverno admits the task but restricts it to the unprivileged 'dev' role."
-UNTRUSTED_TR=$(cat << 'EOF' | kubectl_create_retry -o jsonpath='{.metadata.name}'
+reset_if_failed taskrun demo-untrusted-inline default-tenant
+UNTRUSTED_TR="demo-untrusted-inline"
+cat << 'EOF' | kubectl_apply_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
-  generateName: demo-untrusted-run-
+  name: demo-untrusted-inline
   namespace: default-tenant
   labels:
     appstudio.openshift.io/application: demo-app
@@ -401,15 +450,19 @@ spec:
       image: alpine:3.20
       script: echo 'Untrusted inline code execution'
 EOF
-)
 
-pe "kubectl wait --for=condition=Succeeded taskrun/${UNTRUSTED_TR} -n default-tenant --timeout=30s"
+pe "kubectl wait --for=condition=Succeeded taskrun/${UNTRUSTED_TR} -n default-tenant --timeout=120s"
 
 p "# Inspect the labels Kyverno stamped on the TaskRun:"
 pe "kubectl get taskrun ${UNTRUSTED_TR} -n default-tenant --show-labels"
 
 p "# Verify Tekton propagates the Kyverno-verified label to the execution Pod:"
 pe "kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} --show-labels"
+
+p "# And once stamped, the label is locked — try to promote the pod after the fact:"
+pe "kubectl label pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} trusted-task-role=prod --overwrite || true"
+p "# Denied: trusted-task-role is immutable on pods — set only at creation"
+p "# from the classified TaskRun, re-verified fail-closed on every write."
 
 p "# What workload identity does SPIRE mint for this untrusted task?"
 POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=${UNTRUSTED_TR} -o jsonpath='{.items[0].metadata.uid}')
@@ -464,8 +517,8 @@ p ""
 
 p "# TEST 4 — Now do it right: a cryptographically signed, digest-pinned catalog bundle:"
 p "# Expected: Kyverno verifies the Sigstore bundle signature and promotes the role to 'prod'."
-kubectl delete taskrun demo-signed-task -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+reset_if_failed taskrun demo-signed-task default-tenant
+pe "cat << 'EOF' | kubectl_apply_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -487,13 +540,71 @@ spec:
       value: task
 EOF"
 
-pe "kubectl wait --for=condition=Succeeded taskrun/demo-signed-task -n default-tenant --timeout=30s"
+pe "kubectl wait --for=condition=Succeeded taskrun/demo-signed-task -n default-tenant --timeout=180s"
 
 p "# Inspect the TaskRun labels stamped by Kyverno:"
 pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
 
-p "# The signed task did real work — its build record checksum is a TaskRun result:"
-pe "kubectl get taskrun demo-signed-task -n default-tenant -o jsonpath='{.status.results}'"
+p "# Where does the trust actually live? In the local registry — the signed"
+p "# bundle and its Cosign signature, stored as first-class OCI artifacts."
+p "# oras discover, from inside the cluster, against the internal registry:"
+CATALOG_DIGEST=$(echo "${CATALOG_TASK_BUNDLE}" | grep -o 'sha256:[a-f0-9]*')
+reset_if_failed pod demo-registry-inspect default-tenant
+cat << 'EOF' | sed "s|__DIGEST__|${CATALOG_DIGEST}|g" | kubectl_apply_retry >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-registry-inspect
+  namespace: default-tenant
+  labels:
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  restartPolicy: Never
+  containers:
+  - name: oras
+    image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
+    env:
+    - name: SSL_CERT_FILE
+      value: /etc/pki/tls/certs/ca-bundle.crt
+    command:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      mkdir -p ~/.docker /tmp/sig
+      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
+      echo '=== oras discover — referrers of the signed bundle:'
+      oras discover registry-service.kind-registry/tekton-catalog/demo-catalog-task@__DIGEST__
+      REFERRER=$(oras discover --format json registry-service.kind-registry/tekton-catalog/demo-catalog-task@__DIGEST__ | jq -r '[.referrers[]] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      oras pull -o /tmp/sig registry-service.kind-registry/tekton-catalog/demo-catalog-task@${REFERRER} >/dev/null 2>&1
+      echo
+      echo "=== The signature bundle — what was signed, and by whom:"
+      jq -r '.dsseEnvelope.payload | @base64d | fromjson | "signed subject digest : " + .subject[0].digest.sha256' /tmp/sig/*.sigstore.json
+      jq -r '.verificationMaterial.publicKey.hint | "signer key fingerprint  : " + .' /tmp/sig/*.sigstore.json
+    volumeMounts:
+    - mountPath: /tekton/creds-secrets/regcred-internal-registry
+      name: regcred
+    - mountPath: /etc/pki/tls/certs/ca-bundle.crt
+      name: trusted-ca
+      subPath: ca-bundle.crt
+      readOnly: true
+  volumes:
+  - name: regcred
+    secret:
+      secretName: regcred-internal-registry
+  - name: trusted-ca
+    configMap:
+      name: trusted-ca
+      items:
+      - key: ca-bundle.crt
+        path: ca-bundle.crt
+EOF
+
+pe "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/demo-registry-inspect -n default-tenant --timeout=120s"
+pe "kubectl logs demo-registry-inspect -n default-tenant"
+p "# Sigstore DSSE signature envelopes, attached to the bundle digest as OCI"
+p "# 1.1 referrers — THIS is what admission verified. The trust lives in the"
+p "# registry, not in a config file."
 
 p "# Inspect the production SVID (SPIFFE Verifiable Identity Document) minted by SPIRE for this Pod:"
 SIGNED_POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=demo-signed-task -o jsonpath='{.items[0].metadata.uid}')
@@ -526,8 +637,8 @@ pe "kubectl get configmap zot-oidc-config -n kind-registry -o jsonpath='{.data.c
 
 p "# 1. Attack Attempt on Gated Registry:"
 p "# A rogue dev task attempts to push to slsa-e2e-test using its SPIFFE JWT-SVID:"
-kubectl delete taskrun demo-rogue-push-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
-cat << 'EOF' | kubectl_create_retry >/dev/null
+reset_if_failed taskrun demo-rogue-push-attempt default-tenant
+cat << 'EOF' | kubectl_apply_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -576,8 +687,8 @@ wait
 
 p "# 2. Legitimate Push on Gated Registry:"
 p "# The vetted Builder task bundle (buildah-oci-ta) executes with its trusted production identity:"
-kubectl delete taskrun demo-builder-gated-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+reset_if_failed taskrun demo-builder-gated-push default-tenant
+pe "cat << 'EOF' | kubectl_apply_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -599,7 +710,7 @@ spec:
       value: task
 EOF"
 
-kubectl wait --for=condition=Succeeded taskrun/demo-builder-gated-push -n default-tenant --timeout=120s
+kubectl wait --for=condition=Succeeded taskrun/demo-builder-gated-push -n default-tenant --timeout=180s
 
 p "# The builder task's own logs — the push handshake with its production identity:"
 pe "kubectl logs demo-builder-gated-push-pod -n default-tenant -c step-push-handshake"
@@ -620,8 +731,8 @@ pe "kubectl get pods,services -n services"
 
 p "# 1. Untrusted Task Attempt:"
 p "# A dev task requests a token and attempts to access the CVE feed:"
-kubectl delete taskrun demo-untrusted-service-query -n default-tenant --wait=true >/dev/null 2>&1 || true
-cat << 'EOF' | kubectl_create_retry >/dev/null
+reset_if_failed taskrun demo-untrusted-service-query default-tenant
+cat << 'EOF' | kubectl_apply_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -661,7 +772,7 @@ EOF
 p "# An inline task (dev-classified) with the demo utility image — nothing"
 p "# mounted but the SPIFFE socket:"
 pe "kubectl get taskrun demo-untrusted-service-query -n default-tenant -o yaml | yq '.spec.taskSpec.steps[].image'"
-kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n default-tenant --timeout=120s
+kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n default-tenant --timeout=180s
 
 p "# The task's own logs — it queried the service itself, with its dev-tier JWT-SVID:"
 pe "kubectl logs demo-untrusted-service-query-pod -n default-tenant -c step-query-cve-database"
@@ -675,8 +786,8 @@ sleep 2
 p "# 2. Vetted Scanner Task (trivy-sbom-scan):"
 p "# The catalog scanner task presents its audience-scoped SVID (SPIFFE Verifiable" 
 p "# Identity Document) to the service:"
-kubectl delete taskrun demo-trusted-scanner-query -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+reset_if_failed taskrun demo-trusted-scanner-query default-tenant
+pe "cat << 'EOF' | kubectl_apply_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -699,7 +810,7 @@ spec:
       value: task
 EOF"
 
-kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n default-tenant --timeout=120s
+kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n default-tenant --timeout=180s
 
 p "# The scanner task's own logs — it queried the service itself, with its"
 p "# prod-classified JWT-SVID:"
@@ -741,8 +852,8 @@ if [ -f "${VAULT_BUNDLE_REF_FILE}" ] && kubectl get deployment vault-legacy-exch
 
   p "# The vetted scanner task fetches an audience-scoped JWT-SVID (audience"
   p "# 'vault') and presents it to the broker:"
-  kubectl delete taskrun demo-vault-scanner-exchange -n default-tenant --wait=true >/dev/null 2>&1 || true
-  pe "cat << 'EOF' | kubectl_create_retry
+  reset_if_failed taskrun demo-vault-scanner-exchange default-tenant
+  pe "cat << 'EOF' | kubectl_apply_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -773,8 +884,8 @@ EOF"
 
   wait
   p "# Now the dev-tier task attempts the same exchange — itself, in-task:"
-  kubectl delete taskrun demo-vault-dev-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
-  cat << 'EOF' | kubectl_create_retry >/dev/null
+  reset_if_failed taskrun demo-vault-dev-attempt default-tenant
+  cat << 'EOF' | kubectl_apply_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:

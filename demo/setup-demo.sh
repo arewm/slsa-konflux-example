@@ -559,6 +559,20 @@ echo "==> [Demo Setup] Establishing pristine baseline state..."
 
 echo ""
 echo -e "\033[0;32m═════════════════════════════════════════════════════════════════════════════════\033[0m"
+# 7. Pre-run the slow demo beats (acts 1-3) so the live demo displays
+# instantly: the acts use kubectl apply + reset_if_failed, so pre-run
+# Succeeded objects are reused (apply no-ops, waits and logs return
+# immediately) while a fresh cluster falls back to live execution.
+# Admission denials always stay live (instant by nature).
+echo "==> [Demo Setup] Pre-running slow demo beats (acts 1-3)..."
+for ACT in 1 2 3; do
+  if NO_WAIT=1 CI=1 "${SCRIPT_DIR}/run-demo.sh" --act ${ACT} >/dev/null 2>&1; then
+    echo "    Act ${ACT} pre-run complete."
+  else
+    echo "    [Notice] Act ${ACT} pre-run incomplete (live demo falls back to live execution)."
+  fi
+done
+
 echo -e "\033[0;32m  Demo Setup Complete! The environment is primed and in a clean initial state.   \033[0m"
 echo -e "\033[0;32m═════════════════════════════════════════════════════════════════════════════════\033[0m"
 echo ""

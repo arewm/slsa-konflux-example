@@ -122,8 +122,12 @@ sys.stdout.flush()
 }
 
 function p() {
-  # Comments print immediately without prompting or waiting
+  # Comments print immediately without prompting or waiting. A blank line
+  # separates each comment block from preceding command output so narration
+  # and results never visually run together.
   if [[ -z "$1" || ${1:0:1} == "#" ]]; then
+    [[ -n "${DEMO_LAST_WAS_OUTPUT:-}" ]] && echo
+    DEMO_LAST_WAS_OUTPUT=""
     echo -e "$DEMO_COMMENT_COLOR$1$COLOR_RESET"
     return 0
   fi
@@ -178,6 +182,7 @@ function cmd() {
   printf "$x\033[0m"
   read command
   eval "${command}"
+  DEMO_LAST_WAS_OUTPUT=1
 }
 
 
