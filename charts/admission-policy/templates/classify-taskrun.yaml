@@ -37,18 +37,22 @@ spec:
   variables:
     # The bundle reference from either resolver or direct taskRef format
     # ("" when the TaskRun has no bundle param).
+    # Guard with has(.value): array-form params (values:) or a missing value
+    # must yield "" rather than a CEL no-such-key error, which under
+    # failurePolicy: Fail would deny every TaskRun with that param shape.
     - name: bundleRef
       expression: >-
         has(request.object.spec.taskRef) && has(request.object.spec.taskRef.params) &&
-        request.object.spec.taskRef.params.filter(p, p.name == 'bundle').size() > 0
+        request.object.spec.taskRef.params.filter(p, p.name == 'bundle').size() > 0 &&
+        has(request.object.spec.taskRef.params.filter(p, p.name == 'bundle')[0].value)
         ? request.object.spec.taskRef.params.filter(p, p.name == 'bundle')[0].value : ''
     # Whether the bundle is digest-pinned and matches a trusted pattern.
     - name: trustedProd
       expression: >-
-        ({{ range $i, $ns := .Values.namespaces }}{{ if $i }} || {{ end }}request.namespace == '{{ $ns }}'{{ end }}) &&
+        {{ if .Values.namespaces }}({{ range $i, $ns := .Values.namespaces }}{{ if $i }} || {{ end }}request.namespace == '{{ $ns }}'{{ end }}) &&{{ end }}
         variables.bundleRef != '' &&
-        variables.bundleRef.matches('@sha256:[a-f0-9]{64}'){{ if .Values.trustedBundles }} &&
-        variables.bundleRef.matches('{{ $bundleRegex }}'){{ else }} && false{{ end }}
+        variables.bundleRef.matches('@sha256:[a-f0-9]{64}$'){{ if .Values.trustedBundles }} &&
+        variables.bundleRef.matches('^({{ $bundleRegex }})'){{ else }} && false{{ end }}
     # Current role label ("" when absent).
     - name: currentRole
       expression: >-

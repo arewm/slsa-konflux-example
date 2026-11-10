@@ -21,6 +21,13 @@
 #      metadata template, which the Tekton controller applies to every
 #      spawned TaskRun), is denied here regardless of creator — no legitimate
 #      flow injects the managed markers through it.
+# Scope note: the legacy ClusterPolicy matched only the tenant namespaces
+# (values.namespaces); the CEL policy is deliberately CLUSTER-WIDE. The
+# guarded invariants (marker labels, tekton.dev/* labels, trust-label
+# recomputes, pod ownerRefs) hold for every namespace, and only the
+# platform controllers are legitimate setters anywhere — so the wider
+# scope is strictly safer. The namespaces values still scope the
+# classification mutation and the IVPOL.
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:

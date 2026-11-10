@@ -25,6 +25,13 @@
 #     controller from the release-service-created PipelineRun), and be owned
 #     by a PipelineRun whose name matches the unforgeable
 #     tekton.dev/pipelineRun label.
+# Scope note: the legacy ClusterPolicy matched only the tenant namespaces
+# (values.namespaces); the CEL policy is deliberately CLUSTER-WIDE. The
+# guarded invariants (marker labels, tekton.dev/* labels, trust-label
+# recomputes, pod ownerRefs) hold for every namespace, and only the
+# platform controllers are legitimate setters anywhere — so the wider
+# scope is strictly safer. The namespaces values still scope the
+# classification mutation and the IVPOL.
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
 metadata:
@@ -48,10 +55,14 @@ spec:
         ? request.object.metadata.labels['trusted-pipeline-role'] : ''
     # The bundle reference from either resolver or direct taskRef format
     # ("" when the TaskRun has no bundle param).
+    # Guard with has(.value): array-form params (values:) or a missing value
+    # must yield "" rather than a CEL no-such-key error, which under
+    # failurePolicy: Fail would deny every TaskRun with that param shape.
     - name: bundleRef
       expression: >-
         has(request.object.spec.taskRef) && has(request.object.spec.taskRef.params) &&
-        request.object.spec.taskRef.params.filter(p, p.name == 'bundle').size() > 0
+        request.object.spec.taskRef.params.filter(p, p.name == 'bundle').size() > 0 &&
+        has(request.object.spec.taskRef.params.filter(p, p.name == 'bundle')[0].value)
         ? request.object.spec.taskRef.params.filter(p, p.name == 'bundle')[0].value : ''
     - name: pipelineRunLabel
       expression: >-
@@ -70,8 +81,8 @@ spec:
     - expression: >-
         variables.taskRole != 'prod' ||
         (variables.bundleRef != '' &&
-         variables.bundleRef.matches('@sha256:[a-f0-9]{64}'){{ if .Values.trustedBundles }} &&
-         variables.bundleRef.matches('{{ $bundleRegex }}'){{ end }})
+         variables.bundleRef.matches('@sha256:[a-f0-9]{64}$'){{ if .Values.trustedBundles }} &&
+         variables.bundleRef.matches('^({{ $bundleRegex }})'){{ end }})
       message: >-
         trusted-task-role=prod requires a digest-pinned taskRef bundle
         (@sha256) matching a trusted bundle pattern; recompute of the
