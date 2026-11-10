@@ -1,0 +1,81 @@
+---
+# Demo variant of the trivy-sbom-scan catalog task used by the Vault
+# legacy-token-exchange demo (docs/reference/legacy-token-exchange.md).
+#
+# Identical identity shape as the catalog task (name => SPIFFE ID
+# .../trusted/kind-konflux/default/trivy-sbom-scan), but the JWT-SVID
+# audience is parameterized so the task can mint tokens for Vault
+# (audience "vault") instead of the CVE database.
+#
+# The task performs the full exchange itself: fetch JWT-SVID, log in to
+# Vault, read the legacy credential — no relay pods.
+#
+# Built, pushed, and cosign-signed by demo/vault-setup-lib.sh into
+# registry-service.kind-registry/tekton-catalog/trivy-sbom-scan:0.1-vault-demo
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: trivy-sbom-scan
+  labels:
+    app.kubernetes.io/version: "0.1"
+spec:
+  description: >-
+    Demo scanner task: fetches an audience-scoped JWT-SVID from the SPIFFE
+    Workload API and exchanges it at Vault for the legacy static
+    credential — the task itself performs login and secret read.
+  params:
+    - name: jwt-audience
+      description: Audience to request when fetching the JWT-SVID (must match the consumer service).
+      default: "vault"
+    - name: vault-url
+      description: Vault endpoint for the token exchange.
+      default: "http://vault-legacy-exchange.services.svc.cluster.local:8200"
+    - name: vault-role
+      description: Vault JWT auth role to log in against.
+      default: "scanner"
+  results:
+    - name: login-status
+      description: HTTP status line of the Vault login attempt.
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /spiffe-workload-api
+        name: spiffe-workload-api
+        readOnly: true
+  steps:
+    - name: exchange-token
+      image: registry-service.kind-registry/demo-tools/spiffe-curl:0.1
+      script: |
+        #!/bin/sh
+        set -e
+        # Tolerate SPIRE entry-minting lag for fresh pods.
+        sleep 10
+        spire-agent api fetch jwt \
+          -audience "$(params.jwt-audience)" \
+          -socketPath /spiffe-workload-api/spire-agent.sock \
+          -output json > /tmp/jwt.json
+        JWT=$(jq -r '.[0].svids[0].svid' /tmp/jwt.json)
+        echo "JWT-SVID subject: $(jq -r '.[0].svids[0].spiffe_id' /tmp/jwt.json)"
+        echo "Exchanging the JWT-SVID at Vault for a short-lived token..."
+        LOGIN=$(curl -s -D /tmp/login-headers -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"role\": \"$(params.vault-role)\", \"jwt\": \"${JWT}\"}" \
+          "$(params.vault-url)/v1/auth/jwt/login")
+        LOGIN_STATUS=$(head -n1 /tmp/login-headers | tr -d '\r')
+        echo "${LOGIN_STATUS}"
+        printf '%s' "${LOGIN_STATUS}" > "$(results.login-status.path)"
+        VAULT_TOKEN=$(echo "${LOGIN}" | jq -r '.auth.client_token // empty')
+        if [ -z "${VAULT_TOKEN}" ]; then
+          echo "Vault denied the login:"
+          echo "${LOGIN}"
+          exit 0
+        fi
+        echo "Login OK: token policy $(echo "${LOGIN}" | jq -r '.auth.policies | join(",")'), ttl $(echo "${LOGIN}" | jq -r '.auth.lease_duration')s."
+        echo "Reading the legacy static credential..."
+        curl -s -H "X-Vault-Token: ${VAULT_TOKEN}" \
+          "$(params.vault-url)/v1/secret/data/legacy-api" \
+          | jq -r '.data.data | "credential keys: \(keys | join(", "))"'
+  volumes:
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true

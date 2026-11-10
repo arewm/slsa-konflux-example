@@ -34,8 +34,9 @@ demo/
 ├── demo-magic.sh                  # Terminal presentation helper (simulated typing & clicker support)
 └── manifests/
     ├── snapshot.yaml              # AppStudio Snapshot manifest for demo-app releases
-    ├── demo-catalog-task.yaml     # Act 2 signed catalog task definition (bundle source)
-    ├── demo-unsigned-task.yaml    # Act 2 unsigned attacker-spoof task definition (same content)
+    (Act 2 task definitions live in ../managed-context/tasks/ alongside the
+     other bundle-pushed tasks: demo-catalog-task/, demo-unsigned-task/,
+     trivy-sbom-scan/0.1-demo/, trivy-sbom-scan/0.1-vault/, buildah-oci-ta/)
     ├── catalog-bundle-ref         # Digest-pinned bundle refs written by push-demo-catalog-bundles.sh
     ├── zot-oidc.yaml              # OIDC-authenticated Zot registry deployment & access policy
     ├── cve-database-service.yaml  # Secretless mock CVE database service (OIDC JWT validator)
@@ -217,7 +218,7 @@ Act 2 references two task bundles in the local registry under `tekton-catalog/`:
 - `demo-catalog-task` — a trivial catalog task that is **Cosign-signed** with the demo catalog key. `verify-bundle-signatures` verifies its signature at admission and promotes it to `trusted-task-role: prod`.
 - `demo-unsigned-task` — the **same task content, left unsigned** (the "attacker spoof" case). It matches the trusted catalog pattern but has no valid signature, so admission is denied.
 
-The task definitions are checked in at `demo/manifests/demo-catalog-task.yaml` and `demo/manifests/demo-unsigned-task.yaml` (identical content; only the signing differs). `demo/setup-demo.sh` calls `demo/push-demo-catalog-bundles.sh`, which:
+The task definitions are checked in at `managed-context/tasks/demo-catalog-task/0.1/` and `managed-context/tasks/demo-unsigned-task/0.1/` (identical content; only the signing differs) — bundle-pushed task definitions are co-located under `managed-context/tasks/<name>/<version>/`. `demo/setup-demo.sh` calls `demo/push-demo-catalog-bundles.sh`, which:
 
 1. Ensures the demo signing keypair exists (secret `demo-signing-key` with `cosign.key`/`cosign.pub` in `kind-registry`; generated on first use per cluster — a fresh cluster gets a fresh key, which is fine since signing and verification are configured from the same key).
 2. Pushes both bundles to the local registry with `tkn bundle push` and records the resulting digest-pinned refs in `demo/manifests/catalog-bundle-ref` (digests are content-addressed but not stable across `tkn` versions, so `run-demo.sh` reads them from that file instead of hardcoded pins).
@@ -239,7 +240,7 @@ The task definitions are checked in at `demo/manifests/demo-catalog-task.yaml` a
    - **Untrusted Caller**: An arbitrary dev task requests an audience-scoped JWT for `https://cve-database.internal`. The service returns **HTTP/1.0 403 Forbidden**: role authorization failure.
    - **Vetted Scanner (`trivy-sbom-scan`)**: The scanner task requests a JWT and queries the feed. The service returns **HTTP/1.0 200 OK** with vulnerability data.
 3. **Separation of Duties (OPA Rego)**: Runs unit tests against `separation_of_duties.rego`, showing that a builder task attempting to sign a clean CVE scan is denied by policy.
-4. **Legacy Token Exchange (Vault broker — Pattern 2 extension)**: For services that cannot speak OIDC natively (e.g. Pulp content repositories behind static API tokens), a Vault broker exchanges a task's JWT-SVID for the static credential. Primes during `setup-demo.sh` (Helm release `vault-legacy` in `services`; the scanner bundle's vault variant pushed and signed with the demo catalog key, its digest recorded in `demo/manifests/vault-bundle-ref`).
+4. **Legacy Token Exchange (Vault broker — Pattern 2 extension)**: For services that cannot speak OIDC natively (e.g. Pulp content repositories behind static API tokens), a Vault broker exchanges a task's JWT-SVID for the static credential. Primes during `setup-demo.sh` (Helm release `vault-legacy` in `services`; the scanner bundle's vault variant pushed and signed with the demo catalog key, its digest recorded in `demo/manifests/vault-bundle-ref`). The de-theatered demo tasks (scanner, builder, vault variants) use a small utility image — `demo/images/spiffe-curl.Dockerfile` (alpine + curl + jq + the spire-agent binary) — built **in-cluster** with buildah and imported directly into the kind node's containerd by `vault-setup-lib.sh` (`publish_demo_utility_image`): kubelet resolves step-image pulls with node DNS where in-cluster registry names don't exist, so the image is node-local with pull policy IfNotPresent. No host container runtime is required.
    - **Vetted Scanner**: fetches an audience-`vault` JWT-SVID, logs in to Vault (token minted with policy `cve-feed-reader`, TTL 5m), and reads the legacy static credential — zero pre-shared secrets in the tenant namespace.
    - **Dev-tier Task**: attempts the same exchange; Vault denies the login because the JWT subject does not match the role's `bound_subject`.
 

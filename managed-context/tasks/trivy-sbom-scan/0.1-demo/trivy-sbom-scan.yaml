@@ -11,33 +11,37 @@ metadata:
 spec:
   description: >-
     Demo scanner task for the secretless service act: fetches the
-    workload's JWT-SVID for the CVE database audience so the
-    role-scoped service access can be demonstrated. Stands in for the
-    full Trivy scan task.
+    workload's JWT-SVID for the CVE database audience and queries the CVE
+    database service with it — in this task, with this identity, no relay
+    pods, no mounted secrets. Stands in for the full Trivy scan task
+    (managed-context/tasks/trivy-sbom-scan/0.1/ runs the real scanner).
+  results:
+    - name: query-status
+      description: HTTP status line returned by the CVE database service.
   stepTemplate:
     volumeMounts:
       - name: spiffe-workload-api
         mountPath: /spiffe-workload-api
         readOnly: true
   steps:
-    - name: wait-spire
-      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command:
-        - sleep
-        - '10'
-    - name: fetch-jwt
-      image: ghcr.io/spiffe/spire-agent:1.15.3
-      command:
-        - /opt/spire/bin/spire-agent
-        - api
-        - fetch
-        - jwt
-        - -audience
-        - https://cve-database.internal
-        - -socketPath
-        - /spiffe-workload-api/spire-agent.sock
-        - -output
-        - json
+    - name: query-cve-database
+      image: registry-service.kind-registry/demo-tools/spiffe-curl:0.1
+      script: |
+        #!/bin/sh
+        set -e
+        # Tolerate SPIRE entry-minting lag for fresh pods.
+        sleep 10
+        spire-agent api fetch jwt \
+          -audience https://cve-database.internal \
+          -socketPath /spiffe-workload-api/spire-agent.sock \
+          -output json > /tmp/jwt.json
+        JWT=$(jq -r '.[0].svids[0].svid' /tmp/jwt.json)
+        echo "JWT-SVID subject: $(jq -r '.[0].svids[0].spiffe_id' /tmp/jwt.json)"
+        echo "Querying the CVE database with the task's own JWT-SVID..."
+        STATUS=$(curl -s -i -H "Authorization: Bearer ${JWT}" \
+          http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities \
+          | tee /dev/stderr | head -n1 | tr -d '\r')
+        printf '%s' "${STATUS}" > "$(results.query-status.path)"
   volumes:
     - name: spiffe-workload-api
       csi:

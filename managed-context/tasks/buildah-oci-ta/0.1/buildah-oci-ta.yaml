@@ -11,32 +11,36 @@ metadata:
 spec:
   description: >-
     Demo builder task for the push-gating act: fetches the workload's
-    JWT-SVID for the gated registry audience so the push authorization
-    can be demonstrated. Stands in for the full buildah build task.
+    JWT-SVID for the gated registry audience and initiates the OCI push
+    handshake itself — the task, with this identity, no relay pods.
+    Stands in for the full buildah build task.
+  results:
+    - name: push-status
+      description: HTTP status line of the registry push handshake.
   stepTemplate:
     volumeMounts:
       - name: spiffe-workload-api
         mountPath: /spiffe-workload-api
         readOnly: true
   steps:
-    - name: wait-spire
-      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command:
-        - sleep
-        - '10'
-    - name: fetch-jwt
-      image: ghcr.io/spiffe/spire-agent:1.15.3
-      command:
-        - /opt/spire/bin/spire-agent
-        - api
-        - fetch
-        - jwt
-        - -audience
-        - https://registry-oidc.kind-registry:5000
-        - -socketPath
-        - /spiffe-workload-api/spire-agent.sock
-        - -output
-        - json
+    - name: push-handshake
+      image: registry-service.kind-registry/demo-tools/spiffe-curl:0.1
+      script: |
+        #!/bin/sh
+        set -e
+        # Tolerate SPIRE entry-minting lag for fresh pods.
+        sleep 10
+        spire-agent api fetch jwt \
+          -audience https://registry-oidc.kind-registry:5000 \
+          -socketPath /spiffe-workload-api/spire-agent.sock \
+          -output json > /tmp/jwt.json
+        JWT=$(jq -r '.[0].svids[0].svid' /tmp/jwt.json)
+        echo "JWT-SVID subject: $(jq -r '.[0].svids[0].spiffe_id' /tmp/jwt.json)"
+        echo "Initiating the OCI push handshake with the gated registry..."
+        STATUS=$(curl -k -s -i -X POST -H "Authorization: Bearer ${JWT}" \
+          https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/ \
+          | tee /dev/stderr | head -n1 | tr -d '\r')
+        printf '%s' "${STATUS}" > "$(results.push-status.path)"
   volumes:
     - name: spiffe-workload-api
       csi:

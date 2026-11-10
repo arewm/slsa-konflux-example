@@ -129,8 +129,8 @@ push_bundle() {  # $1 = repo, $2 = task yaml, $3 = description; echoes digest on
   echo "${digest}"
 }
 
-CATALOG_DIGEST=$(push_bundle "${CATALOG_REPO}" "${SCRIPT_DIR}/manifests/demo-catalog-task.yaml" "signed catalog task")
-UNSIGNED_DIGEST=$(push_bundle "${UNSIGNED_REPO}" "${SCRIPT_DIR}/manifests/demo-unsigned-task.yaml" "UNSIGNED attacker-spoof task")
+CATALOG_DIGEST=$(push_bundle "${CATALOG_REPO}" "${SCRIPT_DIR}/../managed-context/tasks/demo-catalog-task/0.1/demo-catalog-task.yaml" "signed catalog task")
+UNSIGNED_DIGEST=$(push_bundle "${UNSIGNED_REPO}" "${SCRIPT_DIR}/../managed-context/tasks/demo-unsigned-task/0.1/demo-unsigned-task.yaml" "UNSIGNED attacker-spoof task")
 
 say "Recording bundle refs in ${REF_FILE}..."
 cat > "${REF_FILE}" << EOF

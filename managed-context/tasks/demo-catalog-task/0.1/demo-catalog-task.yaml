@@ -1,0 +1,33 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: demo-catalog-task
+  labels:
+    app.kubernetes.io/version: "0.1"
+spec:
+  description: >-
+    Signed catalog demo task: produces a versioned build record (a small
+    JSON artifact) with a sha256 checksum, so the demo shows the signed
+    bundle doing real, verifiable work rather than a placeholder echo.
+  params:
+    - name: component
+      description: Component name recorded in the build record.
+      default: "demo-app"
+  results:
+    - name: artifact-checksum
+      description: sha256 of the produced build record.
+  steps:
+    - name: produce-record
+      image: alpine:3.20
+      script: |
+        #!/bin/sh
+        set -e
+        printf '{"component":"%s","built_at":"%s"}\n' \
+          "$(params.component)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          > /tekton/home/build-record.json
+        CHECKSUM=$(sha256sum /tekton/home/build-record.json | cut -d' ' -f1)
+        printf '%s' "${CHECKSUM}" > "$(results.artifact-checksum.path)"
+        echo "Build record produced:"
+        cat /tekton/home/build-record.json
+        echo "sha256: ${CHECKSUM}"

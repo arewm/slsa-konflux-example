@@ -194,7 +194,7 @@ spec:
         name: sa-token
     steps:
     - name: inspect-sa-token
-      image: curlimages/curl:latest
+      image: curlimages/curl:8.17.0
       command:
       - /bin/sh
       - -c
@@ -236,7 +236,7 @@ p "# THE ATTACK:"
 p "# A rogue task running in the same namespace under the same ServiceAccount abuses regcred"
 p "# to overwrite production image tag 'slsa-e2e-test:latest' with a malicious backdoor!"
 kubectl delete pod rogue-ambient-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+cat << 'EOF' | kubectl_create_retry >/dev/null
 apiVersion: v1
 kind: Pod
 metadata:
@@ -258,15 +258,28 @@ spec:
       export SSL_CERT_DIR=/tekton-custom-certs
       mkdir -p ~/.docker
       cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
-      
+
+      echo '=== STEALING THE AMBIENT IDENTITY ==='
+      python3 -c "
+        import base64, json
+        tok = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read()
+        p = tok.split('.')[1]; p += '=' * (-len(p) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(p))
+        print('Compromised identity : ' + claims['sub'])
+        print('Issuer               : ' + claims.get('iss', ''))
+      "
+      echo 'The cluster cannot distinguish this task from the real builder -'
+      echo 'same ServiceAccount, same namespace, full ambient authority.'
+
+      echo '=== PUSHING THE BACKDOOR AS THAT IDENTITY ==='
       echo 'MALICIOUS BACKDOOR EXECUTED' > /tmp/payload.txt
       cd /tmp
       oras push --insecure registry-service.kind-registry/slsa-e2e-test:latest \
         --artifact-type application/vnd.konflux.test \
         payload.txt:application/text
-      
+
       oras pull --insecure registry-service.kind-registry/slsa-e2e-test:latest -o /tmp/pulled
-      echo \"[VERIFICATION] Tag contents: \$(cat /tmp/pulled/payload.txt)\"
+      echo '[VERIFICATION] Tag contents:' \$(cat /tmp/pulled/payload.txt)
     volumeMounts:
     - mountPath: /tekton/creds-secrets/regcred-internal-registry
       name: regcred
@@ -284,11 +297,11 @@ spec:
         path: ca-bundle.crt
       name: trusted-ca
   restartPolicy: Never
-EOF"
+EOF
 
 kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/rogue-ambient-push -n default-tenant --timeout=180s >/dev/null 2>&1 || true
 for i in $(seq 1 30); do kubectl logs rogue-ambient-push -n default-tenant >/dev/null 2>&1 || { sleep 5; continue; }; break; done
-pe "kubectl logs rogue-ambient-push -n default-tenant | grep -A 5 \"VERIFICATION\""
+pe "kubectl logs rogue-ambient-push -n default-tenant | grep -B2 -A3 -e \"Compromised identity\" -e \"VERIFICATION\" || true"
 demo_cleanup pod rogue-ambient-push -n default-tenant
 
 p "# The tag was silently overwritten because traditional SA credentials provide ambient authority!"
@@ -385,7 +398,7 @@ spec:
   taskSpec:
     steps:
     - name: echo
-      image: alpine:latest
+      image: alpine:3.20
       script: echo 'Untrusted inline code execution'
 EOF
 )
@@ -438,6 +451,12 @@ spec:
 EOF"
 
 p "# Admission denied! Sigstore verification failed: no matching signatures found."
+p "# And because the denial is at ADMISSION — on the TaskRun itself — nothing was"
+p "# ever created. Not even the TaskRun exists:"
+pe "kubectl get taskrun attacker-unsigned-task -n default-tenant || true"
+pe "kubectl get pods -n default-tenant -l tekton.dev/taskRun=attacker-unsigned-task || true"
+p "# No TaskRun, no Pod, no queue entry, no cluster resources — the unsigned"
+p "# task never ran. Denial happens before any controller ever sees it."
 wait
 p ""
 p "# ═══════════════════════════════════════════════════════════════════════════"
@@ -473,6 +492,9 @@ pe "kubectl wait --for=condition=Succeeded taskrun/demo-signed-task -n default-t
 p "# Inspect the TaskRun labels stamped by Kyverno:"
 pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
 
+p "# The signed task did real work — its build record checksum is a TaskRun result:"
+pe "kubectl get taskrun demo-signed-task -n default-tenant -o jsonpath='{.status.results}'"
+
 p "# Inspect the production SVID (SPIFFE Verifiable Identity Document) minted by SPIRE for this Pod:"
 SIGNED_POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=demo-signed-task -o jsonpath='{.items[0].metadata.uid}')
 pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -selector \"k8s:pod-uid:${SIGNED_POD_UID}\""
@@ -505,7 +527,7 @@ pe "kubectl get configmap zot-oidc-config -n kind-registry -o jsonpath='{.data.c
 p "# 1. Attack Attempt on Gated Registry:"
 p "# A rogue dev task attempts to push to slsa-e2e-test using its SPIFFE JWT-SVID:"
 kubectl delete taskrun demo-rogue-push-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+cat << 'EOF' | kubectl_create_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -523,55 +545,30 @@ spec:
       - mountPath: /spiffe-workload-api
         name: spiffe-workload-api
         readOnly: true
-      - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
-        name: trusted-ca
-        readOnly: true
-        subPath: ca-bundle.crt
     steps:
-    - name: wait-spire
-      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command:
-      - sleep
-      - '10'
-    - name: fetch-jwt
-      image: ghcr.io/spiffe/spire-agent:1.15.3
-      command:
-      - /opt/spire/bin/spire-agent
-      - api
-      - fetch
-      - jwt
-      - -audience
-      - https://registry-oidc.kind-registry:5000
-      - -socketPath
-      - /spiffe-workload-api/spire-agent.sock
-      - -output
-      - json
+    - name: push-handshake
+      image: registry-service.kind-registry/demo-tools/spiffe-curl:0.1
+      script: |
+        #!/bin/sh
+        set -e
+        sleep 10
+        spire-agent api fetch jwt -audience https://registry-oidc.kind-registry:5000 -socketPath /spiffe-workload-api/spire-agent.sock -output json > /tmp/jwt.json
+        JWT=$(jq -r '.[0].svids[0].svid' /tmp/jwt.json)
+        echo "JWT-SVID subject: $(jq -r '.[0].svids[0].spiffe_id' /tmp/jwt.json)"
+        echo "Initiating the OCI push handshake with the gated registry..."
+        curl -k -s -i -X POST -H "Authorization: Bearer ${JWT}" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/
     volumes:
     - csi:
         driver: csi.spiffe.io
         readOnly: true
       name: spiffe-workload-api
-    - configMap:
-        items:
-        - key: ca-bundle.crt
-          path: ca-bundle.crt
-        name: trusted-ca
-      name: trusted-ca
-EOF"
+EOF
 
-kubectl wait --for=condition=Succeeded taskrun/demo-rogue-push-attempt -n default-tenant --timeout=60s
+kubectl wait --for=condition=Succeeded taskrun/demo-rogue-push-attempt -n default-tenant --timeout=120s
 
-ROGUE_JWT=$(kubectl logs demo-rogue-push-attempt-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-p "# Inspect the identity minted for the rogue task:"
-pe "python3 -c \"import sys, json, base64; p = '${ROGUE_JWT}'.split('.')[1]; p += '=' * (-len(p)%4); print('Subject:', json.loads(base64.urlsafe_b64decode(p))['sub'])\""
-
-p "# Attempt push handshake to the gated registry with the rogue identity:"
-kubectl delete pod test-rogue-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "kubectl run test-rogue-push -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -k -s -i -X POST -H \"Authorization: Bearer ${ROGUE_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/"
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-rogue-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
-pe "kubectl logs test-rogue-push -n default-tenant | head -n 5"
+p "# The rogue task's own logs — it attempted the push handshake itself:"
+pe "kubectl logs demo-rogue-push-attempt-pod -n default-tenant -c step-push-handshake"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":403 || true"
-demo_cleanup pod test-rogue-push -n default-tenant
 demo_cleanup taskrun demo-rogue-push-attempt -n default-tenant
 
 p "# HTTP/2 403 Forbidden! The rogue task cannot obtain push authorization."
@@ -602,19 +599,11 @@ spec:
       value: task
 EOF"
 
-kubectl wait --for=condition=Succeeded taskrun/demo-builder-gated-push -n default-tenant --timeout=60s
+kubectl wait --for=condition=Succeeded taskrun/demo-builder-gated-push -n default-tenant --timeout=120s
 
-BUILDER_JWT=$(kubectl logs demo-builder-gated-push-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-p "# Inspect the identity minted for the vetted builder:"
-pe "python3 -c \"import sys, json, base64; p = '${BUILDER_JWT}'.split('.')[1]; p += '=' * (-len(p)%4); print('Subject:', json.loads(base64.urlsafe_b64decode(p))['sub'])\""
-
-p "# Inspect the in-pod push handshake result against the gated registry:"
-kubectl delete pod test-builder-push -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "kubectl run test-builder-push -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -k -s -i -X POST -H \"Authorization: Bearer ${BUILDER_JWT}\" https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/"
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-builder-push -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
-pe "kubectl logs test-builder-push -n default-tenant | head -n 5"
+p "# The builder task's own logs — the push handshake with its production identity:"
+pe "kubectl logs demo-builder-gated-push-pod -n default-tenant -c step-push-handshake"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":202 || true"
-demo_cleanup pod test-builder-push -n default-tenant
 demo_cleanup taskrun demo-builder-gated-push -n default-tenant
 
 p "# HTTP/2 202 Accepted! Push upload session created strictly via Workload Identity."
@@ -632,7 +621,7 @@ pe "kubectl get pods,services -n services"
 p "# 1. Untrusted Task Attempt:"
 p "# A dev task requests a token and attempts to access the CVE feed:"
 kubectl delete taskrun demo-untrusted-service-query -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "cat << 'EOF' | kubectl_create_retry
+cat << 'EOF' | kubectl_create_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -650,51 +639,33 @@ spec:
       - mountPath: /spiffe-workload-api
         name: spiffe-workload-api
         readOnly: true
-      - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
-        name: trusted-ca
-        readOnly: true
-        subPath: ca-bundle.crt
     steps:
-    - name: wait-spire
-      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command:
-      - sleep
-      - '10'
-    - name: fetch-jwt
-      image: ghcr.io/spiffe/spire-agent:1.15.3
-      command:
-      - /opt/spire/bin/spire-agent
-      - api
-      - fetch
-      - jwt
-      - -audience
-      - https://cve-database.internal
-      - -socketPath
-      - /spiffe-workload-api/spire-agent.sock
-      - -output
-      - json
+    - name: query-cve-database
+      image: registry-service.kind-registry/demo-tools/spiffe-curl:0.1
+      script: |
+        #!/bin/sh
+        set -e
+        sleep 10
+        spire-agent api fetch jwt -audience https://cve-database.internal -socketPath /spiffe-workload-api/spire-agent.sock -output json > /tmp/jwt.json
+        JWT=$(jq -r '.[0].svids[0].svid' /tmp/jwt.json)
+        echo "JWT-SVID subject: $(jq -r '.[0].svids[0].spiffe_id' /tmp/jwt.json)"
+        echo "Querying the CVE database with the task's own JWT-SVID..."
+        curl -s -i -H "Authorization: Bearer ${JWT}" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities
     volumes:
     - csi:
         driver: csi.spiffe.io
         readOnly: true
       name: spiffe-workload-api
-    - configMap:
-        items:
-        - key: ca-bundle.crt
-          path: ca-bundle.crt
-        name: trusted-ca
-      name: trusted-ca
-EOF"
+EOF
 
-kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n default-tenant --timeout=60s
+p "# An inline task (dev-classified) with the demo utility image — nothing"
+p "# mounted but the SPIFFE socket:"
+pe "kubectl get taskrun demo-untrusted-service-query -n default-tenant -o yaml | yq '.spec.taskSpec.steps[].image'"
+kubectl wait --for=condition=Succeeded taskrun/demo-untrusted-service-query -n default-tenant --timeout=120s
 
-UNTRUSTED_SVID=$(kubectl logs demo-untrusted-service-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-kubectl delete pod test-untrusted-client -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "kubectl run test-untrusted-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${UNTRUSTED_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-untrusted-client -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
-pe "kubectl logs test-untrusted-client -n default-tenant"
+p "# The task's own logs — it queried the service itself, with its dev-tier JWT-SVID:"
+pe "kubectl logs demo-untrusted-service-query-pod -n default-tenant -c step-query-cve-database"
 pe "kubectl logs deployment/cve-database-service -n services --tail=4"
-demo_cleanup pod test-untrusted-client -n default-tenant
 demo_cleanup taskrun demo-untrusted-service-query -n default-tenant
 
 p "# HTTP/1.0 403 Forbidden! The untrusted task lacks scanner authorization."
@@ -728,15 +699,12 @@ spec:
       value: task
 EOF"
 
-kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n default-tenant --timeout=60s
+kubectl wait --for=condition=Succeeded taskrun/demo-trusted-scanner-query -n default-tenant --timeout=120s
 
-SCANNER_SVID=$(kubectl logs demo-trusted-scanner-query-pod -n default-tenant -c step-fetch-jwt | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-kubectl delete pod test-scanner-client -n default-tenant --wait=true >/dev/null 2>&1 || true
-pe "kubectl run test-scanner-client --namespace=default-tenant --image=curlimages/curl --restart=Never --command -- curl -s -i -H \"Authorization: Bearer ${SCANNER_SVID}\" http://cve-database-service.services.svc.cluster.local:8080/api/v1/vulnerabilities"
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/test-scanner-client -n default-tenant --timeout=30s >/dev/null 2>&1 || sleep 2
-pe "kubectl logs test-scanner-client -n default-tenant"
+p "# The scanner task's own logs — it queried the service itself, with its"
+p "# prod-classified JWT-SVID:"
+pe "kubectl logs demo-trusted-scanner-query-pod -n default-tenant -c step-query-cve-database"
 pe "kubectl logs deployment/cve-database-service -n services --tail=5"
-demo_cleanup pod test-scanner-client -n default-tenant
 demo_cleanup taskrun demo-trusted-scanner-query -n default-tenant
 
 p "# HTTP/1.0 200 OK! Zero pre-shared secrets, zero credentials mounted in default-tenant."
@@ -799,47 +767,14 @@ spec:
       value: task
 EOF"
   pe "kubectl wait --for=condition=Succeeded taskrun/demo-vault-scanner-exchange -n default-tenant --timeout=300s"
-  SCANNER_JWT=$(kubectl logs demo-vault-scanner-exchange-pod -n default-tenant -c step-fetch-jwt \
-    | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])")
-  p "# JWT-SVID subject: $(python3 -c "
-import base64, json, sys
-p = '${SCANNER_JWT}'.split('.')[1]; p += '=' * (-len(p) % 4)
-print(json.loads(base64.urlsafe_b64decode(p))['sub'])")"
-
-  p "# Exchange it at the broker — login mints a short-lived (5m) Vault token:"
-  kubectl delete pod test-vault-login -n default-tenant --wait=true >/dev/null 2>&1 || true
-  pe "kubectl run test-vault-login -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -s -X POST -H 'Content-Type: application/json' -d '{\"role\": \"scanner\", \"jwt\": \"${SCANNER_JWT}\"}' ${VAULT_URL}/v1/auth/jwt/login"
-  for i in $(seq 1 20); do
-    kubectl logs test-vault-login -n default-tenant > /tmp/vault-login.json 2>/dev/null || true
-    if grep -q . /tmp/vault-login.json 2>/dev/null; then break; fi
-    sleep 2
-  done
-  VAULT_TOKEN=$(python3 -c "import json; d=json.load(open('/tmp/vault-login.json')); print(d['auth']['client_token'])" 2>/dev/null || true)
-  p "# Login OK: Vault minted a token with policy 'cve-feed-reader' (ttl 5m)."
-
-  p "# Read the legacy static credential with it:"
-  kubectl delete pod test-vault-read -n default-tenant --wait=true >/dev/null 2>&1 || true
-  pe "kubectl run test-vault-read -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -s -H 'X-Vault-Token: ${VAULT_TOKEN}' ${VAULT_URL}/v1/secret/data/legacy-api"
-  for i in $(seq 1 20); do
-    kubectl logs test-vault-read -n default-tenant > /tmp/vault-read.json 2>/dev/null || true
-    if grep -q . /tmp/vault-read.json 2>/dev/null; then break; fi
-    sleep 2
-  done
-  pe "kubectl logs test-vault-read -n default-tenant"
-  p "# The scanner can now authenticate to the legacy service with ZERO"
-  p "# pre-shared secrets — the credential followed the verified identity."
-
-  demo_cleanup pod test-vault-login -n default-tenant
-  demo_cleanup pod test-vault-read -n default-tenant
+  p "# The scanner task's own logs — it performed the whole exchange itself:"
+  pe "kubectl logs demo-vault-scanner-exchange-pod -n default-tenant -c step-exchange-token"
   demo_cleanup taskrun demo-vault-scanner-exchange -n default-tenant
 
   wait
-  p "# Now the dev-tier task attempts the same exchange:"
+  p "# Now the dev-tier task attempts the same exchange — itself, in-task:"
   kubectl delete taskrun demo-vault-dev-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
-  DEV_VAULT_ATTEMPTS=0
-  while [ ${DEV_VAULT_ATTEMPTS} -lt 3 ]; do
-    DEV_VAULT_ATTEMPTS=$((DEV_VAULT_ATTEMPTS + 1))
-    cat << 'EOF' | kubectl_create_retry >/dev/null
+  cat << 'EOF' | kubectl_create_retry >/dev/null
 apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
@@ -858,60 +793,31 @@ spec:
         name: spiffe-workload-api
         readOnly: true
     steps:
-    - name: wait-spire
-      image: cgr.dev/chainguard/busybox@sha256:19f02276bf8dbdd62f069b922f10c65262cc34b710eea26ff928129a736be791
-      command:
-      - sleep
-      - '10'
-    - name: fetch-jwt
-      image: ghcr.io/spiffe/spire-agent:1.15.3
-      command:
-      - /opt/spire/bin/spire-agent
-      - api
-      - fetch
-      - jwt
-      - -audience
-      - vault
-      - -socketPath
-      - /spiffe-workload-api/spire-agent.sock
-      - -output
-      - json
+    - name: exchange-token
+      image: registry-service.kind-registry/demo-tools/spiffe-curl:0.1
+      script: |
+        #!/bin/sh
+        sleep 10
+        i=0
+        until spire-agent api fetch jwt -audience vault -socketPath /spiffe-workload-api/spire-agent.sock -output json > /tmp/jwt.json 2>/dev/null; do
+          i=$((i+1)); [ $i -ge 12 ] && exit 1; sleep 5
+        done
+        JWT=$(jq -r '.[0].svids[0].svid' /tmp/jwt.json)
+        echo "JWT-SVID subject: $(jq -r '.[0].svids[0].spiffe_id' /tmp/jwt.json)"
+        echo "Attempting the Vault token exchange with the dev-tier identity..."
+        curl -s -i -X POST -H "Content-Type: application/json"           -d "{\"role\": \"scanner\", \"jwt\": \"${JWT}\"}"           http://vault-legacy-exchange.services.svc.cluster.local:8200/v1/auth/jwt/login
     volumes:
     - csi:
         driver: csi.spiffe.io
         readOnly: true
       name: spiffe-workload-api
 EOF
-    if kubectl wait --for=condition=Succeeded taskrun/demo-vault-dev-attempt -n default-tenant --timeout=120s >/dev/null 2>&1; then
-      break
-    fi
-    # The dev SVID entry is minted by the controller-manager shortly after
-    # the pod appears; if fetch-jwt lost that race, retry with a fresh pod.
-    if kubectl logs demo-vault-dev-attempt-pod -n default-tenant -c step-fetch-jwt 2>/dev/null | grep -q "no identity issued"; then
-      p "# (SPIRE entry not yet minted for the fresh pod — retrying)"
-      kubectl delete taskrun demo-vault-dev-attempt -n default-tenant --wait=true >/dev/null 2>&1 || true
-      continue
-    fi
-    break
-  done
-  DEV_JWT=$(kubectl logs demo-vault-dev-attempt-pod -n default-tenant -c step-fetch-jwt 2>/dev/null \
-    | python3 -c "import sys, json; print(json.load(sys.stdin)[0]['svids'][0]['svid'])" 2>/dev/null || true)
-  if [ -n "${DEV_JWT}" ]; then
-    kubectl delete pod test-vault-dev-login -n default-tenant --wait=true >/dev/null 2>&1 || true
-    pe "kubectl run test-vault-dev-login -n default-tenant --restart=Never --image=curlimages/curl:latest -- curl -s -X POST -H 'Content-Type: application/json' -d '{\"role\": \"scanner\", \"jwt\": \"${DEV_JWT}\"}' ${VAULT_URL}/v1/auth/jwt/login"
-    for i in $(seq 1 20); do
-      kubectl logs test-vault-dev-login -n default-tenant > /tmp/vault-dev-login.json 2>/dev/null || true
-      if grep -q . /tmp/vault-dev-login.json 2>/dev/null; then break; fi
-      sleep 2
-    done
-    pe "kubectl logs test-vault-dev-login -n default-tenant"
-    p "# Vault DENIED the login: the JWT subject is the dev-tier identity,"
-    p "# which does not match the role's bound_subject. The dev task cannot"
-    p "# obtain the legacy credential."
-    demo_cleanup pod test-vault-dev-login -n default-tenant
-  else
-    p "# (dev-tier task could not fetch a JWT-SVID; skipping the denial)"
-  fi
+  pe "kubectl wait --for=condition=Succeeded taskrun/demo-vault-dev-attempt -n default-tenant --timeout=180s"
+  p "# The dev task's own logs — the exchange attempt and Vault's answer:"
+  pe "kubectl logs demo-vault-dev-attempt-pod -n default-tenant -c step-exchange-token"
+  p "# Vault DENIED the login: the JWT subject is the dev-tier identity,"
+  p "# which does not match the role's bound_subject. The dev task cannot"
+  p "# obtain the legacy credential."
   demo_cleanup taskrun demo-vault-dev-attempt -n default-tenant
 else
   p "# (Vault extension not primed — run demo/setup-demo.sh and accept the"
@@ -1220,7 +1126,7 @@ spec:
     spec:
       containers:
       - name: query
-        image: curlimages/curl:latest
+        image: curlimages/curl:8.17.0
         command:
         - /bin/sh
         - -c

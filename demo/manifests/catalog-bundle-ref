@@ -1,7 +1,7 @@
 # Demo catalog task bundle refs (Act 2), written by demo/push-demo-catalog-bundles.sh.
 # Digests are content-addressed but NOT stable across tkn versions, so they
 # are recorded here per cluster instead of being hardcoded in run-demo.sh.
-CATALOG_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/demo-catalog-task@sha256:099f8fb05b083559b0d6b661da95b1a7c90ad8f3537f00f589873e92caff296f
+CATALOG_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/demo-catalog-task@sha256:2a266e211eaffa94253a951d2ecf6ad5ad975e7c835d77b7b022e726aab66115
 UNSIGNED_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/demo-unsigned-task@sha256:099f8fb05b083559b0d6b661da95b1a7c90ad8f3537f00f589873e92caff296f
-TRIVY_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/trivy-sbom-scan@sha256:3728525771eb500f37fff85f0aa56a813847d008b7fdff4c452bf3c8daae54ed
-BUILDAH_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/buildah-oci-ta@sha256:a8c82a9543837f74e691155cda34025af8a32ed09481d793838f17807095d68f
+TRIVY_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/trivy-sbom-scan@sha256:ea98ff2d5cf762cefc9aa1def5755fc60fe35a53b2cde348be867aeca946fbef
+BUILDAH_TASK_BUNDLE=registry-service.kind-registry/tekton-catalog/buildah-oci-ta@sha256:6e60d1c5c1e793b04b4452125884a101b4592528c0d53452b9ae2e8e27e6f997

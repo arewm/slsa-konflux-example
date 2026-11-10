@@ -29,3 +29,4 @@ kind-config.yaml
 demo/.tools/
 # Generated per-cluster by demo/vault-setup-lib.sh
 demo/manifests/vault-bundle-ref
+demo/manifests/demo-utility-image-ref
