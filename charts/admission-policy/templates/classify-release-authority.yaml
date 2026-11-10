@@ -1,37 +1,52 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+---
+# Release-authority classification (CEL MutatingPolicy).
+#
+# Mechanism (verified empirically on this cluster): the Tekton pipelines
+# controller propagates PipelineRun labels onto the TaskRuns it spawns, so
+# every TaskRun of a release-service-created PipelineRun carries
+# pipelines.appstudio.openshift.io/type=managed. The marker is only
+# trustworthy because guard-managed-labels (fail-closed) restricts who may
+# set it on PipelineRuns, guard-task-labels restricts who may set
+# tekton.dev/pipeline on TaskRuns, and validate-role-labels additionally
+# requires a PipelineRun ownerReference — proving the marker was
+# controller-propagated rather than hand-set. Both conditions are required
+# (pipeline name AND managed marker) so neither alone suffices to claim
+# release authority.
+#
+# failurePolicy: Ignore mirrors classify-taskrun: classification is
+# availability-first, the invariant is enforced fail-closed by
+# validate-role-labels. The empty-labels branch is the no-op that leaves
+# existing values untouched.
+apiVersion: policies.kyverno.io/v1beta1
+kind: MutatingPolicy
 metadata:
   name: classify-release-authority
 spec:
   failurePolicy: Ignore
-  rules:
-  - name: label-release-authority-taskrun
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          namespaces: ["managed-tenant"]
-    # Mechanism (verified empirically on this cluster): the Tekton pipelines
-    # controller propagates PipelineRun labels onto the TaskRuns it spawns, so
-    # every TaskRun of a release-service-created PipelineRun carries
-    # pipelines.appstudio.openshift.io/type=managed. The marker is only
-    # trustworthy because guard-managed-labels (fail-closed) restricts who may
-    # set it on PipelineRuns, guard-task-labels restricts who may set
-    # tekton.dev/pipeline on TaskRuns, and validate-role-labels additionally
-    # requires a PipelineRun ownerReference — proving the marker was
-    # controller-propagated rather than hand-set. Both conditions are required
-    # (pipeline name AND managed marker) so neither alone suffices to claim
-    # release authority.
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipeline\" || '' }}`}}"
-        operator: Equals
-        value: "slsa-e2e-release-dual-gated"
-      - key: "{{`{{ request.object.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
-        operator: Equals
-        value: "managed"
-    mutate:
-      patchStrategicMerge:
-        metadata:
-          labels:
-            trusted-pipeline-role: "release-authority"
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["taskruns"]
+  variables:
+    - name: pipelineLabel
+      expression: >-
+        has(request.object.metadata.labels) && 'tekton.dev/pipeline' in request.object.metadata.labels
+        ? request.object.metadata.labels['tekton.dev/pipeline'] : ''
+    - name: managedType
+      expression: >-
+        has(request.object.metadata.labels) && 'pipelines.appstudio.openshift.io/type' in request.object.metadata.labels
+        ? request.object.metadata.labels['pipelines.appstudio.openshift.io/type'] : ''
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            metadata: Object.metadata{
+              labels: request.namespace == 'managed-tenant' &&
+                      variables.pipelineLabel == 'slsa-e2e-release-dual-gated' &&
+                      variables.managedType == 'managed'
+                ? {'trusted-pipeline-role': 'release-authority'} : {}
+            }
+          }

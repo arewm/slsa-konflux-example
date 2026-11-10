@@ -273,6 +273,10 @@ else
 fi
 
 # 2c. Ensure Tekton Chains is configured for Fulcio keyless signing
+# NOTE: chains' rekor upload is controlled by transparency.enabled/url — NOT
+# signers.x509.rekor.address, which chains silently ignores. Without the
+# transparency keys chains signs attestations but never records them in the
+# transparency log, and Conforma's tlog inclusion checks fail in Act 4.
 echo "==> [Demo Setup] Verifying Tekton Chains keyless signing configuration..."
 kubectl patch tektonconfig config --type=merge -p '{
   "spec": {
@@ -287,7 +291,8 @@ kubectl patch tektonconfig config --type=merge -p '{
               "signers.x509.fulcio.provider": "",
               "signers.x509.fulcio.token.path": "/var/run/sigstore/cosign/oidc-token",
               "signers.x509.tuf.mirror.url": "http://tuf-server.tuf-system.svc.cluster.local",
-              "signers.x509.rekor.address": "http://rekor-server.rekor-system.svc.cluster.local",
+              "transparency.enabled": "true",
+              "transparency.url": "http://rekor-server.rekor-system.svc.cluster.local",
               "artifacts.oci.signer": "none",
               "artifacts.taskrun.storage": "oci",
               "artifacts.pipelinerun.storage": "oci",
@@ -312,7 +317,23 @@ kubectl patch configmap cluster-config -n konflux-info --type=merge -p '{
   }
 }' >/dev/null 2>&1 || true
 
-# 3. Deploy OIDC-Gated Zot Registry
+# 3. Scale down Kyverno components the demo does not need, then deploy Zot.
+# The admission controller enforces every policy in the demo; the reports
+# controller (policy reports), cleanup controller (CleanupPolicies — none
+# exist here) and background controller (generate/mutateExisting rules —
+# none exist here) are idle. The reports controller in particular has been
+# observed to restart in a loop on this cluster, starving the single kind
+# node's CPU and pushing the verify-bundle-signatures webhook past its
+# 30s timeout.
+echo "==> [Demo Setup] Scaling down unused Kyverno controllers..."
+for dep in kyverno-reports-controller kyverno-cleanup-controller kyverno-background-controller; do
+  if kubectl get deployment "${dep}" -n kyverno >/dev/null 2>&1; then
+    kubectl scale deployment "${dep}" -n kyverno --replicas=0 >/dev/null 2>&1 || true
+  fi
+done
+echo "  - Kyverno admission controller is the only active component."
+
+# 4. Deploy OIDC-Gated Zot Registry
 echo "==> [Demo Setup] Deploying OIDC-gated Zot registry..."
 kubectl apply -f "${SCRIPT_DIR}/manifests/zot-oidc.yaml"
 kubectl rollout status deployment/registry-oidc -n kind-registry --timeout=60s
@@ -478,6 +499,41 @@ else
   echo "==> [Demo Setup] Applying checked-in demo-app test snapshot (REBUILD_SNAPSHOT=0)..."
   kubectl apply -f "${SCRIPT_DIR}/manifests/snapshot.yaml"
 fi
+
+# 5b. Fail fast if the snapshot's image has no Rekor entry. A snapshot whose
+# attestations were not recorded in the transparency log (e.g. a build that
+# ran while the signing stack was degraded, or a stale checked-in pin from
+# before a transparency-log repair) only fails Act 4 of the demo much later,
+# with a far less actionable error.
+SNAPSHOT_DIGEST=$(kubectl get snapshot demo-app-snapshot -n default-tenant -o jsonpath='{.spec.components[0].containerImage}' | cut -d@ -f2)
+kubectl delete job verify-snapshot-rekor -n default --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+cat <<EOF | kubectl apply -f - >/dev/null
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: verify-snapshot-rekor
+  namespace: default
+  labels:
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: query
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c", "set -eu; UUID=\$(curl -fsS -X POST -H 'Content-Type: application/json' -d '{\"hash\":\"${SNAPSHOT_DIGEST}\"}' http://rekor-server.rekor-system.svc.cluster.local/api/v1/index/retrieve | grep -oE '[a-f0-9]{64,}' | head -n1); if [ -z \"\${UUID}\" ]; then echo \"ERROR: no Rekor entry found for snapshot image ${SNAPSHOT_DIGEST}\"; exit 1; fi"]
+EOF
+if ! kubectl wait --for=condition=Complete job/verify-snapshot-rekor -n default --timeout=120s >/dev/null 2>&1; then
+  echo "Error: the snapshot's image has no Rekor entry; its attestations cannot be verified in Act 4."
+  echo "This happens when the underlying build ran while the signing/transparency-log stack was"
+  echo "degraded, or when a checked-in snapshot pin predates a transparency-log re-initialization."
+  echo "Re-run this script (REBUILD_SNAPSHOT=1, the default, produces a freshly recorded snapshot)."
+  kubectl delete job verify-snapshot-rekor -n default --ignore-not-found=true >/dev/null 2>&1 || true
+  exit 1
+fi
+kubectl delete job verify-snapshot-rekor -n default --ignore-not-found=true >/dev/null 2>&1 || true
+echo "  - Snapshot image is recorded in Rekor (Act 4 verifiable)."
 
 # 6. Ensure clean initial baseline state
 echo "==> [Demo Setup] Establishing pristine baseline state..."

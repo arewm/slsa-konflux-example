@@ -1,85 +1,78 @@
+{{- /* Convert glob patterns to a combined regex: escape dots, replace * with .* */}}
+{{- $regexParts := list }}
+{{- range .Values.trustedBundles }}
+  {{- $regexParts = append $regexParts (.pattern | replace "." "[.]" | replace "*" ".*") }}
+{{- end }}
+{{- $bundleRegex := join "|" $regexParts }}
 ---
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# TaskRun classification (CEL MutatingPolicy).
+#
+# Mutate-normalizes / validate-enforces split: this policy runs with
+# failurePolicy: Ignore deliberately — if Kyverno is down, TaskRuns land
+# unclassified ("dev") rather than blocking the whole cluster, so Ignore is
+# availability-only, not security. The security invariant is enforced
+# fail-closed by validate-role-labels (failurePolicy: Fail), which rejects
+# any TaskRun whose trusted-task-role=prod label does not survive a
+# recompute of these classification preconditions. A rogue actor cannot
+# exploit the Ignore policy to claim trust it didn't earn.
+#
+# Each mutation builds an apply configuration with an empty-labels branch as
+# the no-op: a hand-set trusted-task-role is deliberately NOT normalized
+# away, because mutations run before validations in the admission chain, so
+# overwriting a hand-set label would hide it from validate-role-labels,
+# which must see the claimed value to deny unearned prod claims fail-closed.
+# (A hand-set "dev" is the trust floor and harmless.)
+apiVersion: policies.kyverno.io/v1beta1
+kind: MutatingPolicy
 metadata:
   name: classify-taskrun
 spec:
-  # Mutate-normalizes / validate-enforces split: this policy runs with
-  # failurePolicy: Ignore deliberately — if Kyverno is down, TaskRuns land
-  # unclassified ("dev") rather than blocking the whole cluster, so Ignore is
-  # availability-only, not security. The security invariant is enforced
-  # fail-closed by validate-role-labels (failurePolicy: Fail), which rejects
-  # any TaskRun whose trusted-task-role=prod label does not survive a
-  # recompute of these classification preconditions. A rogue actor cannot
-  # exploit the Ignore policy to claim trust it didn't earn.
   failurePolicy: Ignore
-  rules:
-  - name: set-dev-label
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          operations: ["CREATE", "UPDATE"]
-    # Only stamp the default when the label is absent. A hand-set
-    # trusted-task-role is deliberately NOT normalized away here: mutations
-    # run before validations in the admission chain, so overwriting a
-    # hand-set label would hide it from validate-role-labels, which must see
-    # the claimed value to deny unearned prod claims fail-closed. (A hand-set
-    # "dev" is the trust floor and harmless.)
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"trusted-task-role\" || '' }}`}}"
-        operator: Equals
-        value: ""
-    mutate:
-      patchStrategicMerge:
-        metadata:
-          labels:
-            trusted-task-role: "dev"
-
-  {{- if .Values.trustedBundles }}
-  {{- /* Convert glob patterns to a combined regex: escape dots, replace * with .* */}}
-  {{- $regexParts := list }}
-  {{- range .Values.trustedBundles }}
-    {{- $regexParts = append $regexParts (.pattern | replace "." "[.]" | replace "*" ".*") }}
-  {{- end }}
-  {{- $bundleRegex := join "|" $regexParts }}
-  # Upgrades TaskRuns to prod when the bundle is digest-pinned AND matches a trusted URL
-  # pattern. Signature verification is enforced by the verify-bundle-signatures ClusterPolicy
-  # which blocks admission for trusted-pattern bundles lacking a valid cosign signature.
-  - name: upgrade-to-prod
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    context:
-    # Pre-compute the bundle reference from either resolver or direct taskRef format.
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["taskruns"]
+  variables:
+    # The bundle reference from either resolver or direct taskRef format
+    # ("" when the TaskRun has no bundle param).
     - name: bundleRef
-      variable:
-        jmesPath: "request.object.spec.taskRef.params[?name == 'bundle'] | [0] | value || ''"
-        default: ""
-    # Chain context variables — later entries can reference earlier ones by name
-    - name: isDigestPinned
-      variable:
-        value: "{{`{{ regex_match('@sha256:[a-f0-9]{64}', bundleRef) }}`}}"
-    - name: matchesPattern
-      variable:
-        value: "{{ `{{` }} regex_match('{{ $bundleRegex }}', bundleRef) {{ `}}` }}"
-    preconditions:
-      all:
-      - key: "{{`{{ bundleRef }}`}}"
-        operator: NotEquals
-        value: ""
-      - key: "{{`{{ isDigestPinned }}`}}"
-        operator: Equals
-        value: true
-      - key: "{{`{{ matchesPattern }}`}}"
-        operator: Equals
-        value: true
-    mutate:
-      patchStrategicMerge:
-        metadata:
-          labels:
-            trusted-task-role: "prod"
-  {{- end }}
+      expression: >-
+        has(request.object.spec.taskRef) && has(request.object.spec.taskRef.params) &&
+        request.object.spec.taskRef.params.filter(p, p.name == 'bundle').size() > 0
+        ? request.object.spec.taskRef.params.filter(p, p.name == 'bundle')[0].value : ''
+    # Whether the bundle is digest-pinned and matches a trusted pattern.
+    - name: trustedProd
+      expression: >-
+        ({{ range $i, $ns := .Values.namespaces }}{{ if $i }} || {{ end }}request.namespace == '{{ $ns }}'{{ end }}) &&
+        variables.bundleRef != '' &&
+        variables.bundleRef.matches('@sha256:[a-f0-9]{64}'){{ if .Values.trustedBundles }} &&
+        variables.bundleRef.matches('{{ $bundleRegex }}'){{ else }} && false{{ end }}
+    # Current role label ("" when absent).
+    - name: currentRole
+      expression: >-
+        has(request.object.metadata.labels) && 'trusted-task-role' in request.object.metadata.labels
+        ? request.object.metadata.labels['trusted-task-role'] : ''
+  mutations:
+    # Stamp the default dev role only when the label is absent.
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            metadata: Object.metadata{
+              labels: variables.currentRole == '' ? {'trusted-task-role': 'dev'} : {}
+            }
+          }
+    # Upgrade to prod when the bundle is digest-pinned AND matches a trusted
+    # URL pattern. Signature verification is enforced by the
+    # verify-bundle-signatures ImageValidatingPolicy, which blocks admission
+    # for trusted-pattern bundles lacking a valid cosign signature.
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >-
+          Object{
+            metadata: Object.metadata{
+              labels: variables.trustedProd ? {'trusted-task-role': 'prod'} : {}
+            }
+          }

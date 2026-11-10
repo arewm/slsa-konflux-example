@@ -148,12 +148,40 @@ with open('${CUSTOM_INDEX}', 'w', encoding='utf-8') as f:
 " <<< "$raw_html"
 }
 
+baseline_ready() {
+  # Cheap probe: the demo cluster is reachable and its key long-lived
+  # resources exist. This is NOT a full health check; use --force-setup
+  # to unconditionally re-run setup-demo.sh.
+  # shellcheck disable=SC1091
+  source "${DIR}/kubeconfig.sh" 2>/dev/null || return 1
+  kubectl get namespace default-tenant >/dev/null 2>&1 || return 1
+  kubectl get application demo-app -n default-tenant >/dev/null 2>&1 || return 1
+  [ -f "${DIR}/manifests/catalog-bundle-ref" ] || return 1
+  return 0
+}
+
 start_instances() {
   check_prereqs
 
-  # Ensure demo baseline is primed
-  echo -e "${CYAN}==> [Slide Server] Verifying demo baseline...${NC}"
-  "${DIR}/setup-demo.sh" >/dev/null 2>&1
+  # Ensure demo baseline is primed. The full setup takes minutes and is
+  # mostly idempotent re-verification, so skip it when the baseline is
+  # already present unless --force-setup was given.
+  if [[ "${FORCE_SETUP:-false}" == "true" ]]; then
+    echo -e "${CYAN}==> [Slide Server] Running full demo setup (--force-setup)...${NC}"
+    if ! "${DIR}/setup-demo.sh"; then
+      echo -e "${RED}[Error] setup-demo.sh failed; not starting slide terminals.${NC}" >&2
+      exit 1
+    fi
+  elif baseline_ready; then
+    echo -e "${CYAN}==> [Slide Server] Demo baseline already primed; skipping full setup.${NC}"
+    echo -e "${CYAN}    (Use '${0##*/} start --force-setup' to re-run setup-demo.sh.)${NC}"
+  else
+    echo -e "${CYAN}==> [Slide Server] Priming demo baseline...${NC}"
+    if ! "${DIR}/setup-demo.sh"; then
+      echo -e "${RED}[Error] setup-demo.sh failed; not starting slide terminals.${NC}" >&2
+      exit 1
+    fi
+  fi
 
   # Stop any stale instances
   stop_instances >/dev/null 2>&1 || true
@@ -266,8 +294,49 @@ status_instances() {
   echo "─────────────────────────────────────────────────────────────"
 }
 
-case "${1:-start}" in
+usage() {
+  cat <<EOF
+Serve live demo instances for slide presentation via ttyd.
+
+Usage: $0 <command>
+
+Commands:
+  start      Launch ttyd web terminals for all demo acts (ports 7680-7684).
+             Skips the full setup if the demo baseline is already primed;
+             pass --force-setup to re-run setup-demo.sh unconditionally.
+  stop       Stop all running ttyd slide instances.
+  restart    Stop, then start all instances.
+  status     Show whether each act's terminal is running or stopped.
+
+Act ports:
+  7681 -> Act 1: The Breakdown (Ambient Authority & Secret Hijack)
+  7682 -> Act 2: Task Admission & Cryptographic Identity
+  7683 -> Act 3: Same-Namespace API Gating & Separation of Duties
+  7684 -> Act 4: Managed Release Boundary (Dual-Gated Authority)
+  7680 -> Full Arc (Acts 0 - 4 end-to-end)
+
+Examples:
+  $0 start     # serve terminals for the slides
+  $0 status    # check which acts are running
+  $0 stop      # stop serving the slides
+
+Embed in slides using: <iframe src="http://localhost:7681"></iframe>
+EOF
+}
+
+case "${1:-}" in
   start)
+    shift
+    for arg in "$@"; do
+      case "$arg" in
+        --force-setup) FORCE_SETUP=true ;;
+        *)
+          echo "Error: unknown option '$arg' for start" >&2
+          usage >&2
+          exit 1
+          ;;
+      esac
+    done
     start_instances
     ;;
   stop)
@@ -276,12 +345,16 @@ case "${1:-start}" in
   restart)
     stop_instances
     start_instances
-    ;;
-  status)
+    ;;  status)
     status_instances
     ;;
+  -h|--help|help|'')
+    usage
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status}"
+    echo "Error: unknown command '$1'" >&2
+    echo >&2
+    usage >&2
     exit 1
     ;;
 esac

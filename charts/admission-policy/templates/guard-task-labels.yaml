@@ -1,62 +1,66 @@
 {{- if .Values.hardening }}
 ---
-# Guard: tekton.dev/* labels on TaskRuns.
+# Guard: tekton.dev/* labels on TaskRuns (CEL ValidatingPolicy).
 #
-# The tekton.dev/pipeline and tekton.dev/pipelineTask labels are set by the
-# Tekton pipelines controller when it spawns TaskRuns from a PipelineRun.
-# Downstream policy (classify-release-authority, validate-role-labels) trusts
-# these labels as proof of provenance from a real pipeline run, so a rogue
-# actor hand-setting them on a standalone TaskRun could impersonate a task of
-# a privileged pipeline.
+# The tekton.dev/pipeline, tekton.dev/pipelineTask and tekton.dev/pipelineRun
+# labels are set by the Tekton pipelines controller when it spawns TaskRuns
+# from a PipelineRun. Downstream policy (classify-release-authority,
+# validate-role-labels) trusts these labels as proof of provenance from a
+# real pipeline run, so a rogue actor hand-setting them on a standalone
+# TaskRun could impersonate a task of a privileged pipeline.
 #
 # Denies any CREATE/UPDATE that newly sets or changes those labels unless the
 # request originates from the Tekton pipelines controller ServiceAccount.
-# tekton.dev/pipelineRun is included: validate-role-labels relies on it (and
-# its equality with the TaskRun's PipelineRun ownerReference) as
-# controller-set proof that the TaskRun was genuinely spawned from a
-# PipelineRun, so it must be just as unforgeable as the other two.
 # Updates that leave the labels untouched (e.g. Tekton Chains annotation
 # patches) are not affected, because the new value equals the old value.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
 metadata:
   name: guard-task-labels
 spec:
-  # background: false is required because the rules evaluate
-  # request.userInfo.username, which has no meaning for background scans.
-  background: false
   failurePolicy: Fail
-  validationFailureAction: Enforce
-  rules:
-  - name: deny-tekton-label-usurpation
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          operations: ["CREATE", "UPDATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    # Only fire when a tekton.dev/* label is newly set or its value changes
-    # (request.oldObject is empty on CREATE, so presence counts as "set").
-    preconditions:
-      any:
-      - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipeline\" || '' }}`}}"
-        operator: NotEquals
-        value: "{{`{{ request.oldObject.metadata.labels.\"tekton.dev/pipeline\" || '' }}`}}"
-      - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipelineTask\" || '' }}`}}"
-        operator: NotEquals
-        value: "{{`{{ request.oldObject.metadata.labels.\"tekton.dev/pipelineTask\" || '' }}`}}"
-      - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipelineRun\" || '' }}`}}"
-        operator: NotEquals
-        value: "{{`{{ request.oldObject.metadata.labels.\"tekton.dev/pipelineRun\" || '' }}`}}"
-    validate:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["taskruns"]
+  variables:
+    # Label values on the incoming object ("" when absent).
+    - name: newPipeline
+      expression: >-
+        has(request.object.metadata.labels) && 'tekton.dev/pipeline' in request.object.metadata.labels
+        ? request.object.metadata.labels['tekton.dev/pipeline'] : ''
+    - name: newPipelineTask
+      expression: >-
+        has(request.object.metadata.labels) && 'tekton.dev/pipelineTask' in request.object.metadata.labels
+        ? request.object.metadata.labels['tekton.dev/pipelineTask'] : ''
+    - name: newPipelineRun
+      expression: >-
+        has(request.object.metadata.labels) && 'tekton.dev/pipelineRun' in request.object.metadata.labels
+        ? request.object.metadata.labels['tekton.dev/pipelineRun'] : ''
+    # Label values on the object being replaced ("" on CREATE, where
+    # request.oldObject has no labels).
+    - name: oldPipeline
+      expression: >-
+        request.oldObject != null && has(request.oldObject.metadata.labels) && 'tekton.dev/pipeline' in request.oldObject.metadata.labels
+        ? request.oldObject.metadata.labels['tekton.dev/pipeline'] : ''
+    - name: oldPipelineTask
+      expression: >-
+        request.oldObject != null && has(request.oldObject.metadata.labels) && 'tekton.dev/pipelineTask' in request.oldObject.metadata.labels
+        ? request.oldObject.metadata.labels['tekton.dev/pipelineTask'] : ''
+    - name: oldPipelineRun
+      expression: >-
+        request.oldObject != null && has(request.oldObject.metadata.labels) && 'tekton.dev/pipelineRun' in request.oldObject.metadata.labels
+        ? request.oldObject.metadata.labels['tekton.dev/pipelineRun'] : ''
+  validations:
+    - expression: >-
+        !(variables.newPipeline != variables.oldPipeline ||
+          variables.newPipelineTask != variables.oldPipelineTask ||
+          variables.newPipelineRun != variables.oldPipelineRun) ||
+        request.userInfo.username == '{{ .Values.tektonControllerServiceAccount }}'
       message: >-
         tekton.dev/pipeline, tekton.dev/pipelineTask and tekton.dev/pipelineRun
         labels may only be set by the Tekton pipelines controller
         ({{ .Values.tektonControllerServiceAccount }}).
-      deny:
-        conditions:
-          all:
-          - key: "{{`{{ request.userInfo.username || '' }}`}}"
-            operator: NotEquals
-            value: {{ .Values.tektonControllerServiceAccount | quote }}
 {{- end }}

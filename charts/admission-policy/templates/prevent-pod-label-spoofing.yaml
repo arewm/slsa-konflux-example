@@ -1,28 +1,33 @@
 ---
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Prevent Pods from self-assigning trusted-task-role (CEL ValidatingPolicy).
+#
+# The trusted-task-role label is only meaningful on TaskRuns (stamped by
+# classify-taskrun). A Pod carrying it must have been scheduled by the Tekton
+# controller for a classified TaskRun, which is proven by a TaskRun
+# ownerReference. A hand-created Pod with the label (the "ambient impostor"
+# attack of Act 1) is denied at admission.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
 metadata:
   name: prevent-pod-label-spoofing
 spec:
   failurePolicy: Fail
-  validationFailureAction: Enforce
-  rules:
-  - name: require-taskrun-owner
-    match:
-      any:
-      - resources:
-          kinds: ["Pod"]
-          operations: ["CREATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    # selector in match.resources is not reliable at admission time; use preconditions instead
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"trusted-task-role\" || '' }}`}}"
-        operator: NotEquals
-        value: ""
-    validate:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  variables:
+    - name: trustedRole
+      expression: >-
+        has(request.object.metadata.labels) && 'trusted-task-role' in request.object.metadata.labels
+        ? request.object.metadata.labels['trusted-task-role'] : ''
+    - name: hasTaskRunOwner
+      expression: >-
+        has(request.object.metadata.ownerReferences) &&
+        request.object.metadata.ownerReferences.exists(o, o.kind == 'TaskRun')
+  validations:
+    - expression: >-
+        variables.trustedRole == '' || variables.hasTaskRunOwner
       message: "Pods with trusted-task-role label must be owned by a TaskRun"
-      pattern:
-        metadata:
-          ownerReferences:
-          - kind: TaskRun

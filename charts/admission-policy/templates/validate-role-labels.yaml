@@ -1,8 +1,14 @@
 {{- if .Values.hardening }}
+{{- /* Convert glob patterns to a combined regex: escape dots, replace * with .* */}}
+{{- $regexParts := list }}
+{{- range .Values.trustedBundles }}
+  {{- $regexParts = append $regexParts (.pattern | replace "." "[.]" | replace "*" ".*") }}
+{{- end }}
+{{- $bundleRegex := join "|" $regexParts }}
 ---
-# Guard: classification label invariants on TaskRuns.
+# Guard: classification label invariants on TaskRuns (CEL ValidatingPolicy).
 #
-# classify-taskrun / classify-release-authority are mutate policies and run
+# classify-taskrun / classify-release-authority are mutating policies and run
 # with failurePolicy: Ignore (availability-first: a Kyverno outage degrades to
 # "unclassified" rather than "down"). That means the trust labels they stamp
 # must be validated, not just mutated: this policy recomputes the
@@ -12,121 +18,73 @@
 #
 #   - trusted-task-role=prod: the bundle reference must exist, be pinned by an
 #     immutable @sha256 digest, and match a trusted bundle pattern (mirrors
-#     the upgrade-to-prod rule in classify-taskrun).
-#   - trusted-pipeline-role=release-authority: the TaskRun must live in a
+#     the upgrade-to-prod mutation in classify-taskrun).
+#   - trusted-pipeline-role=release-authority: the TaskRun must live in the
 #     managed namespace, carry the managed marker
-#     (pipelines.appstudio.openshift.io/type=managed, verified to be
-#     propagated by the Tekton controller from the release-service-created
-#     PipelineRun), and be owned by a PipelineRun. The ownerReference proves
-#     the marker was Tekton-propagated rather than hand-set: guard-managed-
-#     labels protects the marker on PipelineRuns and guard-task-labels
-#     protects tekton.dev/* on TaskRuns, but only the owner check ties a
-#     TaskRun's marker back to an actual guarded PipelineRun.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+#     (pipelines.appstudio.openshift.io/type=managed, propagated by the Tekton
+#     controller from the release-service-created PipelineRun), and be owned
+#     by a PipelineRun whose name matches the unforgeable
+#     tekton.dev/pipelineRun label.
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
 metadata:
   name: validate-role-labels
 spec:
   failurePolicy: Fail
-  validationFailureAction: Enforce
-  rules:
-  - name: require-pinned-trusted-bundle-for-prod
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          operations: ["CREATE", "UPDATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    context:
-    # Pre-compute the bundle reference from either resolver or direct taskRef
-    # format — mirrors the context in classify-taskrun's upgrade-to-prod rule.
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["tekton.dev"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["taskruns"]
+  variables:
+    - name: taskRole
+      expression: >-
+        has(request.object.metadata.labels) && 'trusted-task-role' in request.object.metadata.labels
+        ? request.object.metadata.labels['trusted-task-role'] : ''
+    - name: pipelineRole
+      expression: >-
+        has(request.object.metadata.labels) && 'trusted-pipeline-role' in request.object.metadata.labels
+        ? request.object.metadata.labels['trusted-pipeline-role'] : ''
+    # The bundle reference from either resolver or direct taskRef format
+    # ("" when the TaskRun has no bundle param).
     - name: bundleRef
-      variable:
-        jmesPath: "request.object.spec.taskRef.params[?name == 'bundle'] | [0] | value || ''"
-        default: ""
-    - name: isDigestPinned
-      variable:
-        value: "{{`{{ regex_match('@sha256:[a-f0-9]{64}', bundleRef) }}`}}"
-  {{- if .Values.trustedBundles }}
-    {{- /* Convert glob patterns to a combined regex: escape dots, replace * with .*, same as classify-taskrun */}}
-    {{- $regexParts := list }}
-    {{- range .Values.trustedBundles }}
-      {{- $regexParts = append $regexParts (.pattern | replace "." "[.]" | replace "*" ".*") }}
-    {{- end }}
-    {{- $bundleRegex := join "|" $regexParts }}
-    - name: matchesPattern
-      variable:
-        value: "{{ `{{` }} regex_match('{{ $bundleRegex }}', bundleRef) {{ `}}` }}"
-  {{- end }}
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"trusted-task-role\" || '' }}`}}"
-        operator: Equals
-        value: "prod"
-    validate:
+      expression: >-
+        has(request.object.spec.taskRef) && has(request.object.spec.taskRef.params) &&
+        request.object.spec.taskRef.params.filter(p, p.name == 'bundle').size() > 0
+        ? request.object.spec.taskRef.params.filter(p, p.name == 'bundle')[0].value : ''
+    - name: pipelineRunLabel
+      expression: >-
+        has(request.object.metadata.labels) && 'tekton.dev/pipelineRun' in request.object.metadata.labels
+        ? request.object.metadata.labels['tekton.dev/pipelineRun'] : ''
+    - name: managedType
+      expression: >-
+        has(request.object.metadata.labels) && 'pipelines.appstudio.openshift.io/type' in request.object.metadata.labels
+        ? request.object.metadata.labels['pipelines.appstudio.openshift.io/type'] : ''
+    - name: pipelineRunOwnerName
+      expression: >-
+        has(request.object.metadata.ownerReferences) &&
+        request.object.metadata.ownerReferences.filter(o, o.kind == 'PipelineRun').size() > 0
+        ? request.object.metadata.ownerReferences.filter(o, o.kind == 'PipelineRun')[0].name : ''
+  validations:
+    - expression: >-
+        variables.taskRole != 'prod' ||
+        (variables.bundleRef != '' &&
+         variables.bundleRef.matches('@sha256:[a-f0-9]{64}'){{ if .Values.trustedBundles }} &&
+         variables.bundleRef.matches('{{ $bundleRegex }}'){{ end }})
       message: >-
         trusted-task-role=prod requires a digest-pinned taskRef bundle
         (@sha256) matching a trusted bundle pattern; recompute of the
         classification preconditions failed.
-      deny:
-        conditions:
-          any:
-          - key: "{{`{{ bundleRef }}`}}"
-            operator: Equals
-            value: ""
-          - key: "{{`{{ isDigestPinned }}`}}"
-            operator: NotEquals
-            value: true
-  {{- if .Values.trustedBundles }}
-          - key: "{{`{{ matchesPattern }}`}}"
-            operator: NotEquals
-            value: true
-  {{- end }}
-
-  - name: require-managed-provenance-for-release-authority
-    match:
-      any:
-      - resources:
-          kinds: ["TaskRun"]
-          operations: ["CREATE", "UPDATE"]
-          namespaces: {{ .Values.namespaces | toJson }}
-    preconditions:
-      all:
-      - key: "{{`{{ request.object.metadata.labels.\"trusted-pipeline-role\" || '' }}`}}"
-        operator: Equals
-        value: "release-authority"
-    validate:
+    - expression: >-
+        variables.pipelineRole != 'release-authority' ||
+        (request.namespace == 'managed-tenant' &&
+         variables.managedType == 'managed' &&
+         variables.pipelineRunLabel != '' &&
+         variables.pipelineRunLabel == variables.pipelineRunOwnerName)
       message: >-
         trusted-pipeline-role=release-authority requires the TaskRun to be in
         a managed namespace, carry the Tekton-propagated managed marker
         (pipelines.appstudio.openshift.io/type=managed), and be owned by a
         PipelineRun.
-      deny:
-        conditions:
-          any:
-          # Must be in the managed tenant namespace (release authority does
-          # not exist in tenant namespaces — mirrors classify-release-authority).
-          - key: "{{`{{ request.namespace }}`}}"
-            operator: NotEquals
-            value: "managed-tenant"
-          # Must carry the managed marker (Tekton propagates PipelineRun
-          # labels onto TaskRuns; verified empirically on this cluster).
-          - key: "{{`{{ request.object.metadata.labels.\"pipelines.appstudio.openshift.io/type\" || '' }}`}}"
-            operator: NotEquals
-            value: "managed"
-          # Must be genuinely spawned from a PipelineRun: the tekton controller
-          # sets tekton.dev/pipelineRun on spawned TaskRuns only, guard-task-
-          # labels makes it unforgeable, and it must equal the ownerReference
-          # name. A standalone rogue TaskRun cannot satisfy this even with a
-          # hand-set marker label or a forged ownerReference, because it cannot
-          # set tekton.dev/pipelineRun itself. The named owner being managed
-          # follows transitively: the marker propagated onto this TaskRun comes
-          # from that PipelineRun, whose marker only the release-service
-          # controller may set (guard-managed-labels).
-          - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipelineRun\" || '' }}`}}"
-            operator: Equals
-            value: ""
-          - key: "{{`{{ request.object.metadata.labels.\"tekton.dev/pipelineRun\" || '' }}`}}"
-            operator: NotEquals
-            value: "{{`{{ request.object.metadata.ownerReferences[?kind == 'PipelineRun'] | [0].name || '' }}`}}"
 {{- end }}
