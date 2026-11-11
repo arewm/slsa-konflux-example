@@ -168,6 +168,21 @@ reset_if_command_lacks() {
   esac
 }
 
+# Delete a Succeeded TaskRun whose params do not contain needle — like pod
+# commands, TaskRun specs are immutable once started, so a pre-run success
+# from a previous build (e.g. a stale image-digest param) cannot be patched
+# in place. Delete it so the subsequent apply recreates it with the current
+# manifest.
+reset_if_param_lacks() {
+  local kind="$1" name="$2" ns="$3" needle="$4" current
+  if ! kubectl get "${kind}" "${name}" -n "${ns}" >/dev/null 2>&1; then return 0; fi
+  current=$(kubectl get "${kind}" "${name}" -n "${ns}" -o jsonpath='{.spec.params[*].value}' 2>/dev/null || true)
+  case "${current}" in
+    *"${needle}"*) ;;
+    *) kubectl delete "${kind}" "${name}" -n "${ns}" --wait=true >/dev/null 2>&1 || true ;;
+  esac
+}
+
 clear
 echo ""
 echo -e "${PURPLE}╔═════════════════════════════════════════════════════════════════════════════════╗${COLOR_RESET}"
@@ -646,6 +661,7 @@ BUILDER_IMAGE_DIGEST=$(kubectl get snapshot demo-app-snapshot -n default-tenant 
 p "# Signing subject: registry-service.kind-registry/slsa-e2e-test@${BUILDER_IMAGE_DIGEST}"
 p "# The vetted Builder task bundle (buildah-oci-ta) executes with its trusted production identity:"
 reset_if_failed taskrun demo-builder-gated-push default-tenant
+reset_if_param_lacks taskrun demo-builder-gated-push default-tenant "${BUILDER_IMAGE_DIGEST}"
 pe "cat << 'EOF' | kubectl_apply_retry
 apiVersion: tekton.dev/v1
 kind: TaskRun
