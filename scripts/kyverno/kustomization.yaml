@@ -1,0 +1,123 @@
+# Kyverno install, vendored from konflux-ci/konflux-ci (dependencies/kyverno at
+# 3e9471e8b^) because Konflux v0.2.2 dropped Kyverno (konflux-ci 3e9471e8b) while
+# charts/admission-policy still needs it. Pinned to v1.19.2: v1.18.2 has an
+# insecureIgnoreTlog bug that breaks verify-bundle-signatures.
+# Applied by scripts/install-kyverno.sh (kubectl apply --server-side -k).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+# renovate: datasource=git-refs depName=https://github.com/kyverno/kyverno versioning=semver
+- https://github.com/kyverno/kyverno/releases/download/v1.19.2/install.yaml
+- kyverno-rbac.yaml
+
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 1
+  target:
+    kind: Deployment
+    name: kyverno-background-controller
+    namespace: kyverno
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 0
+  target:
+    kind: Deployment
+    name: kyverno-cleanup-controller
+    namespace: kyverno
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 0
+  target:
+    kind: Deployment
+    name: kyverno-reports-controller
+    namespace: kyverno
+# Reduce kyverno-admission-controller resources to absolute minimum
+- patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/cpu
+      value: 1m
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: 1Mi
+  target:
+    kind: Deployment
+    name: kyverno-admission-controller
+    namespace: kyverno
+# Reduce kyverno-background-controller resources to absolute minimum
+- patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/cpu
+      value: 1m
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: 1Mi
+  target:
+    kind: Deployment
+    name: kyverno-background-controller
+    namespace: kyverno
+# OpenShift restricted-v2: upstream Kyverno sets runAsUser/runAsGroup 65534 by default, which is outside the
+# namespace UID range. Remove so SCC (OCP) or the image default (Kind) can assign a non-root UID.
+- patch: |-
+    - op: remove
+      path: /spec/template/spec/initContainers/0/securityContext/runAsUser
+    - op: remove
+      path: /spec/template/spec/initContainers/0/securityContext/runAsGroup
+    - op: remove
+      path: /spec/template/spec/containers/0/securityContext/runAsUser
+    - op: remove
+      path: /spec/template/spec/containers/0/securityContext/runAsGroup
+  target:
+    kind: Deployment
+    name: kyverno-admission-controller
+    namespace: kyverno
+- patch: |-
+    - op: remove
+      path: /spec/template/spec/containers/0/securityContext/runAsUser
+    - op: remove
+      path: /spec/template/spec/containers/0/securityContext/runAsGroup
+  target:
+    kind: Deployment
+    name: kyverno-background-controller
+    namespace: kyverno
+- patch: |-
+    - op: add
+      path: /spec/jobTemplate/spec/template/spec/containers/0/resources
+      value:
+        limits:
+          cpu: 100m
+          memory: 384Mi
+        requests:
+          cpu: 10m
+          memory: 10Mi
+  target:
+    kind: CronJob
+    namespace: kyverno
+# slsa-konflux-example: ImageValidatingPolicies fetch bundles from the
+# internal kind registry, whose TLS cert is signed by the cluster CA. Mount
+# trust-manager's trusted-ca ConfigMap over the system CA path so Kyverno
+# trusts it. Kept in the kustomization (not a post-install kubectl patch) so
+# re-applying is idempotent under server-side apply.
+- patch: |-
+    - op: add
+      path: /spec/template/spec/volumes/-
+      value:
+        name: trusted-ca
+        configMap:
+          name: trusted-ca
+          items:
+          - key: ca-bundle.crt
+            path: ca-certificates.crt
+    - op: add
+      path: /spec/template/spec/containers/0/volumeMounts/-
+      value:
+        name: trusted-ca
+        mountPath: /etc/ssl/certs
+        readOnly: true
+  target:
+    kind: Deployment
+    name: kyverno-admission-controller
+    namespace: kyverno

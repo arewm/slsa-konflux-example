@@ -160,7 +160,14 @@ spec:
       RUN apk add --no-cache curl jq
       RUN spire-agent --version && curl --version | head -n1
       DOCKER
-      buildah bud --isolation chroot --storage-driver=vfs -t "${REF}" /node-tmp
+      # podman's DNS on the kind host answers SERVFAIL for AAAA lookups of
+      # external names, which makes `apk add` fail with "temporary error".
+      # A lookups work, so resolve the Alpine CDN to IPv4 here and pin it
+      # in the build's /etc/hosts.
+      APK_IP=$(getent ahostsv4 dl-cdn.alpinelinux.org | awk 'NR==1{print $1}' || true)
+      ADD_HOST=()
+      [ -n "${APK_IP}" ] && ADD_HOST=(--add-host "dl-cdn.alpinelinux.org:${APK_IP}")
+      buildah bud --isolation chroot --storage-driver=vfs "${ADD_HOST[@]}" -t "${REF}" /node-tmp
       buildah --storage-driver=vfs push "${REF}" "oci-archive:/node-tmp/spiffe-curl.tar:${REF}"
       # Import into the kind node's containerd (see function comment).
       nsenter -t 1 -m -- ctr -n k8s.io images import /var/tmp/demo-utility-image/spiffe-curl.tar

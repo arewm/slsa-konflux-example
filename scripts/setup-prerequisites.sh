@@ -17,6 +17,19 @@ metadata:
     konflux-ci.dev/type: tenant
 EOF
 
+# Kyverno: Konflux v0.2.2 no longer installs it, but charts/admission-policy
+# depends on its policy CRDs. Installed here so the charts can follow.
+"${SCRIPTDIR}/install-kyverno.sh"
+
+# SPIRE CRDs: charts/spiffe-spire creates ClusterSPIFFEID resources, and the
+# upstream spire subchart does not ship the CRDs, so install them first.
+SPIRE_CRDS_VERSION="0.6.1"
+echo "Installing spire-crds ${SPIRE_CRDS_VERSION}..."
+helm upgrade --install spire-crds spire-crds \
+  --repo https://spiffe.github.io/helm-charts-hardened/ \
+  --version "${SPIRE_CRDS_VERSION}" \
+  -n spire --create-namespace >/dev/null
+
 # Configure the Konflux operator to use the custom SLSA pipeline
 BUNDLE_REF_FILE="${REPODIR}/managed-context/slsa-e2e-pipeline/bundle-ref"
 if [ ! -f "$BUNDLE_REF_FILE" ]; then
@@ -94,15 +107,31 @@ kubectl label secret regcred-internal-registry -n default-tenant \
   build.appstudio.openshift.io/common-secret=true --overwrite 2>/dev/null || \
   echo "Warning: regcred-internal-registry secret not found. Internal registry credentials may not be configured."
 
-# Link to default SA in default-tenant for direct/test PipelineRuns
+# Link to default SA in default-tenant for direct/test PipelineRuns.
+# imagePullSecrets is also needed: demo TaskRuns pull step images (e.g. the
+# demo-catalog bundles) from the internal registry, and `secrets` alone only
+# covers Tekton's push/creds-init, not the kubelet pull.
 kubectl patch sa default -n default-tenant \
-  -p '{"secrets":[{"name":"regcred-internal-registry"}]}' 2>/dev/null || true
+  -p '{"secrets":[{"name":"regcred-internal-registry"}],"imagePullSecrets":[{"name":"regcred-internal-registry"}]}' 2>/dev/null || true
 
 # The integration-runner SA is created by the operator, not build-service,
 # so the common-secret label doesn't cover it. Link the credential directly.
 kubectl patch sa konflux-integration-runner -n default-tenant \
   -p '{"secrets":[{"name":"regcred-internal-registry"}]}' 2>/dev/null || \
   echo "Warning: konflux-integration-runner SA not found."
+# imagePullSecrets is a list; a merge patch would replace it and drop the
+# operator-managed components-namespace-pull entry, so append only if absent.
+if kubectl get sa konflux-integration-runner -n default-tenant >/dev/null 2>&1 && \
+   ! kubectl get sa konflux-integration-runner -n default-tenant \
+     -o jsonpath='{.imagePullSecrets[*].name}' | grep -qw regcred-internal-registry; then
+    if [ -n "$(kubectl get sa konflux-integration-runner -n default-tenant -o jsonpath='{.imagePullSecrets}')" ]; then
+        kubectl patch sa konflux-integration-runner -n default-tenant --type=json \
+          -p '[{"op":"add","path":"/imagePullSecrets/-","value":{"name":"regcred-internal-registry"}}]'
+    else
+        kubectl patch sa konflux-integration-runner -n default-tenant \
+          -p '{"imagePullSecrets":[{"name":"regcred-internal-registry"}]}'
+    fi
+fi
 
 # Copy the registry credential to managed-tenant for the release pipeline.
 # The release pipeline's collect-data task pushes trusted artifacts to the
@@ -144,7 +173,10 @@ echo ""
 echo "Next steps:"
 echo "  1. Install platform config: helm upgrade --install platform ./charts/platform-config"
 echo "     Then link the release SA: kubectl patch sa release-service-account -n managed-tenant -p '{\"secrets\":[{\"name\":\"regcred-internal-registry\"}]}'"
-echo "  2. Onboard a component: helm upgrade --install festoji ./charts/component-onboarding --set componentName=festoji --set gitRepoUrl=https://github.com/FORK_ORG/festoji"
-echo "  3. Access the UI at https://localhost:9443 and login with demo credentials"
-echo "  4. Create a pull request to trigger a build"
+echo "  2. Install admission policies and SPIRE (spire-crds already installed above):"
+echo "       helm upgrade --install admission-policy ./charts/admission-policy"
+echo "       helm upgrade --install spire ./charts/spiffe-spire -n spire"
+echo "  3. Onboard a component: helm upgrade --install festoji ./charts/component-onboarding --set componentName=festoji --set gitRepoUrl=https://github.com/FORK_ORG/festoji"
+echo "  4. Access the UI at https://localhost:9443 and login with demo credentials"
+echo "  5. Create a pull request to trigger a build"
 echo ""
