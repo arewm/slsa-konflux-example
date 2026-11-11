@@ -72,6 +72,14 @@ spec:
         deny:
           conditions:
             any:
+              # 0. Provenance of the claim: only the Tekton controller may
+              # create pods carrying a trusted-task-role label. Everything
+              # inspectable in a perfect clone legitimately matches, so the
+              # creator identity is the distinguishing signal — an attacker
+              # cannot authenticate as the controller's ServiceAccount.
+              - key: "{{`{{ request.userInfo.username || '' }}`}}"
+                operator: NotEquals
+                value: "system:serviceaccount:tekton-pipelines:tekton-pipelines-controller"
               # 1. Authentic reference: the ownerRef uid must match the live TaskRun.
               - key: {{ $taskUid | quote }}
                 operator: NotEquals
