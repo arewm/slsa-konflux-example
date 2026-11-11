@@ -165,6 +165,9 @@ spec:
       # A lookups work, so resolve the Alpine CDN to IPv4 here and pin it
       # in the build's /etc/hosts.
       APK_IP=$(getent ahostsv4 dl-cdn.alpinelinux.org | awk 'NR==1{print $1}' || true)
+      if [ -z "${APK_IP}" ]; then
+        echo "WARNING: could not resolve dl-cdn.alpinelinux.org to IPv4; apk may fail on podman DNS (AAAA SERVFAIL)."
+      fi
       ADD_HOST=()
       [ -n "${APK_IP}" ] && ADD_HOST=(--add-host "dl-cdn.alpinelinux.org:${APK_IP}")
       buildah bud --isolation chroot --storage-driver=vfs "${ADD_HOST[@]}" -t "${REF}" /node-tmp

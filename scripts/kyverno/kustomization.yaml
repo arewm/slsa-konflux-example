@@ -6,8 +6,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-# renovate: datasource=git-refs depName=https://github.com/kyverno/kyverno versioning=semver
-- https://github.com/kyverno/kyverno/releases/download/v1.19.2/install.yaml
+# Kyverno v1.19.2 upstream release manifest, vendored into the repo so the
+# install is digest-stable (the release-tag URL is mutable) and works offline.
+# sha256: 4f785937dc7fe49a0731108b15def1538923c73d9236255bc69d94d498037969
+- install.yaml
 - kyverno-rbac.yaml
 
 patches:

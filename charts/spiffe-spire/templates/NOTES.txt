@@ -7,6 +7,12 @@ ClusterSPIFFEID resources are active:
 Fulcio has been patched to trust the SPIRE OIDC issuer at:
   {{ .Values.oidcDiscoveryUrl }}
 
-NOTE: This chart requires spire-crds to be installed first:
-  helm upgrade --install spire-crds spiffe/spire-crds --namespace spire --create-namespace
+NOTE: spire-crds is installed automatically as a Helm dependency of this chart.
   helm upgrade --install spire ./charts/spiffe-spire --namespace spire
+
+  Clusters that previously installed spire-crds as a separate release must
+  first adopt the CRDs into this release or remove the old release with the
+  CRDs kept (kubectl delete ns is NOT involved; use:
+    kubectl get crd -o name | grep spire | xargs -I{} kubectl annotate {} meta.helm.sh/release-name=spire meta.helm.sh/release-namespace=spire
+  after `helm uninstall spire-crds --keep-history` style removal), otherwise
+  helm reports an ownership conflict.

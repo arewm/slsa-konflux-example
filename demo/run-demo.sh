@@ -1330,9 +1330,13 @@ spec:
       cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
       REG=registry-service.kind-registry/slsa-e2e-test
       PROV=$(oras discover --format json --insecure "$REG@__DIGEST__" | jq -r '[.referrers[] | select(.artifactType=="application/vnd.dev.sigstore.bundle.v0.3+json" and ((.annotations["dev.sigstore.bundle.predicateType"] // "") | startswith("https://slsa.dev/provenance")))] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      if [ -z "$PROV" ] || [ "$PROV" = "null" ]; then
+        echo "ERROR: no SLSA provenance referrer found on the image yet (Chains signing incomplete?)" >&2
+        exit 1
+      fi
       LAYER=$(oras manifest fetch --insecure "$REG@$PROV" --format json | jq -r '.content.layers[0].digest')
       oras blob fetch --insecure --output - "$REG@$LAYER" | jq -r '.dsseEnvelope.payload' | base64 -d \
-        | jq '{predicateType, subject: .subject[0].digest, builder: .predicate.builder.id}'
+        | jq '{predicateType, subject: .subject[0].digest, builder: (.predicate.runDetails.builder.id // .predicate.builder.id)}'
     volumeMounts:
     - mountPath: /tekton/creds-secrets/regcred-internal-registry
       name: regcred
