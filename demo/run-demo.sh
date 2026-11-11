@@ -1329,7 +1329,7 @@ spec:
       mkdir -p ~/.docker
       cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
       REG=registry-service.kind-registry/slsa-e2e-test
-      PROV=$(oras discover --format json --insecure "$REG@__DIGEST__" | jq -r '[.referrers[] | select(.artifactType=="application/vnd.dev.sigstore.bundle.v0.3+json")] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      PROV=$(oras discover --format json --insecure "$REG@__DIGEST__" | jq -r '[.referrers[] | select(.artifactType=="application/vnd.dev.sigstore.bundle.v0.3+json" and ((.annotations["dev.sigstore.bundle.predicateType"] // "") | startswith("https://slsa.dev/provenance")))] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
       LAYER=$(oras manifest fetch --insecure "$REG@$PROV" --format json | jq -r '.content.layers[0].digest')
       oras blob fetch --insecure --output - "$REG@$LAYER" | jq -r '.dsseEnvelope.payload' | base64 -d \
         | jq '{predicateType, subject: .subject[0].digest, builder: .predicate.builder.id}'

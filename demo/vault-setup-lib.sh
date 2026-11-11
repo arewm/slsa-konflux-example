@@ -100,6 +100,9 @@ json.dump({"auths": {host: {"auth": base64.b64encode(f"{user}:{pw}".encode()).de
 PYEOF
   DOCKER_CONFIG="${docker_config_dir}" COSIGN_PASSWORD="${COSIGN_PASSWORD:-}" cosign sign \
     --key "${cosign_key_file}" \
+    --use-signing-config=false \
+    --tlog-upload=false \
+    --yes \
     --allow-insecure-registry \
     "${host}/${VAULT_BUNDLE_REPO}@${bundle_digest}" >/dev/null || {
       rm -rf "${docker_config_dir}" "${cosign_key_file}"; return 1; }
