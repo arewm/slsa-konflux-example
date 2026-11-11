@@ -98,12 +98,29 @@ script = '''<script>(function() {
     }
   }
 
+  // Pointer-gated focus: xterm auto-focuses its terminal when the iframe
+  // loads (i.e. when the demo slide appears), which steals keyboard focus
+  // from the slide deck — arrow keys go to the shell instead of advancing
+  // slides. Only allow terminal focus AFTER the user has clicked inside
+  // this iframe; any earlier focus is immediately released back.
+  var userEngaged = false;
+  window.addEventListener('pointerdown', function() { userEngaged = true; }, true);
+  document.addEventListener('focusin', function() {
+    if (!userEngaged) {
+      setTimeout(function() {
+        if (!userEngaged) { blurTerminal(); }
+      }, 0);
+    }
+  }, true);
+  function resetEngagement() { userEngaged = false; }
+
   // Intercept Escape in capture phase before xterm consumes it
   window.addEventListener('keydown', function(e) {
     if (e.key === 'Escape' || e.keyCode === 27) {
       e.preventDefault();
       e.stopPropagation();
       blurTerminal();
+      resetEngagement();
       signalToParent('DEMO_ESCAPE');
     }
   }, true);
