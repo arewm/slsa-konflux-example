@@ -513,6 +513,7 @@ demo_cleanup taskrun "${UNTRUSTED_TR}" -n default-tenant
 
 wait
 
+p ""
 p "# TEST 3 — Spoof the trusted catalog: submit an unsigned bundle that claims"
 p "# the tekton-catalog/* path. The path is the trust grant, but the signature"
 p "# check is mandatory for EVERY bundle on that path — we saw the validations"
@@ -591,6 +592,7 @@ p "# And here: spiffe://konflux-ci.dev/TRUSTED/... — earned by the signed,"
 p "# digest-pinned bundle. Admission decided the label; SPIRE minted the"
 p "# production identity the label authorizes. Trust, end to end."
 
+p ""
 p "# TEST 5 — The hardest attack: clone the prod task's Pod byte-for-byte."
 p "# Correct ownerReference uid, correct labels, controller flags — everything"
 p "# the policies can inspect matches the real pod. Submit it as ourselves:"

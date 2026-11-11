@@ -24,7 +24,13 @@ source "${SCRIPT_DIR}/kubeconfig.sh"
 echo "==> [Demo Repair] Post-restart repair (idempotent)..."
 
 # 1. Rekor public key synchronization with the TUF root (setup-demo step 2).
-REKOR_PK=$(kubectl run probe-rekor-pk -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://rekor-server.rekor-system.svc/api/v1/log/publicKey 2>/dev/null || true)
+REKOR_PK=""
+for attempt in 1 2 3 4 5 6; do
+  REKOR_PK=$(kubectl run probe-rekor-pk -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://rekor-server.rekor-system.svc/api/v1/log/publicKey 2>/dev/null || true)
+  [ -n "${REKOR_PK}" ] && break
+  echo "  - Rekor not responding yet (attempt ${attempt}); waiting..."
+  sleep 15
+done
 if [ -n "${REKOR_PK}" ]; then
   CURRENT_TUF_PK=$(kubectl get secret rekor-public-key -n tuf-system -o jsonpath='{.data.key}' 2>/dev/null | base64 -d 2>/dev/null || true)
   if [ "${REKOR_PK}" != "${CURRENT_TUF_PK}" ]; then
@@ -55,7 +61,8 @@ kubectl get secret rekor-public-key -n tuf-system -o jsonpath='{.data.key}' | ba
 kubectl get secret ctlog-public-key -n tuf-system -o jsonpath='{.data.public}' | base64 -d > "${TR_DIR}/ctlog-pub.pem"
 python3 - "${TR_DIR}" <<'PYEOF'
 import json, subprocess, base64, hashlib, sys
-d = sys.argv[1]def der(pem):
+d = sys.argv[1]
+def der(pem):
     return subprocess.run(['openssl','pkey','-pubin','-in',pem,'-outform','DER'],capture_output=True).stdout
 def logentry(pem, base_url):
     pk = der(pem)
@@ -133,11 +140,22 @@ EOF
 # idempotent patch of the helm-managed ClusterSPIFFEID (owned by the spire
 # release), same pattern as the trusted-ca Bundle patch.
 echo "==> [Demo Repair] Pinning OIDC provider DNS SANs..."
-kubectl patch clusterspiffeid spire-spiffe-oidc-discovery-provider --type merge -p '{"spec":{"dnsNameTemplates":["oidc-discovery.{{ .TrustDomain }}","spire-spiffe-oidc-discovery-provider","spire-spiffe-oidc-discovery-provider.spire","spire-spiffe-oidc-discovery-provider.spire.svc","spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"]}}' >/dev/null 2>&1 || echo "  [Warning] Could not patch clusterspiffeid."
+# The spire ClusterSPIFFEIDs are served via an aggregated APIService that
+# can return spurious NotFound errors while settling after a restart —
+# retry a few times before giving up.
+CSIDD_PATCHED=0
+for attempt in 1 2 3 4 5; do
+  if kubectl patch clusterspiffeid spire-spiffe-oidc-discovery-provider --type merge -p '{"spec":{"dnsNameTemplates":["oidc-discovery.{{ .TrustDomain }}","spire-spiffe-oidc-discovery-provider","spire-spiffe-oidc-discovery-provider.spire","spire-spiffe-oidc-discovery-provider.spire.svc","spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"]}}' >/dev/null 2>&1; then
+    CSIDD_PATCHED=1; break
+  fi
+  sleep 5
+done
+[ "${CSIDD_PATCHED}" = "1" ] || echo "  [Warning] Could not patch clusterspiffeid (aggregated API not settling?)."
 echo "  - DNS SAN templates pinned (provider SVID rotates on renewal)."
 
 # 5. CT log health (Trillian data can be lost after restarts; setup-demo step
-# 2 has the full re-initialization — here we only detect and point at it).CTLOG_STH=$(kubectl run probe-ctlog-r -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://ctlog.ctlog-system.svc/sigstorescaffolding/ct/v1/get-sth 2>/dev/null || true)
+# 2 has the full re-initialization — here we only detect and point at it).
+CTLOG_STH=$(kubectl run probe-ctlog-r -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://ctlog.ctlog-system.svc/sigstorescaffolding/ct/v1/get-sth 2>/dev/null || true)
 if echo "${CTLOG_STH}" | grep -q "tree_size"; then
   echo "  - CT log healthy."
 else
