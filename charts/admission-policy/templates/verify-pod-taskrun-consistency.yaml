@@ -2,12 +2,13 @@
 {{- /* Kyverno JMESPath expressions as raw strings so Helm does not process the braces. */}}
 {{- $urlPath := `/apis/tekton.dev/v1/namespaces/{{request.namespace}}/taskruns/{{ request.object.metadata.ownerReferences[?kind == 'TaskRun'] | [0].name || 'no-such-taskrun' }}` }}
 {{- $ownerUid := `{{ request.object.metadata.ownerReferences[?kind == 'TaskRun'] | [0].uid || '' }}` }}
-{{- $podTask := `{{ request.object.metadata.labels."tekton.dev/task" || '' }}` }}
 {{- $podSA := `{{ request.object.spec.serviceAccountName || 'default' }}` }}
 {{- $taskUid := `{{ ownerTaskRun.metadata.uid || '' }}` }}
 {{- $taskRole := `{{ ownerTaskRun.metadata.labels."trusted-task-role" || '' }}` }}
-{{- $taskTask := `{{ ownerTaskRun.metadata.labels."tekton.dev/task" || '' }}` }}
-{{- $taskSA := `{{ ownerTaskRun.spec.podTemplate.serviceAccountName || request.object.spec.serviceAccountName || 'default' }}` }}
+{{- $podTaskNew := `{{ request.object.metadata.labels."tekton.dev/task" || '' }}` }}
+{{- $podTaskOld := `{{ request.oldObject.metadata.labels."tekton.dev/task" || '' }}` }}
+{{- $requester := `{{ request.userInfo.username || '' }}` }}
+{{- $taskSA := `{{ ownerTaskRun.spec.podTemplate.serviceAccountName || ownerTaskRun.spec.serviceAccountName || request.object.spec.serviceAccountName || 'default' }}` }}
 ---
 # Owner-TaskRun consistency for pods carrying trusted-task-role (classic
 # Kyverno policy with a context apiCall).
@@ -17,12 +18,14 @@
 # a hand-created pod can forge one. This policy closes that gap by fetching
 # the referenced TaskRun at pod-CREATE time and requiring the claim to be
 # authentic and consistent:
+#   0. only the Tekton controller may create labeled pods (creator identity)
 #   1. the ownerRef uid matches the live TaskRun (a forged or stale name fails)
 #   2. the TaskRun's trusted-task-role equals the pod's claimed label
-#   3. the TaskRun's tekton.dev/task label equals the pod's (the spiffeID
-#      template bakes the task label and ServiceAccount into the identity,
-#      so both must be inherited, not hand-set)
-#   4. if the TaskRun pins a ServiceAccount, the pod must run under it
+#   3. if the TaskRun pins a ServiceAccount, the pod must run under it
+# At CREATE the task label cannot be spoofed (only the controller creates
+# labeled pods and writes the label itself), and Tekton relabels it during
+# resolution, so a CREATE-time task-label comparison would be racy; instead
+# tekton.dev/task is frozen at UPDATE below (controller-only changes).
 #
 # Cost model: the apiCall runs only for pods that carry trusted-task-role
 # (label-selector match) at CREATE — ordinary pod admissions never perform
@@ -31,6 +34,7 @@
 #
 # Implemented as a classic ClusterPolicy rather than a ValidatingPolicy
 # because Kyverno v1.19 ValidatingPolicy does not support context apiCall.
+# Conditions are split into separate rules so a denial names the exact check.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -51,7 +55,24 @@ spec:
   webhookTimeoutSeconds: {{ .Values.webhookTimeoutSeconds | default 30 }}
   rules:
     {{- range $role := list "prod" "dev" }}
-    - name: verify-owner-taskrun-{{ $role }}
+    - name: creator-is-tekton-controller-{{ $role }}
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              operations: ["CREATE"]
+              selector:
+                matchLabels:
+                  trusted-task-role: {{ $role }}
+      validate:
+        message: "Admission Denied: only the Tekton pipelines controller may create pods carrying trusted-task-role."
+        deny:
+          conditions:
+            any:
+              - key: "{{`{{ request.userInfo.username || '' }}`}}"
+                operator: NotEquals
+                value: "system:serviceaccount:tekton-pipelines:tekton-pipelines-controller"
+    - name: owner-uid-matches-{{ $role }}
       match:
         any:
           - resources:
@@ -65,36 +86,78 @@ spec:
           apiCall:
             urlPath: {{ $urlPath }}
       validate:
-        message: >-
-          Pod trusted-task-role claims must be authentically inherited from the
-          owning TaskRun (matching uid, classification, task label, and
-          ServiceAccount).
+        message: "Admission Denied: the TaskRun ownerReference does not resolve to the referenced TaskRun (uid mismatch or not found)."
         deny:
           conditions:
             any:
-              # 0. Provenance of the claim: only the Tekton controller may
-              # create pods carrying a trusted-task-role label. Everything
-              # inspectable in a perfect clone legitimately matches, so the
-              # creator identity is the distinguishing signal — an attacker
-              # cannot authenticate as the controller's ServiceAccount.
-              - key: "{{`{{ request.userInfo.username || '' }}`}}"
-                operator: NotEquals
-                value: "system:serviceaccount:tekton-pipelines:tekton-pipelines-controller"
-              # 1. Authentic reference: the ownerRef uid must match the live TaskRun.
               - key: {{ $taskUid | quote }}
                 operator: NotEquals
                 value: {{ $ownerUid | quote }}
-              # 2. Role consistency: the pod claims exactly what its TaskRun earned.
+    - name: role-matches-{{ $role }}
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              operations: ["CREATE"]
+              selector:
+                matchLabels:
+                  trusted-task-role: {{ $role }}
+      context:
+        - name: ownerTaskRun
+          apiCall:
+            urlPath: {{ $urlPath }}
+      validate:
+        message: "Admission Denied: pod trusted-task-role does not match its owning TaskRun's classification."
+        deny:
+          conditions:
+            any:
               - key: {{ $taskRole | quote }}
                 operator: NotEquals
                 value: {{ $role | quote }}
-              # 3. Task consistency: tekton.dev/task is inherited, not chosen.
-              - key: {{ $podTask | quote }}
-                operator: NotEquals
-                value: {{ $taskTask | quote }}
-              # 4. ServiceAccount consistency when the TaskRun pins one.
+    - name: serviceaccount-matches-{{ $role }}
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              operations: ["CREATE"]
+              selector:
+                matchLabels:
+                  trusted-task-role: {{ $role }}
+      context:
+        - name: ownerTaskRun
+          apiCall:
+            urlPath: {{ $urlPath }}
+      validate:
+        message: "Admission Denied: pod ServiceAccount does not match its owning TaskRun's."
+        deny:
+          conditions:
+            any:
               - key: {{ $podSA | quote }}
                 operator: NotEquals
                 value: {{ $taskSA | quote }}
     {{- end }}
+    # tekton.dev/task immutability at UPDATE: the spiffeIDTemplate bakes this
+    # label into the workload identity, and SPIRE re-attests on every SVID
+    # fetch, so a post-creation mutation would change the minted identity.
+    # Tekton itself legitimately relabels during task resolution (pipeline-
+    # task name -> resolved bundle name), so changes are allowed only for the
+    # controller; everyone else is denied. trusted-task-role immutability is
+    # already enforced by prevent-pod-label-spoofing.
+    - name: task-label-immutable
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              operations: ["UPDATE"]
+      validate:
+        message: "Admission Denied: tekton.dev/task is immutable on pods except by the Tekton controller (identity-relevant label; SPIRE re-attests on SVID fetch)."
+        deny:
+          conditions:
+            all:
+              - key: {{ $podTaskNew | quote }}
+                operator: NotEquals
+                value: {{ $podTaskOld | quote }}
+              - key: {{ $requester | quote }}
+                operator: NotEquals
+                value: "system:serviceaccount:tekton-pipelines:tekton-pipelines-controller"
 {{- end }}

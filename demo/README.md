@@ -31,6 +31,7 @@ demo/
 ├── run-demo.sh                    # Interactive live demonstration script (Acts 0 through 4)
 ├── push-demo-catalog-bundles.sh   # Publishes & signs the Act 2 demo catalog task bundles (idempotent)
 ├── cleanup-demo.sh                # Synchronous, idempotent cleanup script
+├── repair-demo-stack.sh            # Post-restart repair: Rekor/TUF key sync + trusted-root regen
 ├── demo-magic.sh                  # Terminal presentation helper (simulated typing & clicker support)
 └── manifests/
     ├── snapshot.yaml              # AppStudio Snapshot manifest for demo-app releases
@@ -89,6 +90,20 @@ Run the setup script to initialize the environment:
 4. **Deploys CVE Mock Service**: Applies `demo/manifests/cve-database-service.yaml` and waits for rollout.
 5. **Onboards `demo-app`**: Installs `demo-app` into `default-tenant` using the `charts/component-onboarding` Helm chart and applies `demo/manifests/snapshot.yaml`.
 6. **Establishes Clean Baseline**: Runs `demo/cleanup-demo.sh` so no lingering runs or rogue tags exist.
+
+### After a host/cluster restart
+
+Run the lightweight repair (Rekor can come back with a rotated key while TUF still
+publishes the pre-restart key, breaking all transparency-log verification):
+
+```bash
+./demo/repair-demo-stack.sh
+```
+
+This re-syncs the Rekor key into the TUF root, restarts TUF and Chains, and
+regenerates `demo-trusted-root` — a few minutes, versus a full `setup-demo.sh` run.
+If the demo image was built before the repair, rebuild it so its Rekor entries
+are verifiable.
 
 ---
 
