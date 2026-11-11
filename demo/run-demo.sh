@@ -153,6 +153,21 @@ reset_if_failed() {
   fi
 }
 
+# Delete a resource if its current command does not contain needle — a
+# Succeeded pod whose spec would change on apply (e.g. an image digest
+# pinned into the command by a fresh build) cannot be patched in place:
+# kubectl rejects pod command mutations. Delete it so the subsequent
+# apply recreates it with the current manifest.
+reset_if_command_lacks() {
+  local kind="$1" name="$2" ns="$3" needle="$4" current
+  if ! kubectl get "${kind}" "${name}" -n "${ns}" >/dev/null 2>&1; then return 0; fi
+  current=$(kubectl get "${kind}" "${name}" -n "${ns}" -o jsonpath='{.spec.containers[*].command}' 2>/dev/null || true)
+  case "${current}" in
+    *"${needle}"*) ;;
+    *) kubectl delete "${kind}" "${name}" -n "${ns}" --wait=true >/dev/null 2>&1 || true ;;
+  esac
+}
+
 clear
 echo ""
 echo -e "${PURPLE}╔═════════════════════════════════════════════════════════════════════════════════╗${COLOR_RESET}"
@@ -671,6 +686,7 @@ p "# Anyone can now VERIFY that signature — identity, not location, is the"
 p "# credential. The verifier knows only three things: the internal trust"
 p "# roots (Fulcio + Rekor + ctlog) and the expected SPIFFE identity:"
 reset_if_failed pod demo-builder-sign-verify default-tenant
+reset_if_command_lacks pod demo-builder-sign-verify default-tenant "${BUILDER_IMAGE_DIGEST}"
 cat << 'EOF' | sed "s|__DIGEST__|${BUILDER_IMAGE_DIGEST}|g" | kubectl_apply_retry >/dev/null
 apiVersion: v1
 kind: Pod
