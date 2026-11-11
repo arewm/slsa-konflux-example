@@ -14,6 +14,15 @@ spec:
     JWT-SVID for the gated registry audience and initiates the OCI push
     handshake itself — the task, with this identity, no relay pods.
     Stands in for the full buildah build task.
+  params:
+    - name: image-url
+      type: string
+      description: Image repository the builder pushes to.
+      default: registry-service.kind-registry/slsa-e2e-test
+    - name: image-digest
+      type: string
+      description: Digest of the image being signed (signature subject).
+      default: ""
   results:
     - name: push-status
       description: HTTP status line of the registry push handshake.
@@ -21,6 +30,17 @@ spec:
     volumeMounts:
       - name: spiffe-workload-api
         mountPath: /spiffe-workload-api
+        readOnly: true
+      - name: trusted-ca
+        mountPath: /trusted-ca
+        readOnly: true
+      - name: signing-config
+        mountPath: /signing-config
+        readOnly: true
+      - name: svid
+        mountPath: /svid
+      - name: trusted-root
+        mountPath: /trusted-root
         readOnly: true
   steps:
     - name: push-handshake
@@ -41,8 +61,71 @@ spec:
           https://registry-oidc.kind-registry:5000/v2/slsa-e2e-test/blobs/uploads/ \
           | tee /dev/stderr | head -n1 | tr -d '\r')
         printf '%s' "${STATUS}" > "$(results.push-status.path)"
+        # Also fetch a signing-audience JWT for the sign-image step (shared
+        # via the svid emptyDir volume).
+        spire-agent api fetch jwt -audience sigstore \
+          -socketPath /spiffe-workload-api/spire-agent.sock \
+          -output json > /svid/jwt.json
+
+    - name: sign-image
+      image: quay.io/konflux-ci/task-runner:4.0.0@sha256:ab7440e1101af1ff0418e16badede2f1590664d3189099030bf3f782371bd9da
+      env:
+        - name: SPIFFE_ENDPOINT_SOCKET
+          value: "unix:///spiffe-workload-api/spire-agent.sock"
+        - name: SIGSTORE_FULCIO_URL
+          value: "http://fulcio-server.fulcio-system.svc.cluster.local"
+        - name: SIGSTORE_REKOR_URL
+          value: "http://rekor-server.rekor-system.svc.cluster.local"
+        - name: SSL_CERT_FILE
+          value: /trusted-ca/ca-bundle.crt
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        # The builder signs the image IT pushed — keyless, with its own
+        # SPIFFE workload identity. Cosign fetches the JWT-SVID from the
+        # workload API socket itself and exchanges it at Fulcio.
+        if [ -f /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ]; then
+          mkdir -p ~/.docker
+          cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
+        fi
+        # Keyless sign with the task's own SPIFFE identity. The JWT-SVID
+        # (fetched by the push-handshake step, audience: sigstore) is
+        # exchanged at Fulcio for a short-lived signing certificate whose
+        # SAN is this task's SPIFFE ID. The signing config (mounted
+        # configmap) points cosign at the cluster-internal Fulcio + Rekor
+        # instead of public sigstore.dev.
+        JWT=$(jq -r '.[0].svids[0].svid' /svid/jwt.json)
+        cosign sign --yes \
+          --signing-config /signing-config/signing-config.json \
+          --trusted-root /trusted-root/trusted-root.json \
+          --identity-token "${JWT}" \
+          --allow-insecure-registry \
+          "$(params.image-url)@$(params.image-digest)"
   volumes:
     - name: spiffe-workload-api
       csi:
         driver: csi.spiffe.io
         readOnly: true
+    - name: trusted-ca
+      configMap:
+        name: trusted-ca
+        items:
+          - key: ca-bundle.crt
+            path: ca-bundle.crt
+        optional: true
+    - name: signing-config
+      configMap:
+        name: demo-signing-config
+        items:
+          - key: signing-config.json
+            path: signing-config.json
+        optional: false
+    - name: svid
+      emptyDir: {}
+    - name: trusted-root
+      configMap:
+        name: demo-trusted-root
+        items:
+          - key: trusted-root.json
+            path: trusted-root.json
+        optional: false

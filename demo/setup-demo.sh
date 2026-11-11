@@ -338,6 +338,91 @@ kubectl rollout restart deployment/tekton-chains-controller -n tekton-pipelines 
 kubectl rollout status deployment/tekton-chains-controller -n tekton-pipelines --timeout=300s >/dev/null
 echo "  - storage.oci.encoding-format=sigstore-bundle (OCI 1.1 referrers)."
 
+# 2c-3. Publish the demo trusted-root for cosign verification beats.
+# cosign normally bootstraps trust from the PUBLIC sigstore TUF root; our
+# Fulcio/Rekor/ctlog are cluster-local, so verification beats hand cosign a
+# TrustedRoot JSON describing them (built from the live cluster secrets).
+echo "==> [Demo Setup] Publishing demo-trusted-root ConfigMap for cosign verify..."
+TR_DIR=$(mktemp -d)
+kubectl get secret fulcio-server-secret -n fulcio-system -o jsonpath='{.data.cert}' | base64 -d > "${TR_DIR}/fulcio-root.pem"
+kubectl get secret rekor-public-key -n tuf-system -o jsonpath='{.data.key}' | base64 -d > "${TR_DIR}/rekor-pub.pem"
+kubectl get secret ctlog-public-key -n tuf-system -o jsonpath='{.data.public}' | base64 -d > "${TR_DIR}/ctlog-pub.pem"
+python3 - "${TR_DIR}" <<'PYEOF'
+import json, subprocess, base64, hashlib, sys, os
+d = sys.argv[1]
+def der(pem):
+    return subprocess.run(['openssl','pkey','-pubin','-in',pem,'-outform','DER'],capture_output=True).stdout
+def logentry(pem, base_url):
+    pk = der(pem)
+    return {
+        "baseUrl": base_url,
+        "hashAlgorithm": "SHA2_256",
+        "publicKey": {
+            "rawBytes": base64.b64encode(pk).decode(),
+            "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+            "validFor": {"start": "2024-01-01T00:00:00Z"},
+        },
+        "logId": {"keyId": base64.b64encode(hashlib.sha256(pk).digest()).decode()},
+    }
+root = subprocess.run(['openssl','x509','-in',f'{d}/fulcio-root.pem','-outform','DER'],capture_output=True).stdout
+tr = {
+    "mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
+    "tlogs": [logentry(f'{d}/rekor-pub.pem', "http://rekor-server.rekor-system.svc.cluster.local")],
+    "ctlogs": [logentry(f'{d}/ctlog-pub.pem', "http://ctlog.ctlog-system.svc.cluster.local")],
+    "certificateAuthorities": [{
+        "subject": {"organization": "Linux Foundation"},
+        "certChain": {"certificates": [{"rawBytes": base64.b64encode(root).decode()}]},
+        "validFor": {"start": "2024-01-01T00:00:00Z"},
+    }],
+}
+json.dump(tr, open(f'{d}/trusted-root.json','w'), indent=2)
+PYEOF
+kubectl delete configmap demo-trusted-root -n default-tenant --ignore-not-found >/dev/null 2>&1
+kubectl create configmap demo-trusted-root -n default-tenant --from-file=trusted-root.json="${TR_DIR}/trusted-root.json" >/dev/null
+rm -rf "${TR_DIR}"
+echo "  - demo-trusted-root published (cosign verify beats enabled)."
+
+# 2c-4. Publish the demo signing config (cluster-internal Fulcio + Rekor
+# URLs for cosign keyless signing — cosign v3 defaults to public sigstore
+# via TUF unless handed a signing config).
+kubectl delete configmap demo-signing-config -n default-tenant --ignore-not-found >/dev/null 2>&1
+kubectl create configmap demo-signing-config -n default-tenant \
+  --from-file=signing-config.json="${SCRIPT_DIR}/manifests/signing-config.json" >/dev/null
+echo "  - demo-signing-config published (cosign keyless sign beats enabled)."
+
+# 2c-5. Add the SPIRE root CA to the cluster trust bundle. cosign keyless
+# signing fetches the OIDC discovery document from the SPIRE OIDC provider
+# over TLS (served by an x509-SVID chaining to the SPIRE root), which is not
+# part of the konflux-internal-registry trust Bundle. Patch the Bundle with
+# an extra source; trust-manager re-syncs trusted-ca into every namespace.
+# (The Bundle is owned by konflux-internal-registry — like the Chains pin,
+# this is an idempotent patch of a managed resource; rollback: remove the
+# spire-root-ca source from the Bundle spec.)
+echo "==> [Demo Setup] Adding SPIRE root CA to the trusted-ca Bundle..."
+SPIRE_BUNDLE=$(kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server bundle show 2>/dev/null)
+if [ -n "${SPIRE_BUNDLE}" ]; then
+  printf '%s' "${SPIRE_BUNDLE}" | kubectl create secret generic spire-root-ca -n cert-manager \
+    --from-file=ca.crt=/dev/stdin --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  # trust-manager only reads source secrets carrying the authorization label
+  # (same as konflux-ca-secret).
+  kubectl label secret spire-root-ca -n cert-manager controller.cert-manager.io/fao=true --overwrite >/dev/null
+  # Add the source only if not already present (idempotent).
+  if ! kubectl get bundle trusted-ca -o jsonpath='{.spec.sources[?(@.secret.name=="spire-root-ca")]}' | grep -q spire-root-ca; then
+    kubectl patch bundle trusted-ca --type json \
+      -p '[{"op":"add","path":"/spec/sources/-","value":{"secret":{"key":"ca.crt","name":"spire-root-ca"}}}]' >/dev/null
+    echo "  - trusted-ca Bundle patched with spire-root-ca source."
+  else
+    echo "  - trusted-ca Bundle already includes spire-root-ca."
+  fi
+  for i in $(seq 1 12); do
+    kubectl get bundle trusted-ca -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' | grep -q True && break
+    sleep 5
+  done
+  echo "  - trust-manager re-synced (SPIRE root now cluster-trusted)."
+else
+  echo "  [Notice] Could not read SPIRE bundle; skipping trust-bundle patch."
+fi
+
 # 2d. Ensure konflux-info/cluster-config enables keyless parameter discovery
 kubectl patch configmap cluster-config -n konflux-info --type=merge -p '{
   "data": {

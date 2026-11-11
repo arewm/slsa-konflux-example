@@ -1,0 +1,27 @@
+{
+  "mediaType": "application/vnd.dev.sigstore.signingconfig.v0.2+json",
+  "caUrls": [
+    {
+      "url": "http://fulcio-server.fulcio-system.svc.cluster.local",
+      "majorApiVersion": 1,
+      "validFor": {
+        "start": "2024-01-01T00:00:00Z"
+      },
+      "operator": "konflux-ci.dev"
+    }
+  ],
+  "rekorTlogUrls": [
+    {
+      "url": "http://rekor-server.rekor-system.svc.cluster.local",
+      "majorApiVersion": 1,
+      "validFor": {
+        "start": "2024-01-01T00:00:00Z"
+      },
+      "operator": "konflux-ci.dev"
+    }
+  ],
+  "rekorTlogConfig": {
+    "selector": "ANY"
+  },
+  "tsaConfig": {}
+}

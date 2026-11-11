@@ -626,6 +626,9 @@ p "# HTTP/2 403 Forbidden! The rogue task cannot obtain push authorization."
 wait
 
 p "# 2. Legitimate Push on Gated Registry:"
+# The image the builder signed — the snapshot's immutable digest.
+BUILDER_IMAGE_DIGEST=$(kubectl get snapshot demo-app-snapshot -n default-tenant -o jsonpath='{.spec.components[0].containerImage}' 2>/dev/null | grep -oE 'sha256:[a-f0-9]{64}')
+p "# Signing subject: registry-service.kind-registry/slsa-e2e-test@${BUILDER_IMAGE_DIGEST}"
 p "# The vetted Builder task bundle (buildah-oci-ta) executes with its trusted production identity:"
 reset_if_failed taskrun demo-builder-gated-push default-tenant
 pe "cat << 'EOF' | kubectl_apply_retry
@@ -648,6 +651,11 @@ spec:
       value: buildah-oci-ta
     - name: kind
       value: task
+  params:
+  - name: image-url
+    value: registry-service.kind-registry/slsa-e2e-test
+  - name: image-digest
+    value: ${BUILDER_IMAGE_DIGEST}
 EOF"
 
 kubectl wait --for=condition=Succeeded taskrun/demo-builder-gated-push -n default-tenant --timeout=180s
@@ -655,6 +663,57 @@ kubectl wait --for=condition=Succeeded taskrun/demo-builder-gated-push -n defaul
 p "# The builder task's own logs — the push handshake with its production identity:"
 pe "kubectl logs demo-builder-gated-push-pod -n default-tenant -c step-push-handshake"
 pe "kubectl logs deployment/registry-oidc -n kind-registry --tail=5 | grep -i \"statusCode\":202 || true"
+p "# And the signature — the builder signed the image it pushed, keyless,"
+p "# with its own SPIFFE identity (cosign fetched the SVID itself):"
+pe "kubectl logs demo-builder-gated-push-pod -n default-tenant -c step-sign-image | tail -4"
+
+p "# Anyone can now VERIFY that signature — identity, not location, is the"
+p "# credential. The verifier knows only three things: the internal trust"
+p "# roots (Fulcio + Rekor + ctlog) and the expected SPIFFE identity:"
+reset_if_failed pod demo-builder-sign-verify default-tenant
+cat << 'EOF' | sed "s|__DIGEST__|${BUILDER_IMAGE_DIGEST}|g" | kubectl_apply_retry >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-builder-sign-verify
+  namespace: default-tenant
+  labels:
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  restartPolicy: Never
+  containers:
+  - name: cosign
+    image: quay.io/konflux-ci/task-runner:4.0.0@sha256:ab7440e1101af1ff0418e16badede2f1590664d3189099030bf3f782371bd9da
+    command:
+    - /bin/bash
+    - -c
+    - |
+      set -eo pipefail
+      mkdir -p ~/.docker
+      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
+      cosign verify \
+        --allow-insecure-registry \
+        --trusted-root /trusted-root/trusted-root.json \
+        --certificate-identity 'spiffe://konflux-ci.dev/trusted/kind-konflux/default/buildah-oci-ta' \
+        --certificate-oidc-issuer 'https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local' \
+        registry-service.kind-registry/slsa-e2e-test@__DIGEST__ \
+        && echo 'VERIFIED: signature by the builder workload identity.'
+    volumeMounts:
+    - mountPath: /tekton/creds-secrets/regcred-internal-registry
+      name: regcred
+    - mountPath: /trusted-root
+      name: trusted-root
+  volumes:
+  - name: regcred
+    secret:
+      secretName: regcred-internal-registry
+  - name: trusted-root
+    configMap:
+      name: demo-trusted-root
+EOF
+pe "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/demo-builder-sign-verify -n default-tenant --timeout=120s"
+pe "kubectl logs demo-builder-sign-verify -n default-tenant | tail -3"
+demo_cleanup pod demo-builder-sign-verify -n default-tenant
 demo_cleanup taskrun demo-builder-gated-push -n default-tenant
 
 p "# HTTP/2 202 Accepted! Push upload session created strictly via Workload Identity."
