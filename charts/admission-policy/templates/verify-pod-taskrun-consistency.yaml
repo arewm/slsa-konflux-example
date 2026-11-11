@@ -1,0 +1,92 @@
+{{- if .Values.hardening }}
+{{- /* Kyverno JMESPath expressions as raw strings so Helm does not process the braces. */}}
+{{- $urlPath := `/apis/tekton.dev/v1/namespaces/{{request.namespace}}/taskruns/{{ request.object.metadata.ownerReferences[?kind == 'TaskRun'] | [0].name || 'no-such-taskrun' }}` }}
+{{- $ownerUid := `{{ request.object.metadata.ownerReferences[?kind == 'TaskRun'] | [0].uid || '' }}` }}
+{{- $podTask := `{{ request.object.metadata.labels."tekton.dev/task" || '' }}` }}
+{{- $podSA := `{{ request.object.spec.serviceAccountName || 'default' }}` }}
+{{- $taskUid := `{{ ownerTaskRun.metadata.uid || '' }}` }}
+{{- $taskRole := `{{ ownerTaskRun.metadata.labels."trusted-task-role" || '' }}` }}
+{{- $taskTask := `{{ ownerTaskRun.metadata.labels."tekton.dev/task" || '' }}` }}
+{{- $taskSA := `{{ ownerTaskRun.spec.podTemplate.serviceAccountName || request.object.spec.serviceAccountName || 'default' }}` }}
+---
+# Owner-TaskRun consistency for pods carrying trusted-task-role (classic
+# Kyverno policy with a context apiCall).
+#
+# prevent-pod-label-spoofing proves the pod has *an* ownerReference of kind
+# TaskRun — but Kubernetes does not validate ownerReferences at admission, so
+# a hand-created pod can forge one. This policy closes that gap by fetching
+# the referenced TaskRun at pod-CREATE time and requiring the claim to be
+# authentic and consistent:
+#   1. the ownerRef uid matches the live TaskRun (a forged or stale name fails)
+#   2. the TaskRun's trusted-task-role equals the pod's claimed label
+#   3. the TaskRun's tekton.dev/task label equals the pod's (the spiffeID
+#      template bakes the task label and ServiceAccount into the identity,
+#      so both must be inherited, not hand-set)
+#   4. if the TaskRun pins a ServiceAccount, the pod must run under it
+#
+# Cost model: the apiCall runs only for pods that carry trusted-task-role
+# (label-selector match) at CREATE — ordinary pod admissions never perform
+# the lookup. A labeled pod without a TaskRun ownerRef resolves to
+# 'no-such-taskrun' and is denied, consistent with prevent-pod-label-spoofing.
+#
+# Implemented as a classic ClusterPolicy rather than a ValidatingPolicy
+# because Kyverno v1.19 ValidatingPolicy does not support context apiCall.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-pod-taskrun-consistency
+  annotations:
+    policies.kyverno.io/title: Verify Pod/TaskRun Consistency
+    policies.kyverno.io/category: Tekton Trust Boundary
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods carrying a trusted-task-role label must be authentically owned by
+      the TaskRun they reference, with matching classification, task label,
+      and ServiceAccount.
+spec:
+  validationFailureAction: Enforce
+  failurePolicy: Fail
+  background: false
+  webhookTimeoutSeconds: {{ .Values.webhookTimeoutSeconds | default 30 }}
+  rules:
+    {{- range $role := list "prod" "dev" }}
+    - name: verify-owner-taskrun-{{ $role }}
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              operations: ["CREATE"]
+              selector:
+                matchLabels:
+                  trusted-task-role: {{ $role }}
+      context:
+        - name: ownerTaskRun
+          apiCall:
+            urlPath: {{ $urlPath }}
+      validate:
+        message: >-
+          Pod trusted-task-role claims must be authentically inherited from the
+          owning TaskRun (matching uid, classification, task label, and
+          ServiceAccount).
+        deny:
+          conditions:
+            any:
+              # 1. Authentic reference: the ownerRef uid must match the live TaskRun.
+              - key: {{ $taskUid | quote }}
+                operator: NotEquals
+                value: {{ $ownerUid | quote }}
+              # 2. Role consistency: the pod claims exactly what its TaskRun earned.
+              - key: {{ $taskRole | quote }}
+                operator: NotEquals
+                value: {{ $role | quote }}
+              # 3. Task consistency: tekton.dev/task is inherited, not chosen.
+              - key: {{ $podTask | quote }}
+                operator: NotEquals
+                value: {{ $taskTask | quote }}
+              # 4. ServiceAccount consistency when the TaskRun pins one.
+              - key: {{ $podSA | quote }}
+                operator: NotEquals
+                value: {{ $taskSA | quote }}
+    {{- end }}
+{{- end }}
