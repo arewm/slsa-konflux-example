@@ -428,6 +428,13 @@ p "# at CREATE, the label requires a TaskRun owner reference; and it is"
 p "# IMMUTABLE afterwards — any update that changes it is denied:"
 pe "kubectl get validatingpolicy prevent-pod-label-spoofing -o yaml 2>/dev/null | yq '.spec.validations'"
 p ""
+
+p "# And the ownerRef itself is verified: a labeled pod must be created BY the"
+p "# Tekton controller and match its live TaskRun — uid, role, task label,"
+p "# ServiceAccount. Even a byte-perfect clone of a real task pod is denied,"
+p "# because the creator identity cannot be forged:"
+pe "kubectl get clusterpolicy verify-pod-taskrun-consistency -o yaml 2>/dev/null | yq '.spec.rules[0].validate.deny.conditions[0]'"
+p ""
 p "# And the last link: the admission rules decide the label, and SPIRE turns"
 p "# the verified label into a cryptographic identity — production SVIDs are"
 p "# minted only for pods carrying the Kyverno-stamped prod label:"
@@ -582,6 +589,38 @@ pe "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire
 p "# And here: spiffe://konflux-ci.dev/TRUSTED/... — earned by the signed,"
 p "# digest-pinned bundle. Admission decided the label; SPIRE minted the"
 p "# production identity the label authorizes. Trust, end to end."
+
+p "# TEST 5 — The hardest attack: clone the prod task's Pod byte-for-byte."
+p "# Correct ownerReference uid, correct labels, controller flags — everything"
+p "# the policies can inspect matches the real pod. Submit it as ourselves:"
+SIGNED_TR_UID=$(kubectl get taskrun demo-signed-task -n default-tenant -o jsonpath='{.metadata.uid}')
+kubectl delete pod attacker-pod-clone -n default-tenant --wait=true >/dev/null 2>&1 || true
+pe "cat << 'EOF' | kubectl create -f - || true
+apiVersion: v1
+kind: Pod
+metadata:
+  name: attacker-pod-clone
+  namespace: default-tenant
+  labels:
+    trusted-task-role: prod
+    tekton.dev/task: demo-catalog-task
+  ownerReferences:
+  - apiVersion: tekton.dev/v1
+    kind: TaskRun
+    name: demo-signed-task
+    uid: ${SIGNED_TR_UID}
+    controller: true
+    blockOwnerDeletion: true
+spec:
+  containers:
+  - name: rogue
+    image: alpine:3.20
+    command: [\"sleep\", \"30\"]
+EOF"
+p "# Denied — the clone is indistinguishable from the real pod, but WE are not"
+p "# the Tekton controller. Admission carries the authenticated creator, and"
+p "# only the controller may create pods carrying the trusted-task-role label."
+demo_cleanup pod attacker-pod-clone -n default-tenant
 
 demo_cleanup taskrun demo-signed-task -n default-tenant
 wait
