@@ -153,6 +153,21 @@ reset_if_failed() {
   fi
 }
 
+# Delete a resource if its current command does not contain needle — a
+# Succeeded pod whose spec would change on apply (e.g. an image digest
+# pinned into the command by a fresh build) cannot be patched in place:
+# kubectl rejects pod command mutations. Delete it so the subsequent
+# apply recreates it with the current manifest.
+reset_if_command_lacks() {
+  local kind="$1" name="$2" ns="$3" needle="$4" current
+  if ! kubectl get "${kind}" "${name}" -n "${ns}" >/dev/null 2>&1; then return 0; fi
+  current=$(kubectl get "${kind}" "${name}" -n "${ns}" -o jsonpath='{.spec.containers[*].command}' 2>/dev/null || true)
+  case "${current}" in
+    *"${needle}"*) ;;
+    *) kubectl delete "${kind}" "${name}" -n "${ns}" --wait=true >/dev/null 2>&1 || true ;;
+  esac
+}
+
 clear
 echo ""
 echo -e "${PURPLE}╔═════════════════════════════════════════════════════════════════════════════════╗${COLOR_RESET}"
@@ -671,6 +686,7 @@ p "# Anyone can now VERIFY that signature — identity, not location, is the"
 p "# credential. The verifier knows only three things: the internal trust"
 p "# roots (Fulcio + Rekor + ctlog) and the expected SPIFFE identity:"
 reset_if_failed pod demo-builder-sign-verify default-tenant
+reset_if_command_lacks pod demo-builder-sign-verify default-tenant "${BUILDER_IMAGE_DIGEST}"
 cat << 'EOF' | sed "s|__DIGEST__|${BUILDER_IMAGE_DIGEST}|g" | kubectl_apply_retry >/dev/null
 apiVersion: v1
 kind: Pod
@@ -1313,10 +1329,14 @@ spec:
       mkdir -p ~/.docker
       cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
       REG=registry-service.kind-registry/slsa-e2e-test
-      PROV=$(oras discover --format json --insecure "$REG@__DIGEST__" | jq -r '[.referrers[] | select(.artifactType=="application/vnd.dev.sigstore.bundle.v0.3+json")] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      PROV=$(oras discover --format json --insecure "$REG@__DIGEST__" | jq -r '[.referrers[] | select(.artifactType=="application/vnd.dev.sigstore.bundle.v0.3+json" and ((.annotations["dev.sigstore.bundle.predicateType"] // "") | startswith("https://slsa.dev/provenance")))] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      if [ -z "$PROV" ] || [ "$PROV" = "null" ]; then
+        echo "ERROR: no SLSA provenance referrer found on the image yet (Chains signing incomplete?)" >&2
+        exit 1
+      fi
       LAYER=$(oras manifest fetch --insecure "$REG@$PROV" --format json | jq -r '.content.layers[0].digest')
       oras blob fetch --insecure --output - "$REG@$LAYER" | jq -r '.dsseEnvelope.payload' | base64 -d \
-        | jq '{predicateType, subject: .subject[0].digest, builder: .predicate.builder.id}'
+        | jq '{predicateType, subject: .subject[0].digest, builder: (.predicate.runDetails.builder.id // .predicate.builder.id)}'
     volumeMounts:
     - mountPath: /tekton/creds-secrets/regcred-internal-registry
       name: regcred

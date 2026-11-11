@@ -334,9 +334,15 @@ fi
 # The encoding-format key selects referrers storage; patch the live
 # ConfigMap directly (the TektonConfig patch above does not apply it).
 kubectl patch configmap chains-config -n tekton-pipelines --type merge   -p '{"data":{"storage.oci.encoding-format":"sigstore-bundle"}}' >/dev/null
+# Clear the fulcio provider on the LIVE ConfigMap too. setup-prerequisites.sh
+# sets provider=k8s and the TektonConfig patch above sets it back to "", but
+# with the operator paused that second value never reaches chains-config on
+# a fresh cluster, leaving chains on the k8s provider (keyless signing fails).
+# An empty provider makes chains read signers.x509.fulcio.token.path.
+kubectl patch configmap chains-config -n tekton-pipelines --type merge   -p '{"data":{"signers.x509.fulcio.provider":""}}' >/dev/null
 kubectl rollout restart deployment/tekton-chains-controller -n tekton-pipelines >/dev/null 2>&1 || true
 kubectl rollout status deployment/tekton-chains-controller -n tekton-pipelines --timeout=300s >/dev/null
-echo "  - storage.oci.encoding-format=sigstore-bundle (OCI 1.1 referrers)."
+echo "  - storage.oci.encoding-format=sigstore-bundle (OCI 1.1 referrers), fulcio provider cleared."
 
 # 2c-3. Publish the demo trusted-root for cosign verification beats.
 # cosign normally bootstraps trust from the PUBLIC sigstore TUF root; our

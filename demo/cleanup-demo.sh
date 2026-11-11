@@ -51,7 +51,7 @@ done
 
 # 2. Delete test / attacker Pods in default-tenant
 echo "  - Deleting demo test/attacker pods in default-tenant..."
-kubectl delete pod rogue-registry-mirror test-rogue-push test-builder-push test-untrusted-client test-scanner-client attacker-label-spoof -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
+kubectl delete pod rogue-registry-mirror test-rogue-push test-builder-push test-untrusted-client test-scanner-client attacker-label-spoof demo-builder-sign-verify -n default-tenant --wait=true --ignore-not-found=true 2>/dev/null || true
 
 # 3. Delete AppStudio Releases in default-tenant
 echo "  - Deleting demo Releases in default-tenant..."
