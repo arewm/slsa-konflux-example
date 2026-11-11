@@ -545,66 +545,6 @@ pe "kubectl wait --for=condition=Succeeded taskrun/demo-signed-task -n default-t
 p "# Inspect the TaskRun labels stamped by Kyverno:"
 pe "kubectl get taskrun demo-signed-task -n default-tenant --show-labels"
 
-p "# Where does the trust actually live? In the local registry — the signed"
-p "# bundle and its Cosign signature, stored as first-class OCI artifacts."
-p "# oras discover, from inside the cluster, against the internal registry:"
-CATALOG_DIGEST=$(echo "${CATALOG_TASK_BUNDLE}" | grep -o 'sha256:[a-f0-9]*')
-reset_if_failed pod demo-registry-inspect default-tenant
-cat << 'EOF' | sed "s|__DIGEST__|${CATALOG_DIGEST}|g" | kubectl_apply_retry >/dev/null
-apiVersion: v1
-kind: Pod
-metadata:
-  name: demo-registry-inspect
-  namespace: default-tenant
-  labels:
-    app.kubernetes.io/part-of: kubecon-demo
-spec:
-  restartPolicy: Never
-  containers:
-  - name: oras
-    image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
-    env:
-    - name: SSL_CERT_FILE
-      value: /etc/pki/tls/certs/ca-bundle.crt
-    command:
-    - /bin/bash
-    - -c
-    - |
-      set -e
-      mkdir -p ~/.docker /tmp/sig
-      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
-      echo '=== oras discover — referrers of the signed bundle:'
-      oras discover registry-service.kind-registry/tekton-catalog/demo-catalog-task@__DIGEST__
-      REFERRER=$(oras discover --format json registry-service.kind-registry/tekton-catalog/demo-catalog-task@__DIGEST__ | jq -r '[.referrers[]] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
-      oras pull -o /tmp/sig registry-service.kind-registry/tekton-catalog/demo-catalog-task@${REFERRER} >/dev/null 2>&1
-      echo
-      echo "=== The signature bundle — what was signed, and by whom:"
-      jq -r '.dsseEnvelope.payload | @base64d | fromjson | "signed subject digest : " + .subject[0].digest.sha256' /tmp/sig/*.sigstore.json
-      jq -r '.verificationMaterial.publicKey.hint | "signer key fingerprint  : " + .' /tmp/sig/*.sigstore.json
-    volumeMounts:
-    - mountPath: /tekton/creds-secrets/regcred-internal-registry
-      name: regcred
-    - mountPath: /etc/pki/tls/certs/ca-bundle.crt
-      name: trusted-ca
-      subPath: ca-bundle.crt
-      readOnly: true
-  volumes:
-  - name: regcred
-    secret:
-      secretName: regcred-internal-registry
-  - name: trusted-ca
-    configMap:
-      name: trusted-ca
-      items:
-      - key: ca-bundle.crt
-        path: ca-bundle.crt
-EOF
-
-pe "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/demo-registry-inspect -n default-tenant --timeout=120s"
-pe "kubectl logs demo-registry-inspect -n default-tenant"
-p "# Sigstore DSSE signature envelopes, attached to the bundle digest as OCI"
-p "# 1.1 referrers — THIS is what admission verified. The trust lives in the"
-p "# registry, not in a config file."
 
 p "# Inspect the production SVID (SPIFFE Verifiable Identity Document) minted by SPIRE for this Pod:"
 SIGNED_POD_UID=$(kubectl get pod -n default-tenant -l tekton.dev/taskRun=demo-signed-task -o jsonpath='{.items[0].metadata.uid}')
@@ -829,6 +769,69 @@ p "# 4. Separation of Duties Policy Enforcement (Conforma Rego):"
 p "# When tasks sign role-scoped attestations:"
 p "#   • Scanner (trivy-sbom-scan) signs CVE reports"
 p "#   • Builder (buildah-oci-ta) signs SBOMs & Provenance"
+p "# But first — a real signed artifact. The catalog bundle's signature,"
+p "# straight from the registry:"
+p "# Where does the trust actually live? In the local registry — the signed"
+p "# bundle and its Cosign signature, stored as first-class OCI artifacts."
+p "# oras discover, from inside the cluster, against the internal registry:"
+CATALOG_DIGEST=$(echo "${CATALOG_TASK_BUNDLE}" | grep -o 'sha256:[a-f0-9]*')
+reset_if_failed pod demo-registry-inspect default-tenant
+cat << 'EOF' | sed "s|__DIGEST__|${CATALOG_DIGEST}|g" | kubectl_apply_retry >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-registry-inspect
+  namespace: default-tenant
+  labels:
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  restartPolicy: Never
+  containers:
+  - name: oras
+    image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
+    env:
+    - name: SSL_CERT_FILE
+      value: /etc/pki/tls/certs/ca-bundle.crt
+    command:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      mkdir -p ~/.docker /tmp/sig
+      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
+      echo '=== oras discover — referrers of the signed bundle:'
+      oras discover registry-service.kind-registry/tekton-catalog/demo-catalog-task@__DIGEST__
+      REFERRER=$(oras discover --format json registry-service.kind-registry/tekton-catalog/demo-catalog-task@__DIGEST__ | jq -r '[.referrers[]] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      oras pull -o /tmp/sig registry-service.kind-registry/tekton-catalog/demo-catalog-task@${REFERRER} >/dev/null 2>&1
+      echo
+      echo "=== The signature bundle — what was signed, and by whom:"
+      jq -r '.dsseEnvelope.payload | @base64d | fromjson | "signed subject digest : " + .subject[0].digest.sha256' /tmp/sig/*.sigstore.json
+      jq -r '.verificationMaterial.publicKey.hint | "signer key fingerprint  : " + .' /tmp/sig/*.sigstore.json
+    volumeMounts:
+    - mountPath: /tekton/creds-secrets/regcred-internal-registry
+      name: regcred
+    - mountPath: /etc/pki/tls/certs/ca-bundle.crt
+      name: trusted-ca
+      subPath: ca-bundle.crt
+      readOnly: true
+  volumes:
+  - name: regcred
+    secret:
+      secretName: regcred-internal-registry
+  - name: trusted-ca
+    configMap:
+      name: trusted-ca
+      items:
+      - key: ca-bundle.crt
+        path: ca-bundle.crt
+EOF
+
+pe "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/demo-registry-inspect -n default-tenant --timeout=120s"
+pe "kubectl logs demo-registry-inspect -n default-tenant"
+p "# Sigstore DSSE signature envelopes, attached to the bundle digest as OCI"
+p "# 1.1 referrers — THIS is what admission verified. The trust lives in the"
+p "# registry, not in a config file."
+
 pe "cat ${DIR}/manifests/separation_of_duties.rego"
 
 p "# Test Conforma policy against an adversarial attack (Builder attempts to forge clean CVE scan):"
@@ -1221,6 +1224,62 @@ REG_USER=$(kubectl get secret regcred-internal-registry -n default-tenant -o jso
 RELEASE_DIGEST=$(kubectl get snapshot demo-app-snapshot -n default-tenant -o jsonpath='{.spec.components[0].containerImage}' | grep -oE 'sha256:[a-f0-9]{64}')
 p "# Released image digest (from the snapshot): ${RELEASE_DIGEST}"
 pe "curl -s -k -u \"${REG_USER}\" https://localhost:5001/v2/released-demo-app/referrers/${RELEASE_DIGEST} | jq .manifests[].artifactType"
+
+p "# Pull the attestation itself — chains v0.30 stores it as an OCI 1.1 referrer"
+p "# (a sigstore bundle holding a DSSE envelope). The cosign CLI in this image"
+p "# can't read bundle referrers yet, so we decode it ourselves — discover the"
+p "# referrer, fetch its layer, decode the DSSE payload:"
+kubectl delete pod demo-attestation-read -n default-tenant --ignore-not-found --wait=false >/dev/null 2>&1
+cat << 'EOF' | sed "s|__DIGEST__|${RELEASE_DIGEST}|g" | kubectl_apply_retry >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-attestation-read
+  namespace: default-tenant
+  labels:
+    app.kubernetes.io/part-of: kubecon-demo
+spec:
+  restartPolicy: Never
+  containers:
+  - name: cosign
+    image: quay.io/konflux-ci/task-runner:1.3.0@sha256:3f007bf58821885f8aa30d72c84fcbfcb14babc6521eaf6ac1bc4f8c078d9e58
+    env:
+    - name: SSL_CERT_FILE
+      value: /etc/pki/tls/certs/ca-bundle.crt
+    command:
+    - /bin/bash
+    - -c
+    - |
+      set -eo pipefail
+      mkdir -p ~/.docker
+      cp /tekton/creds-secrets/regcred-internal-registry/.dockerconfigjson ~/.docker/config.json
+      REG=registry-service.kind-registry/slsa-e2e-test
+      PROV=$(oras discover --format json --insecure "$REG@__DIGEST__" | jq -r '[.referrers[] | select(.artifactType=="application/vnd.dev.sigstore.bundle.v0.3+json")] | sort_by(.annotations["org.opencontainers.image.created"]) | last | .digest')
+      LAYER=$(oras manifest fetch --insecure "$REG@$PROV" --format json | jq -r '.content.layers[0].digest')
+      oras blob fetch --insecure --output - "$REG@$LAYER" | jq -r '.dsseEnvelope.payload' | base64 -d \
+        | jq '{predicateType, subject: .subject[0].digest, builder: .predicate.builder.id}'
+    volumeMounts:
+    - mountPath: /tekton/creds-secrets/regcred-internal-registry
+      name: regcred
+    - mountPath: /etc/pki/tls/certs/ca-bundle.crt
+      name: trusted-ca
+      subPath: ca-bundle.crt
+      readOnly: true
+  volumes:
+  - name: regcred
+    secret:
+      secretName: regcred-internal-registry
+  - name: trusted-ca
+    configMap:
+      name: trusted-ca
+      items:
+      - key: ca-bundle.crt
+        path: ca-bundle.crt
+EOF
+pe "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/demo-attestation-read -n default-tenant --timeout=180s"
+pe "kubectl logs demo-attestation-read -n default-tenant | head -n 12"
+p "# The signed provenance — subject digest, predicate type — pulled straight"
+p "# from the referrer. The signing certificate is embedded in the bundle."
 
 p "# 4. Query the Rekor transparency log dynamically using the released image attestation:"
 kubectl delete job query-rekor-demo -n default --wait=true >/dev/null 2>&1 || true

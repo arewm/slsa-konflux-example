@@ -310,6 +310,34 @@ kubectl patch tektonconfig config --type=merge -p '{
   }
 }' >/dev/null 2>&1 || true
 
+# 2c-2. Upgrade Tekton Chains to a version with OCI 1.1 referrers support
+# (v0.30.0+, released 2026-11-05). The tekton-operator pins the chains
+# version to its bundle, so it is paused for the demo (it would revert the
+# image otherwise); with it paused, pin the controller image and set the
+# encoding format. Chains then stores attestations as OCI 1.1 referrers
+# (sigstore protobuf bundles) instead of legacy .att/.sig tags — matching
+# docs/reference/dual-gated-release.md. Rollback: restore the operator
+# replicas (it re-pins the previous chains version automatically).
+echo "==> [Demo Setup] Upgrading Tekton Chains for OCI 1.1 referrers..."
+kubectl scale deployment tekton-operator -n tekton-operator --replicas=0 >/dev/null 2>&1 || true
+kubectl scale deployment tekton-operator-webhook -n tekton-operator --replicas=0 >/dev/null 2>&1 || true
+CHAINS_IMAGE="ghcr.io/tektoncd/chains/github.com/tektoncd/chains/cmd/controller:v0.30.0"
+CURRENT_CHAINS=$(kubectl get deployment tekton-chains-controller -n tekton-pipelines -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+if [ "${CURRENT_CHAINS}" != "${CHAINS_IMAGE}" ]; then
+  CHAINS_CONTAINER=$(kubectl get deployment tekton-chains-controller -n tekton-pipelines -o jsonpath='{.spec.template.spec.containers[0].name}')
+  kubectl set image deployment/tekton-chains-controller "${CHAINS_CONTAINER}=${CHAINS_IMAGE}" -n tekton-pipelines
+  kubectl rollout status deployment/tekton-chains-controller -n tekton-pipelines --timeout=300s >/dev/null
+  echo "  - Chains upgraded to v0.30.0 (operator paused to hold the pin)."
+else
+  echo "  - Chains already at v0.30.0."
+fi
+# The encoding-format key selects referrers storage; patch the live
+# ConfigMap directly (the TektonConfig patch above does not apply it).
+kubectl patch configmap chains-config -n tekton-pipelines --type merge   -p '{"data":{"storage.oci.encoding-format":"sigstore-bundle"}}' >/dev/null
+kubectl rollout restart deployment/tekton-chains-controller -n tekton-pipelines >/dev/null 2>&1 || true
+kubectl rollout status deployment/tekton-chains-controller -n tekton-pipelines --timeout=300s >/dev/null
+echo "  - storage.oci.encoding-format=sigstore-bundle (OCI 1.1 referrers)."
+
 # 2d. Ensure konflux-info/cluster-config enables keyless parameter discovery
 kubectl patch configmap cluster-config -n konflux-info --type=merge -p '{
   "data": {
