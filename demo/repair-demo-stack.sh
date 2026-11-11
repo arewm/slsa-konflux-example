@@ -54,17 +54,20 @@ kubectl get secret fulcio-server-secret -n fulcio-system -o jsonpath='{.data.cer
 kubectl get secret rekor-public-key -n tuf-system -o jsonpath='{.data.key}' | base64 -d > "${TR_DIR}/rekor-pub.pem"
 kubectl get secret ctlog-public-key -n tuf-system -o jsonpath='{.data.public}' | base64 -d > "${TR_DIR}/ctlog-pub.pem"
 python3 - "${TR_DIR}" <<'PYEOF'
-import json, subprocess, base64, sys
-d = sys.argv[1]
-def der(pem):
+import json, subprocess, base64, hashlib, sys
+d = sys.argv[1]def der(pem):
     return subprocess.run(['openssl','pkey','-pubin','-in',pem,'-outform','DER'],capture_output=True).stdout
 def logentry(pem, base_url):
     pk = der(pem)
     return {
         "baseUrl": base_url,
         "hashAlgorithm": "SHA2_256",
-        "publicKey": {"rawBytes": base64.b64encode(pk).decode(), "keyDetails": "PKIX_ECDSA_P256_SHA_256"},
-        "validFor": {"start": "2024-01-01T00:00:00Z"},
+        "publicKey": {
+            "rawBytes": base64.b64encode(pk).decode(),
+            "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+            "validFor": {"start": "2024-01-01T00:00:00Z"},
+        },
+        "logId": {"keyId": base64.b64encode(hashlib.sha256(pk).digest()).decode()},
     }
 root = subprocess.run(['openssl','x509','-in',f'{d}/fulcio-root.pem','-outform','DER'],capture_output=True).stdout
 tr = {
@@ -84,9 +87,57 @@ kubectl create configmap demo-trusted-root -n default-tenant --from-file=trusted
 rm -rf "${TR_DIR}"
 echo "  - demo-trusted-root regenerated."
 
-# 3. CT log health (Trillian data can be lost after restarts; setup-demo step
-# 2 has the full re-initialization — here we only detect and point at it).
-CTLOG_STH=$(kubectl run probe-ctlog-r -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://ctlog.ctlog-system.svc/sigstorescaffolding/ct/v1/get-sth 2>/dev/null || true)
+# 3. SPIRE root CA sync with Fulcio (setup-demo step 2b) and Zot: the OIDC
+# discovery provider's serving cert chains to the SPIRE root; if the bundle
+# changed, Fulcio cannot process SPIFFE identity tokens (keyless signing
+# fails with "There was an error processing the identity token").
+echo "==> [Demo Repair] Checking SPIRE root CA synchronization with Fulcio..."
+python3 - <<'EOF'
+import subprocess, json
+spire_bundle = subprocess.check_output(
+    "kubectl exec -n spire spire-server-0 -c spire-server -- /opt/spire/bin/spire-server bundle show 2>/dev/null",
+    shell=True).decode()
+raw_cm = subprocess.check_output(
+    "kubectl get configmap fulcio-server-config -n fulcio-system -o json 2>/dev/null", shell=True).decode()
+cm = json.loads(raw_cm)
+cfg = json.loads(cm["data"]["config.json"])
+spire_key = "https://spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"
+current = cfg.get("OIDCIssuers", {}).get(spire_key, {}).get("CACert", "")
+if spire_bundle.strip() and spire_bundle.strip() != current.strip():
+    print("  - Updating Fulcio with latest SPIRE root CA bundle...")
+    cfg.setdefault("OIDCIssuers", {})[spire_key] = {
+        "IssuerURL": spire_key, "ClientID": "sigstore",
+        "Type": "spiffe", "SPIFFETrustDomain": "konflux-ci.dev",
+    }
+    cfg["OIDCIssuers"][spire_key]["CACert"] = spire_bundle
+    cm["data"]["config.json"] = json.dumps(cfg)
+    p = subprocess.Popen(["kubectl", "apply", "-f", "-"], stdin=subprocess.PIPE, text=True)
+    p.communicate(json.dumps(cm))
+    subprocess.check_call("kubectl rollout restart deployment/fulcio-server -n fulcio-system", shell=True)
+    subprocess.check_call("kubectl rollout status deployment/fulcio-server -n fulcio-system --timeout=120s", shell=True)
+else:
+    print("  - Fulcio SPIRE CA bundle is up to date.")
+# Zot OIDC registry verifies JWTs against the SPIRE bundle too.
+subprocess.check_call(
+    "kubectl create configmap spire-bundle -n kind-registry --from-literal=ca.crt='" + spire_bundle +
+    "' --dry-run=client -o yaml 2>/dev/null | kubectl apply -f - 2>/dev/null", shell=True)
+print("  - Zot spire-bundle synced.")
+EOF
+
+# 4. OIDC discovery provider DNS SANs: the provider's serving cert is an
+# x509-SVID renewed from autoPopulateDNSNames; after restarts the derived
+# SAN set can stop short of the fully-qualified
+# spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local that Fulcio's
+# issuer URL requires (observed post-reboot: TLS "certificate is valid for
+# ... not ...svc.cluster.local"). Pin the full set explicitly — an
+# idempotent patch of the helm-managed ClusterSPIFFEID (owned by the spire
+# release), same pattern as the trusted-ca Bundle patch.
+echo "==> [Demo Repair] Pinning OIDC provider DNS SANs..."
+kubectl patch clusterspiffeid spire-spiffe-oidc-discovery-provider --type merge -p '{"spec":{"dnsNameTemplates":["oidc-discovery.{{ .TrustDomain }}","spire-spiffe-oidc-discovery-provider","spire-spiffe-oidc-discovery-provider.spire","spire-spiffe-oidc-discovery-provider.spire.svc","spire-spiffe-oidc-discovery-provider.spire.svc.cluster.local"]}}' >/dev/null 2>&1 || echo "  [Warning] Could not patch clusterspiffeid."
+echo "  - DNS SAN templates pinned (provider SVID rotates on renewal)."
+
+# 5. CT log health (Trillian data can be lost after restarts; setup-demo step
+# 2 has the full re-initialization — here we only detect and point at it).CTLOG_STH=$(kubectl run probe-ctlog-r -n default --image=curlimages/curl:latest --restart=Never --rm -i --quiet --command -- curl -s --max-time 10 http://ctlog.ctlog-system.svc/sigstorescaffolding/ct/v1/get-sth 2>/dev/null || true)
 if echo "${CTLOG_STH}" | grep -q "tree_size"; then
   echo "  - CT log healthy."
 else
