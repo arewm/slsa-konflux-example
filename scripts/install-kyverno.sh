@@ -12,7 +12,32 @@ SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo "==> [Kyverno] Installing Kyverno (scripts/kyverno)..."
 # Server-side apply: the Kyverno CRDs exceed the client-side
 # last-applied-configuration annotation size limit.
-kubectl apply --server-side --force-conflicts -k "${SCRIPTDIR}/kyverno" >/dev/null
+if ! kubectl apply --server-side --force-conflicts -k "${SCRIPTDIR}/kyverno" >/dev/null 2>&1; then
+    # A trusted-ca volume/mount left behind by a manual kubectl patch (added
+    # under a different field manager) makes the apply fail with a duplicate
+    # volume. Normalize by removing any foreign trusted-ca volume and mount,
+    # then re-apply so the kustomization owns those fields.
+    echo "  - Apply failed; normalizing pre-existing trusted-ca volume and retrying..."
+    python3 - <<'PYEOF' >/dev/null
+import json, subprocess
+dep = json.loads(subprocess.check_output([
+    "kubectl", "get", "deployment", "kyverno-admission-controller",
+    "-n", "kyverno", "-o", "json"]))
+spec = dep["spec"]["template"]["spec"]
+vols = [v for v in spec.get("volumes", []) if v.get("name") != "trusted-ca"]
+spec["volumes"] = vols
+for c in spec.get("containers", []):
+    if "volumeMounts" in c:
+        c["volumeMounts"] = [m for m in c["volumeMounts"]
+                             if m.get("name") != "trusted-ca"]
+patch = json.dumps([{"op": "replace", "path": "/spec/template/spec",
+                     "value": spec}])
+subprocess.check_call(["kubectl", "patch", "deployment",
+                       "kyverno-admission-controller", "-n", "kyverno",
+                       "--type=json", "-p", patch])
+PYEOF
+    kubectl apply --server-side --force-conflicts -k "${SCRIPTDIR}/kyverno" >/dev/null
+fi
 
 # verify-bundle-signatures pulls bundles from registry-service.kind-registry,
 # which requires auth. The admission-policy chart references this secret by

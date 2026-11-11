@@ -21,15 +21,6 @@ EOF
 # depends on its policy CRDs. Installed here so the charts can follow.
 "${SCRIPTDIR}/install-kyverno.sh"
 
-# SPIRE CRDs: charts/spiffe-spire creates ClusterSPIFFEID resources, and the
-# upstream spire subchart does not ship the CRDs, so install them first.
-SPIRE_CRDS_VERSION="0.6.1"
-echo "Installing spire-crds ${SPIRE_CRDS_VERSION}..."
-helm upgrade --install spire-crds spire-crds \
-  --repo https://spiffe.github.io/helm-charts-hardened/ \
-  --version "${SPIRE_CRDS_VERSION}" \
-  -n spire --create-namespace >/dev/null
-
 # Configure the Konflux operator to use the custom SLSA pipeline
 BUNDLE_REF_FILE="${REPODIR}/managed-context/slsa-e2e-pipeline/bundle-ref"
 if [ ! -f "$BUNDLE_REF_FILE" ]; then
@@ -173,7 +164,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Install platform config: helm upgrade --install platform ./charts/platform-config"
 echo "     Then link the release SA: kubectl patch sa release-service-account -n managed-tenant -p '{\"secrets\":[{\"name\":\"regcred-internal-registry\"}]}'"
-echo "  2. Install admission policies and SPIRE (spire-crds already installed above):"
+echo "  2. Install admission policies and SPIRE (spire-crds ships as a chart dependency):"
 echo "       helm upgrade --install admission-policy ./charts/admission-policy"
 echo "       helm upgrade --install spire ./charts/spiffe-spire -n spire"
 echo "  3. Onboard a component: helm upgrade --install festoji ./charts/component-onboarding --set componentName=festoji --set gitRepoUrl=https://github.com/FORK_ORG/festoji"

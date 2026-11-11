@@ -70,7 +70,6 @@ cd /path/to/slsa-konflux-example
 The prerequisites script:
 - Creates the `managed-tenant` namespace for release operations.
 - Installs Kyverno v1.19.2 (`scripts/install-kyverno.sh`; no longer bundled with Konflux v0.2.2) with internal-registry credentials and the cluster CA bundle.
-- Installs the `spire-crds` Helm chart required by `charts/spiffe-spire`.
 - Configures the Konflux operator to use the custom SLSA pipeline (`slsa-e2e-oci-ta`).
 - Configures Tekton Chains for OCI 1.1 Referrers (`sigstore-bundle` format) and keyless Fulcio/Rekor signing.
 - Distributes internal registry credentials to build and release ServiceAccounts.
@@ -98,7 +97,6 @@ This repository provides four Helm charts:
    ```
 3. **`spiffe-spire`**: Deploys SPIRE identity infrastructure (Server, Agent DaemonSet, SPIFFE CSI driver, OIDC Discovery Provider) and configures `ClusterSPIFFEID` custom resources.
    ```bash
-   # spire-crds is installed by scripts/setup-prerequisites.sh; it must exist first.
    helm upgrade --install spire ./charts/spiffe-spire -n spire
    ```
 4. **`component-onboarding`**: Onboards an application component, creating Application, Component, IntegrationTestScenario, and ReleasePlan resources.
