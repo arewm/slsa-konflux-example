@@ -103,7 +103,7 @@ release:
   # Enterprise Contract policy configuration
   policy:
     # Policy OCI bundle reference
-    policyBundle: "quay.io/conforma/release-policy:konflux@sha256:1b296a925b4021f4b4959ea289596925a8735540e554f3ba7754a651731a216f"
+    policyBundle: "quay.io/conforma/release-policy:konflux@sha256:507e458392399feb78ae4159718cf322800ede3ccf88e477015aa2283331b948"
 
     # Policy data source (defaults to managed-context/policies/ec-policy-data/data in repositoryUrl)
     policyData: ""
